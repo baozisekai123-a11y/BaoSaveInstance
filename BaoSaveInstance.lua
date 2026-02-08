@@ -1,2129 +1,1775 @@
 --[[
-╔══════════════════════════════════════════════════════════════════╗
-║                      BaoSaveInstance v1.0                        ║
-║          Universal Save Instance Tool for Roblox                 ║
-║                                                                  ║
-║  Hỗ trợ: Xeno, Solara, TNG, Velocity, Wave, và tương thích      ║
-║                                                                  ║
-║  ⚠️ Chỉ sử dụng cho mục đích học tập và nghiên cứu              ║
-╚══════════════════════════════════════════════════════════════════╝
+    ██████╗  █████╗  ██████╗ ███████╗ █████╗ ██╗   ██╗███████╗
+    ██╔══██╗██╔══██╗██╔═══██╗██╔════╝██╔══██╗██║   ██║██╔════╝
+    ██████╔╝███████║██║   ██║███████╗███████║██║   ██║█████╗  
+    ██╔══██╗██╔══██║██║   ██║╚════██║██╔══██║╚██╗ ██╔╝██╔══╝  
+    ██████╔╝██║  ██║╚██████╔╝███████║██║  ██║ ╚████╔╝ ███████╗
+    ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═╝  ╚═══╝  ╚══════╝
+    
+    BaoSaveInstance V2 - Production SaveInstance & Decompiler
+    Author: BaoXYZ
+    Version: 2.0.0
+    
+    Supports: Xeno, Solara, TNG, Velocity, Wave, and compatible executors
 ]]
 
-local BaoSaveInstance = {}
-BaoSaveInstance.__index = BaoSaveInstance
-BaoSaveInstance.Version = "1.0.0"
-BaoSaveInstance.Name = "BaoSaveInstance"
+-- ═══════════════════════════════════════════════════════════════════
+-- CONFIGURATION
+-- ═══════════════════════════════════════════════════════════════════
 
---=============================================================================
+local Config = {
+    Version = "2.0.0",
+    FileName = "BaoSaveInstance_Export",
+    
+    -- Save Options
+    SaveTerrain = true,
+    SaveModels = true,
+    DecompileScripts = true,
+    SaveHiddenInstances = true,
+    BypassStreamingEnabled = true,
+    PreserveHierarchy = true,
+    
+    -- UI Theme
+    Theme = {
+        Primary = Color3.fromRGB(138, 43, 226),      -- Purple
+        Secondary = Color3.fromRGB(75, 0, 130),       -- Indigo
+        Accent = Color3.fromRGB(0, 255, 255),         -- Cyan
+        Background = Color3.fromRGB(15, 15, 25),      -- Dark
+        Surface = Color3.fromRGB(25, 25, 40),         -- Surface
+        Text = Color3.fromRGB(255, 255, 255),         -- White
+        TextMuted = Color3.fromRGB(150, 150, 170),    -- Muted
+        Success = Color3.fromRGB(50, 205, 50),        -- Green
+        Warning = Color3.fromRGB(255, 165, 0),        -- Orange
+        Error = Color3.fromRGB(255, 69, 58),          -- Red
+    }
+}
+
+-- ═══════════════════════════════════════════════════════════════════
 -- SERVICES
---=============================================================================
+-- ═══════════════════════════════════════════════════════════════════
+
 local Players = game:GetService("Players")
-local Workspace = game:GetService("Workspace")
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+local HttpService = game:GetService("HttpService")
+local UserInputService = game:GetService("UserInputService")
+local CoreGui = game:GetService("CoreGui")
 local Lighting = game:GetService("Lighting")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local ReplicatedFirst = game:GetService("ReplicatedFirst")
-local StarterGui = game:GetService("StarterGui")
-local StarterPack = game:GetService("StarterPack")
 local StarterPlayer = game:GetService("StarterPlayer")
-local Teams = game:GetService("Teams")
+local StarterGui = game:GetService("StarterGui")
 local SoundService = game:GetService("SoundService")
 local Chat = game:GetService("Chat")
 local LocalizationService = game:GetService("LocalizationService")
-local TestService = game:GetService("TestService")
-local HttpService = game:GetService("HttpService")
-local RunService = game:GetService("RunService")
-local UserInputService = game:GetService("UserInputService")
-local TweenService = game:GetService("TweenService")
+local Teams = game:GetService("Teams")
 
 local LocalPlayer = Players.LocalPlayer
 
---=============================================================================
--- EXECUTOR COMPATIBILITY LAYER
---=============================================================================
-local ExecutorSupport = {}
+-- ═══════════════════════════════════════════════════════════════════
+-- EXECUTOR DETECTION & COMPATIBILITY
+-- ═══════════════════════════════════════════════════════════════════
 
--- Detect executor và available functions
-ExecutorSupport.Name = "Unknown"
-ExecutorSupport.Functions = {}
+local Executor = {
+    Name = "Unknown",
+    SupportsDecompile = false,
+    SupportsFileIO = false,
+    SupportsDrawing = false,
+}
 
 local function detectExecutor()
     -- Check for common executor identifiers
-    if KRNL_LOADED then
-        ExecutorSupport.Name = "KRNL"
-    elseif syn and syn.protect_gui then
-        ExecutorSupport.Name = "Synapse X"
+    if identifyexecutor then
+        Executor.Name = identifyexecutor() or "Unknown"
     elseif getexecutorname then
-        ExecutorSupport.Name = getexecutorname()
-    elseif identifyexecutor then
-        ExecutorSupport.Name = identifyexecutor()
-    elseif XENO_LOADED or (getgenv and getgenv().XENO_LOADED) then
-        ExecutorSupport.Name = "Xeno"
-    elseif SOLARA_LOADED or (getgenv and getgenv().SOLARA_LOADED) then
-        ExecutorSupport.Name = "Solara"
-    elseif wave then
-        ExecutorSupport.Name = "Wave"
-    elseif TNG_LOADED then
-        ExecutorSupport.Name = "TNG"
-    elseif VELOCITY_LOADED then
-        ExecutorSupport.Name = "Velocity"
+        Executor.Name = getexecutorname() or "Unknown"
+    elseif KRNL_LOADED then
+        Executor.Name = "Krnl"
+    elseif syn then
+        Executor.Name = "Synapse X"
+    elseif fluxus then
+        Executor.Name = "Fluxus"
     end
     
-    -- Detect available functions
-    ExecutorSupport.Functions = {
-        writefile = writefile ~= nil,
-        readfile = readfile ~= nil,
-        isfile = isfile ~= nil,
-        makefolder = makefolder ~= nil,
-        isfolder = isfolder ~= nil,
-        getgenv = getgenv ~= nil,
-        getrenv = getrenv ~= nil,
-        getinstances = getinstances ~= nil,
-        getnilinstances = getnilinstances ~= nil,
-        gethiddenproperty = gethiddenproperty ~= nil,
-        sethiddenproperty = sethiddenproperty ~= nil,
-        getproperties = getproperties ~= nil,
-        isscriptable = isscriptable ~= nil,
-        setscriptable = setscriptable ~= nil,
-        saveinstance = saveinstance ~= nil,
-        getscriptbytecode = getscriptbytecode ~= nil,
-        getscripthash = getscripthash ~= nil,
-        decompile = decompile ~= nil,
-        getscripts = getscripts ~= nil,
-        getsenv = getsenv ~= nil,
-        getconstants = getconstants ~= nil,
-        getupvalues = getupvalues ~= nil,
-        getprotos = getprotos ~= nil,
-        setclipboard = setclipboard ~= nil,
-        request = (request or http_request or syn and syn.request) ~= nil,
-        hookfunction = (hookfunction or replaceclosure) ~= nil,
-        newcclosure = newcclosure ~= nil,
-        cloneref = cloneref ~= nil,
-        compareinstances = compareinstances ~= nil,
-        firetouchinterest = firetouchinterest ~= nil,
-        fireproximityprompt = fireproximityprompt ~= nil,
-    }
+    -- Check capabilities
+    Executor.SupportsDecompile = (decompile ~= nil or getscriptbytecode ~= nil)
+    Executor.SupportsFileIO = (writefile ~= nil and readfile ~= nil)
+    Executor.SupportsDrawing = (Drawing ~= nil)
     
-    return ExecutorSupport.Name
+    return Executor
 end
 
 detectExecutor()
 
---=============================================================================
--- LOGGING SYSTEM
---=============================================================================
-local Logger = {}
-Logger.Logs = {}
-Logger.Enabled = true
-
-function Logger:Log(message, logType)
-    logType = logType or "INFO"
-    local timestamp = os.date("%H:%M:%S")
-    local logEntry = string.format("[%s] [%s] [%s] %s", timestamp, BaoSaveInstance.Name, logType, message)
-    
-    table.insert(self.Logs, logEntry)
-    
-    if self.Enabled then
-        if logType == "ERROR" then
-            warn(logEntry)
-        else
-            print(logEntry)
-        end
-    end
-end
-
-function Logger:Info(message)
-    self:Log(message, "INFO")
-end
-
-function Logger:Success(message)
-    self:Log(message, "SUCCESS")
-end
-
-function Logger:Warning(message)
-    self:Log(message, "WARNING")
-end
-
-function Logger:Error(message)
-    self:Log(message, "ERROR")
-end
-
-function Logger:Progress(message)
-    self:Log(message, "PROGRESS")
-end
-
---=============================================================================
+-- ═══════════════════════════════════════════════════════════════════
 -- UTILITY FUNCTIONS
---=============================================================================
+-- ═══════════════════════════════════════════════════════════════════
+
 local Utils = {}
 
-function Utils.SafeCall(func, ...)
-    local success, result = pcall(func, ...)
-    return success, result
-end
-
-function Utils.GetFullName(instance)
-    local success, fullName = pcall(function()
-        return instance:GetFullName()
-    end)
-    return success and fullName or "Unknown"
-end
-
-function Utils.IsValidInstance(instance)
-    local success, _ = pcall(function()
-        return instance.Parent
-    end)
-    return success
-end
-
-function Utils.CountDescendants(instance)
-    local count = 0
-    local success, _ = pcall(function()
-        for _, child in pairs(instance:GetDescendants()) do
-            count = count + 1
+function Utils.deepCopy(original)
+    local copy = {}
+    for k, v in pairs(original) do
+        if type(v) == "table" then
+            copy[k] = Utils.deepCopy(v)
+        else
+            copy[k] = v
         end
-    end)
-    return count
-end
-
-function Utils.EscapeXml(str)
-    if type(str) ~= "string" then
-        str = tostring(str)
     end
-    
-    str = str:gsub("&", "&amp;")
-    str = str:gsub("<", "&lt;")
-    str = str:gsub(">", "&gt;")
-    str = str:gsub("\"", "&quot;")
-    str = str:gsub("'", "&apos;")
-    
-    -- Remove invalid XML characters
-    str = str:gsub("[\0-\8\11\12\14-\31]", "")
-    
-    return str
+    return copy
 end
 
-function Utils.Vector3ToString(v3)
-    return string.format("%f, %f, %f", v3.X, v3.Y, v3.Z)
+function Utils.sanitizeString(str)
+    if type(str) ~= "string" then return tostring(str) end
+    return str:gsub("[%z\1-\31\127]", "")
 end
 
-function Utils.CFrameToString(cf)
-    local components = {cf:GetComponents()}
-    local result = {}
-    for _, v in ipairs(components) do
-        table.insert(result, tostring(v))
+function Utils.formatNumber(num)
+    local formatted = tostring(num)
+    local k
+    while true do
+        formatted, k = string.gsub(formatted, "^(-?%d+)(%d%d%d)", '%1,%2')
+        if k == 0 then break end
     end
-    return table.concat(result, ", ")
+    return formatted
 end
 
-function Utils.Color3ToString(color)
-    return string.format("%f, %f, %f", color.R, color.G, color.B)
+function Utils.getTimestamp()
+    return os.date("%Y-%m-%d_%H-%M-%S")
 end
 
-function Utils.UDim2ToString(udim)
-    return string.format("{%f, %d}, {%f, %d}", 
-        udim.X.Scale, udim.X.Offset, 
-        udim.Y.Scale, udim.Y.Offset)
-end
+-- ═══════════════════════════════════════════════════════════════════
+-- LOGGER MODULE
+-- ═══════════════════════════════════════════════════════════════════
 
-function Utils.GenerateReferent()
-    local chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
-    local result = "RBX"
-    for i = 1, 32 do
-        local idx = math.random(1, #chars)
-        result = result .. chars:sub(idx, idx)
-    end
-    return result
-end
-
---=============================================================================
--- PROPERTY DEFINITIONS
---=============================================================================
-local PropertyDatabase = {}
-
--- Base properties cho tất cả instances
-PropertyDatabase.BaseProperties = {
-    "Name", "Parent", "Archivable"
+local Logger = {
+    logs = {},
+    callbacks = {}
 }
 
--- Properties theo class
-PropertyDatabase.ClassProperties = {
-    BasePart = {
-        "Anchored", "BrickColor", "CanCollide", "CanTouch", "CanQuery",
-        "CastShadow", "CFrame", "CollisionGroup", "Color", "CustomPhysicalProperties",
-        "Locked", "Massless", "Material", "MaterialVariant", "PivotOffset",
-        "Position", "Reflectance", "RootPriority", "Rotation", "Size",
-        "Transparency", "Orientation"
-    },
-    
-    Part = {
-        "Shape"
-    },
-    
-    MeshPart = {
-        "MeshId", "TextureID", "CollisionFidelity", "RenderFidelity",
-        "DoubleSided", "HasJointOffset", "HasSkinnedMesh", "JointOffset"
-    },
-    
-    UnionOperation = {
-        "AssetId", "CollisionFidelity", "RenderFidelity",
-        "SmoothingAngle", "UsePartColor"
-    },
-    
-    Model = {
-        "LevelOfDetail", "PrimaryPart", "WorldPivot", "ModelStreamingMode"
-    },
-    
-    Attachment = {
-        "CFrame", "Visible", "Axis", "Orientation", "Position", "SecondaryAxis",
-        "WorldAxis", "WorldCFrame", "WorldOrientation", "WorldPosition", "WorldSecondaryAxis"
-    },
-    
-    Weld = {
-        "C0", "C1", "Part0", "Part1", "Enabled"
-    },
-    
-    WeldConstraint = {
-        "Part0", "Part1", "Enabled"
-    },
-    
-    Motor6D = {
-        "C0", "C1", "Part0", "Part1", "CurrentAngle", "DesiredAngle",
-        "MaxVelocity", "Enabled"
-    },
-    
-    Decal = {
-        "Color3", "Texture", "Transparency", "ZIndex", "Face"
-    },
-    
-    Texture = {
-        "Color3", "Texture", "Transparency", "ZIndex", "Face",
-        "OffsetStudsU", "OffsetStudsV", "StudsPerTileU", "StudsPerTileV"
-    },
-    
-    SurfaceAppearance = {
-        "AlphaMode", "ColorMap", "MetalnessMap", "NormalMap", "RoughnessMap",
-        "TexturePack"
-    },
-    
-    SpecialMesh = {
-        "MeshId", "MeshType", "Offset", "Scale", "TextureId", "VertexColor"
-    },
-    
-    BlockMesh = {
-        "Offset", "Scale", "VertexColor"
-    },
-    
-    CylinderMesh = {
-        "Offset", "Scale", "VertexColor"
-    },
-    
-    SpawnLocation = {
-        "AllowTeamChangeOnTouch", "Duration", "Enabled", "Neutral", "TeamColor"
-    },
-    
-    Seat = {
-        "Disabled", "Occupant"
-    },
-    
-    VehicleSeat = {
-        "Disabled", "HeadsUpDisplay", "MaxSpeed", "Steer", "SteerFloat",
-        "Throttle", "ThrottleFloat", "Torque", "TurnSpeed"
-    },
-    
-    PointLight = {
-        "Brightness", "Color", "Enabled", "Range", "Shadows"
-    },
-    
-    SpotLight = {
-        "Brightness", "Color", "Enabled", "Range", "Shadows",
-        "Angle", "Face"
-    },
-    
-    SurfaceLight = {
-        "Brightness", "Color", "Enabled", "Range", "Shadows",
-        "Angle", "Face"
-    },
-    
-    ParticleEmitter = {
-        "Acceleration", "Brightness", "Color", "Drag", "EmissionDirection",
-        "Enabled", "FlipbookFramerate", "FlipbookIncompatible", "FlipbookLayout",
-        "FlipbookMode", "FlipbookStartRandom", "Lifetime", "LightEmission",
-        "LightInfluence", "LockedToPart", "Orientation", "Rate", "RotSpeed",
-        "Rotation", "Shape", "ShapeInOut", "ShapePartial", "ShapeStyle",
-        "Size", "Speed", "SpreadAngle", "Squash", "Texture", "TimeScale",
-        "Transparency", "VelocityInheritance", "WindAffectsDrag", "ZOffset"
-    },
-    
-    Fire = {
-        "Color", "Enabled", "Heat", "SecondaryColor", "Size", "TimeScale"
-    },
-    
-    Smoke = {
-        "Color", "Enabled", "Opacity", "RiseVelocity", "Size", "TimeScale"
-    },
-    
-    Sparkles = {
-        "Enabled", "SparkleColor", "TimeScale"
-    },
-    
-    Sound = {
-        "EmitterSize", "LoopRegion", "Looped", "MaxDistance",
-        "PlayOnRemove", "PlaybackRegion", "PlaybackRegionsEnabled",
-        "PlaybackSpeed", "Playing", "RollOffMaxDistance", "RollOffMinDistance",
-        "RollOffMode", "SoundGroup", "SoundId", "TimePosition", "Volume"
-    },
-    
-    Script = {
-        "Disabled", "Source", "RunContext"
-    },
-    
-    LocalScript = {
-        "Disabled", "Source"
-    },
-    
-    ModuleScript = {
-        "Source"
-    },
-    
-    Folder = {},
-    
-    Configuration = {},
-    
-    BoolValue = {
-        "Value"
-    },
-    
-    NumberValue = {
-        "Value"
-    },
-    
-    StringValue = {
-        "Value"
-    },
-    
-    IntValue = {
-        "Value"
-    },
-    
-    ObjectValue = {
-        "Value"
-    },
-    
-    Color3Value = {
-        "Value"
-    },
-    
-    Vector3Value = {
-        "Value"
-    },
-    
-    CFrameValue = {
-        "Value"
-    },
-    
-    BrickColorValue = {
-        "Value"
-    },
-    
-    RayValue = {
-        "Value"
-    },
-    
-    BindableEvent = {},
-    
-    BindableFunction = {},
-    
-    RemoteEvent = {},
-    
-    RemoteFunction = {},
-    
-    ClickDetector = {
-        "CursorIcon", "MaxActivationDistance"
-    },
-    
-    ProximityPrompt = {
-        "ActionText", "AutoLocalize", "ClickablePrompt", "Enabled",
-        "ExclusivityMode", "GamepadKeyCode", "HoldDuration", "KeyboardKeyCode",
-        "MaxActivationDistance", "ObjectText", "RequiresLineOfSight",
-        "RootLocalizationTable", "Style", "UIOffset"
-    },
-    
-    Humanoid = {
-        "AutoJumpEnabled", "AutoRotate", "AutomaticScalingEnabled",
-        "BreakJointsOnDeath", "CameraOffset", "DisplayDistanceType",
-        "DisplayName", "EvaluateStateMachine", "Health", "HealthDisplayDistance",
-        "HealthDisplayType", "HipHeight", "JumpHeight", "JumpPower",
-        "MaxHealth", "MaxSlopeAngle", "MoveDirection", "NameDisplayDistance",
-        "NameOcclusion", "PlatformStand", "RequiresNeck", "RigType",
-        "RootPart", "SeatPart", "Sit", "TargetPoint", "UseJumpPower",
-        "WalkSpeed", "WalkToPart", "WalkToPoint"
-    },
-    
-    Animator = {},
-    
-    Animation = {
-        "AnimationId"
-    },
-    
-    AnimationTrack = {},
-    
-    Tool = {
-        "CanBeDropped", "Enabled", "Grip", "GripForward", "GripPos",
-        "GripRight", "GripUp", "ManualActivationOnly", "RequiresHandle",
-        "ToolTip"
-    },
-    
-    Camera = {
-        "CFrame", "CameraSubject", "CameraType", "DiagonalFieldOfView",
-        "FieldOfView", "FieldOfViewMode", "Focus", "HeadLocked", "HeadScale",
-        "MaxAxisFieldOfView", "NearPlaneZ", "ViewportSize"
-    },
-    
-    Beam = {
-        "Attachment0", "Attachment1", "Brightness", "Color", "CurveSize0",
-        "CurveSize1", "Enabled", "FaceCamera", "LightEmission", "LightInfluence",
-        "Segments", "Texture", "TextureLength", "TextureMode", "TextureSpeed",
-        "Transparency", "Width0", "Width1", "ZOffset"
-    },
-    
-    Trail = {
-        "Attachment0", "Attachment1", "Brightness", "Color", "Enabled",
-        "FaceCamera", "Lifetime", "LightEmission", "LightInfluence",
-        "MaxLength", "MinLength", "Texture", "TextureLength", "TextureMode",
-        "Transparency", "WidthScale"
-    },
-    
-    BillboardGui = {
-        "Active", "Adornee", "AlwaysOnTop", "Brightness", "ClipsDescendants",
-        "CurrentDistance", "DistanceLowerLimit", "DistanceStep", "DistanceUpperLimit",
-        "ExtentsOffset", "ExtentsOffsetWorldSpace", "LightInfluence", "MaxDistance",
-        "PlayerToHideFrom", "Size", "SizeOffset", "StudsOffset", "StudsOffsetWorldSpace",
-        "ZIndexBehavior"
-    },
-    
-    SurfaceGui = {
-        "Active", "Adornee", "AlwaysOnTop", "Brightness", "CanvasSize",
-        "ClipsDescendants", "Face", "LightInfluence", "MaxDistance",
-        "PixelsPerStud", "SizingMode", "ToolPunchThroughDistance",
-        "ZIndexBehavior", "ZOffset"
-    },
-    
-    ScreenGui = {
-        "DisplayOrder", "Enabled", "IgnoreGuiInset", "ResetOnSpawn",
-        "ZIndexBehavior", "ClipToDeviceSafeArea", "SafeAreaCompatibility",
-        "ScreenInsets"
-    },
-    
-    Frame = {
-        "Active", "AnchorPoint", "AutomaticSize", "BackgroundColor3",
-        "BackgroundTransparency", "BorderColor3", "BorderMode", "BorderSizePixel",
-        "ClipsDescendants", "Interactable", "LayoutOrder", "Position", "Rotation",
-        "Selectable", "SelectionGroup", "SelectionImageObject", "Size", "SizeConstraint",
-        "Style", "Visible", "ZIndex"
-    },
-    
-    TextLabel = {
-        "Active", "AnchorPoint", "AutomaticSize", "BackgroundColor3",
-        "BackgroundTransparency", "BorderColor3", "BorderMode", "BorderSizePixel",
-        "ClipsDescendants", "Font", "FontFace", "Interactable", "LayoutOrder",
-        "LineHeight", "MaxVisibleGraphemes", "Position", "RichText", "Rotation",
-        "Selectable", "Size", "SizeConstraint", "Text", "TextBounds", "TextColor3",
-        "TextFits", "TextScaled", "TextSize", "TextStrokeColor3", "TextStrokeTransparency",
-        "TextTransparency", "TextTruncate", "TextWrapped", "TextXAlignment",
-        "TextYAlignment", "Visible", "ZIndex"
-    },
-    
-    TextButton = {
-        "Active", "AnchorPoint", "AutoButtonColor", "AutomaticSize", "BackgroundColor3",
-        "BackgroundTransparency", "BorderColor3", "BorderMode", "BorderSizePixel",
-        "ClipsDescendants", "Font", "FontFace", "Interactable", "LayoutOrder",
-        "LineHeight", "MaxVisibleGraphemes", "Modal", "Position", "RichText",
-        "Rotation", "Selectable", "Selected", "Size", "SizeConstraint", "Style",
-        "Text", "TextBounds", "TextColor3", "TextFits", "TextScaled", "TextSize",
-        "TextStrokeColor3", "TextStrokeTransparency", "TextTransparency",
-        "TextTruncate", "TextWrapped", "TextXAlignment", "TextYAlignment",
-        "Visible", "ZIndex"
-    },
-    
-    ImageLabel = {
-        "Active", "AnchorPoint", "AutomaticSize", "BackgroundColor3",
-        "BackgroundTransparency", "BorderColor3", "BorderMode", "BorderSizePixel",
-        "ClipsDescendants", "Image", "ImageColor3", "ImageRectOffset",
-        "ImageRectSize", "ImageTransparency", "Interactable", "LayoutOrder",
-        "Position", "ResampleMode", "Rotation", "ScaleType", "Selectable",
-        "Size", "SizeConstraint", "SliceCenter", "SliceScale", "TileSize",
-        "Visible", "ZIndex"
-    },
-    
-    ImageButton = {
-        "Active", "AnchorPoint", "AutoButtonColor", "AutomaticSize", "BackgroundColor3",
-        "BackgroundTransparency", "BorderColor3", "BorderMode", "BorderSizePixel",
-        "ClipsDescendants", "HoverImage", "Image", "ImageColor3", "ImageRectOffset",
-        "ImageRectSize", "ImageTransparency", "Interactable", "LayoutOrder",
-        "Modal", "Position", "PressedImage", "ResampleMode", "Rotation",
-        "ScaleType", "Selectable", "Selected", "Size", "SizeConstraint",
-        "SliceCenter", "SliceScale", "TileSize", "Visible", "ZIndex"
-    },
-    
-    ScrollingFrame = {
-        "Active", "AnchorPoint", "AutomaticCanvasSize", "AutomaticSize",
-        "BackgroundColor3", "BackgroundTransparency", "BorderColor3", "BorderMode",
-        "BorderSizePixel", "BottomImage", "CanvasPosition", "CanvasSize",
-        "ClipsDescendants", "ElasticBehavior", "HorizontalScrollBarInset",
-        "Interactable", "LayoutOrder", "MidImage", "Position", "Rotation",
-        "ScrollBarImageColor3", "ScrollBarImageTransparency", "ScrollBarThickness",
-        "Selectable", "Size", "SizeConstraint", "TopImage", "VerticalScrollBarInset",
-        "VerticalScrollBarPosition", "Visible", "ZIndex"
-    },
-    
-    UICorner = {
-        "CornerRadius"
-    },
-    
-    UIGradient = {
-        "Color", "Enabled", "Offset", "Rotation", "Transparency"
-    },
-    
-    UIStroke = {
-        "ApplyStrokeMode", "Color", "Enabled", "LineJoinMode", "Thickness", "Transparency"
-    },
-    
-    UIPadding = {
-        "PaddingBottom", "PaddingLeft", "PaddingRight", "PaddingTop"
-    },
-    
-    UIListLayout = {
-        "FillDirection", "HorizontalAlignment", "Padding", "SortOrder",
-        "VerticalAlignment", "Wraps"
-    },
-    
-    UIGridLayout = {
-        "CellPadding", "CellSize", "FillDirection", "FillDirectionMaxCells",
-        "HorizontalAlignment", "SortOrder", "StartCorner", "VerticalAlignment"
-    },
-    
-    UIPageLayout = {
-        "Animated", "Circular", "EasingDirection", "EasingStyle",
-        "FillDirection", "GamepadInputEnabled", "HorizontalAlignment",
-        "Padding", "ScrollWheelInputEnabled", "SortOrder", "TouchInputEnabled",
-        "TweenTime", "VerticalAlignment"
-    },
-    
-    UITableLayout = {
-        "FillDirection", "FillEmptySpaceColumns", "FillEmptySpaceRows",
-        "HorizontalAlignment", "MajorAxis", "Padding", "SortOrder", "VerticalAlignment"
-    },
-    
-    UIScale = {
-        "Scale"
-    },
-    
-    UIAspectRatioConstraint = {
-        "AspectRatio", "AspectType", "DominantAxis"
-    },
-    
-    UISizeConstraint = {
-        "MaxSize", "MinSize"
-    },
-    
-    UITextSizeConstraint = {
-        "MaxTextSize", "MinTextSize"
-    },
-    
-    Atmosphere = {
-        "Color", "Decay", "Density", "Glare", "Haze", "Offset"
-    },
-    
-    Sky = {
-        "CelestialBodiesShown", "MoonAngularSize", "MoonTextureId",
-        "SkyboxBk", "SkyboxDn", "SkyboxFt", "SkyboxLf", "SkyboxRt",
-        "SkyboxUp", "StarCount", "SunAngularSize", "SunTextureId"
-    },
-    
-    BloomEffect = {
-        "Enabled", "Intensity", "Size", "Threshold"
-    },
-    
-    BlurEffect = {
-        "Enabled", "Size"
-    },
-    
-    ColorCorrectionEffect = {
-        "Brightness", "Contrast", "Enabled", "Saturation", "TintColor"
-    },
-    
-    DepthOfFieldEffect = {
-        "Enabled", "FarIntensity", "FocusDistance", "InFocusRadius", "NearIntensity"
-    },
-    
-    SunRaysEffect = {
-        "Enabled", "Intensity", "Spread"
-    },
-    
-    Lighting = {
-        "Ambient", "Brightness", "ColorShift_Bottom", "ColorShift_Top",
-        "EnvironmentDiffuseScale", "EnvironmentSpecularScale", "ExposureCompensation",
-        "FogColor", "FogEnd", "FogStart", "GeographicLatitude", "GlobalShadows",
-        "OutdoorAmbient", "ShadowSoftness", "ClockTime", "TimeOfDay", "Technology"
-    },
-    
-    Terrain = {
-        "Decoration", "GrassLength", "MaterialColors", "WaterColor",
-        "WaterReflectance", "WaterTransparency", "WaterWaveSize", "WaterWaveSpeed"
-    },
-    
-    -- Constraint classes
-    RopeConstraint = {
-        "Attachment0", "Attachment1", "Color", "Enabled", "Length",
-        "Restitution", "Thickness", "Visible", "WinchEnabled", "WinchForce",
-        "WinchResponsiveness", "WinchSpeed", "WinchTarget"
-    },
-    
-    RodConstraint = {
-        "Attachment0", "Attachment1", "Color", "Enabled", "Length",
-        "LimitAngle0", "LimitAngle1", "LimitsEnabled", "Thickness", "Visible"
-    },
-    
-    SpringConstraint = {
-        "Attachment0", "Attachment1", "Color", "Coils", "Damping",
-        "Enabled", "FreeLength", "LimitsEnabled", "MaxForce", "MaxLength",
-        "MinLength", "Radius", "Stiffness", "Thickness", "Visible"
-    },
-    
-    HingeConstraint = {
-        "Attachment0", "Attachment1", "ActuatorType", "AngularResponsiveness",
-        "AngularSpeed", "AngularVelocity", "Enabled", "LimitsEnabled",
-        "LowerAngle", "MotorMaxAcceleration", "MotorMaxTorque", "Radius",
-        "Restitution", "ServoMaxTorque", "SoftlockServoUponReachingTarget",
-        "TargetAngle", "UpperAngle"
-    },
-    
-    BallSocketConstraint = {
-        "Attachment0", "Attachment1", "Enabled", "LimitsEnabled",
-        "MaxFrictionTorque", "Radius", "Restitution", "TwistLimitsEnabled",
-        "TwistLowerAngle", "TwistUpperAngle", "UpperAngle"
-    },
-    
-    PrismaticConstraint = {
-        "Attachment0", "Attachment1", "ActuatorType", "Enabled",
-        "LimitsEnabled", "LowerLimit", "MotorMaxAcceleration", "MotorMaxForce",
-        "Restitution", "ServoMaxForce", "Size", "Speed", "SoftlockServoUponReachingTarget",
-        "TargetPosition", "UpperLimit", "Velocity"
-    },
-    
-    CylindricalConstraint = {
-        "Attachment0", "Attachment1", "AngularActuatorType", "AngularLimitsEnabled",
-        "AngularResponsiveness", "AngularRestitution", "AngularSpeed",
-        "AngularVelocity", "Enabled", "InclinationAngle", "LimitsEnabled",
-        "LowerAngle", "LowerLimit", "MotorMaxAcceleration", "MotorMaxAngularAcceleration",
-        "MotorMaxForce", "MotorMaxTorque", "Restitution", "RotationAxisVisible",
-        "ServoMaxForce", "ServoMaxTorque", "Size", "SoftlockServoUponReachingTarget",
-        "Speed", "TargetAngle", "TargetPosition", "UpperAngle", "UpperLimit",
-        "Velocity", "WorldRotationAxis"
-    },
-    
-    AlignOrientation = {
-        "Attachment0", "Attachment1", "AlignType", "CFrame", "Enabled",
-        "MaxAngularVelocity", "MaxTorque", "Mode", "PrimaryAxis",
-        "PrimaryAxisOnly", "ReactionTorqueEnabled", "Responsiveness",
-        "RigidityEnabled", "SecondaryAxis"
-    },
-    
-    AlignPosition = {
-        "Attachment0", "Attachment1", "ApplyAtCenterOfMass", "Enabled",
-        "ForceLimitMode", "ForceRelativeTo", "MaxAxesForce", "MaxForce",
-        "MaxVelocity", "Mode", "Position", "ReactionForceEnabled",
-        "Responsiveness", "RigidityEnabled"
-    },
-    
-    VectorForce = {
-        "Attachment0", "ApplyAtCenterOfMass", "Enabled", "Force",
-        "RelativeTo"
-    },
-    
-    BodyGyro = {
-        "CFrame", "D", "MaxTorque", "P"
-    },
-    
-    BodyVelocity = {
-        "MaxForce", "P", "Velocity"
-    },
-    
-    BodyPosition = {
-        "D", "MaxForce", "P", "Position"
-    },
-    
-    BodyForce = {
-        "Force"
-    },
-    
-    BodyAngularVelocity = {
-        "AngularVelocity", "MaxTorque", "P"
-    },
-    
-    BodyThrust = {
-        "Force", "Location"
-    },
-    
-    RocketPropulsion = {
-        "CartoonFactor", "MaxSpeed", "MaxThrust", "MaxTorque",
-        "Target", "TargetOffset", "TargetRadius", "ThrustD", "ThrustP",
-        "TurnD", "TurnP"
+function Logger:log(message, level)
+    level = level or "INFO"
+    local entry = {
+        time = os.date("%H:%M:%S"),
+        level = level,
+        message = message
+    }
+    table.insert(self.logs, entry)
+    
+    -- Trigger callbacks
+    for _, callback in ipairs(self.callbacks) do
+        pcall(callback, entry)
+    end
+    
+    -- Console output
+    print(string.format("[BaoSaveInstance] [%s] [%s] %s", entry.time, level, message))
+end
+
+function Logger:info(msg) self:log(msg, "INFO") end
+function Logger:success(msg) self:log(msg, "SUCCESS") end
+function Logger:warn(msg) self:log(msg, "WARN") end
+function Logger:error(msg) self:log(msg, "ERROR") end
+
+function Logger:onLog(callback)
+    table.insert(self.callbacks, callback)
+end
+
+-- ═══════════════════════════════════════════════════════════════════
+-- ADVANCED DECOMPILER ENGINE (X20 Enhanced)
+-- ═══════════════════════════════════════════════════════════════════
+
+local Decompiler = {
+    stats = {
+        totalScripts = 0,
+        successfulDecompiles = 0,
+        failedDecompiles = 0,
+        totalLines = 0
+    },
+    
+    -- Pattern mappings for variable renaming
+    variablePatterns = {
+        -- Service patterns
+        {pattern = "game:GetService%(%s*[\"']Players[\"']%s*%)", rename = "Players"},
+        {pattern = "game:GetService%(%s*[\"']ReplicatedStorage[\"']%s*%)", rename = "ReplicatedStorage"},
+        {pattern = "game:GetService%(%s*[\"']Workspace[\"']%s*%)", rename = "Workspace"},
+        {pattern = "game:GetService%(%s*[\"']TweenService[\"']%s*%)", rename = "TweenService"},
+        {pattern = "game:GetService%(%s*[\"']UserInputService[\"']%s*%)", rename = "UserInputService"},
+        {pattern = "game:GetService%(%s*[\"']RunService[\"']%s*%)", rename = "RunService"},
+        {pattern = "game:GetService%(%s*[\"']Debris[\"']%s*%)", rename = "Debris"},
+        {pattern = "game:GetService%(%s*[\"']HttpService[\"']%s*%)", rename = "HttpService"},
+        {pattern = "game:GetService%(%s*[\"']MarketplaceService[\"']%s*%)", rename = "MarketplaceService"},
+        {pattern = "game:GetService%(%s*[\"']DataStoreService[\"']%s*%)", rename = "DataStoreService"},
+        {pattern = "game:GetService%(%s*[\"']SoundService[\"']%s*%)", rename = "SoundService"},
+        {pattern = "game:GetService%(%s*[\"']Lighting[\"']%s*%)", rename = "Lighting"},
+        {pattern = "game:GetService%(%s*[\"']Teams[\"']%s*%)", rename = "Teams"},
+        {pattern = "game:GetService%(%s*[\"']Chat[\"']%s*%)", rename = "ChatService"},
+        {pattern = "game:GetService%(%s*[\"']StarterGui[\"']%s*%)", rename = "StarterGui"},
+        {pattern = "game:GetService%(%s*[\"']StarterPlayer[\"']%s*%)", rename = "StarterPlayer"},
+        {pattern = "game:GetService%(%s*[\"']StarterPack[\"']%s*%)", rename = "StarterPack"},
+        {pattern = "game:GetService%(%s*[\"']ServerStorage[\"']%s*%)", rename = "ServerStorage"},
+        {pattern = "game:GetService%(%s*[\"']ServerScriptService[\"']%s*%)", rename = "ServerScriptService"},
+        
+        -- Common object patterns
+        {pattern = "LocalPlayer", rename = "player"},
+        {pattern = "%.Character", rename = ".character"},
+        {pattern = "%.Humanoid", rename = ".humanoid"},
+        {pattern = "%.HumanoidRootPart", rename = ".rootPart"},
+        {pattern = "%.PrimaryPart", rename = ".primaryPart"},
+        {pattern = "%.Parent", rename = ".parent"},
+    },
+    
+    -- Known obfuscation patterns to detect
+    obfuscationPatterns = {
+        "getfenv",
+        "setfenv", 
+        "loadstring",
+        "string%.char",
+        "string%.byte",
+        "string%.reverse",
+        "bit32%.bxor",
+        "bit32%.band",
+        "while%s+true%s+do%s+wait%(%)%s+end",
+        "for%s+_%s*=%s*1%s*,%s*math%.huge",
+        "HttpService:GenerateGUID",
+        "math%.random.*math%.random.*math%.random",
+    },
+    
+    -- Anti-cheat detection patterns
+    antiCheatPatterns = {
+        {pattern = "getconnections", type = "Anti-Cheat", desc = "Connection manipulation detection"},
+        {pattern = "hookfunction", type = "Anti-Cheat", desc = "Function hooking detection"},
+        {pattern = "hookmetamethod", type = "Anti-Cheat", desc = "Metatable hooking detection"},
+        {pattern = "getnamecall", type = "Anti-Cheat", desc = "Namecall monitoring"},
+        {pattern = "checkcaller", type = "Anti-Cheat", desc = "Caller verification"},
+        {pattern = "getrawmetatable", type = "Anti-Cheat", desc = "Raw metatable access"},
+        {pattern = "setreadonly", type = "Anti-Cheat", desc = "Readonly modification"},
+        {pattern = "debug%.getinfo", type = "Anti-Cheat", desc = "Debug info access"},
+        {pattern = "debug%.traceback", type = "Anti-Cheat", desc = "Stack trace monitoring"},
+        {pattern = "pcall.*error", type = "Protection", desc = "Error-based protection"},
+        {pattern = "xpcall", type = "Protection", desc = "Extended protected call"},
+        {pattern = "getgc", type = "Anti-Cheat", desc = "Garbage collector access"},
+        {pattern = "getinstances", type = "Detection", desc = "Instance enumeration"},
+        {pattern = "getnilinstances", type = "Detection", desc = "Nil instance access"},
+        {pattern = "getloadedmodules", type = "Detection", desc = "Module enumeration"},
+        {pattern = "Humanoid%.Health%s*=%s*0", type = "Kill", desc = "Health manipulation"},
+        {pattern = "Humanoid:TakeDamage", type = "Damage", desc = "Damage function"},
+        {pattern = ":Kick%(", type = "Kick", desc = "Player kick function"},
+        {pattern = ":Ban%(", type = "Ban", desc = "Player ban function"},
+        {pattern = "RemoteEvent", type = "Network", desc = "Remote event usage"},
+        {pattern = "RemoteFunction", type = "Network", desc = "Remote function usage"},
+        {pattern = ":FireServer%(", type = "Network", desc = "Server fire call"},
+        {pattern = ":InvokeServer%(", type = "Network", desc = "Server invoke call"},
     }
 }
 
--- Get properties for a class
-function PropertyDatabase.GetPropertiesForClass(className)
-    local props = {}
-    
-    -- Add base properties
-    for _, prop in ipairs(PropertyDatabase.BaseProperties) do
-        table.insert(props, prop)
+-- Main decompile function
+function Decompiler:decompile(script)
+    if not script then 
+        return "-- [BaoSaveInstance] Error: No script provided"
     end
     
-    -- Add class-specific properties
-    if PropertyDatabase.ClassProperties[className] then
-        for _, prop in ipairs(PropertyDatabase.ClassProperties[className]) do
-            table.insert(props, prop)
-        end
-    end
+    self.stats.totalScripts = self.stats.totalScripts + 1
     
-    -- Check for BasePart inheritance
-    local basePartClasses = {
-        "Part", "WedgePart", "CornerWedgePart", "TrussPart",
-        "MeshPart", "UnionOperation", "NegateOperation",
-        "SpawnLocation", "Seat", "VehicleSeat", "SkateboardPlatform"
-    }
+    local scriptInfo = self:analyzeScript(script)
+    local source = nil
+    local decompileMethod = "Unknown"
     
-    for _, baseClass in ipairs(basePartClasses) do
-        if className == baseClass then
-            for _, prop in ipairs(PropertyDatabase.ClassProperties.BasePart or {}) do
-                if not table.find(props, prop) then
-                    table.insert(props, prop)
-                end
+    -- Method 1: Try to get source directly
+    pcall(function()
+        if script:IsA("ModuleScript") or script:IsA("LocalScript") or script:IsA("Script") then
+            source = script.Source
+            if source and source ~= "" then
+                decompileMethod = "DirectSource"
             end
+        end
+    end)
+    
+    -- Method 2: Try executor's decompile function
+    if (not source or source == "") and decompile then
+        local success, result = pcall(function()
+            return decompile(script)
+        end)
+        if success and result and result ~= "" then
+            source = result
+            decompileMethod = "ExecutorDecompile"
+        end
+    end
+    
+    -- Method 3: Try getscriptbytecode
+    if (not source or source == "") and getscriptbytecode then
+        local success, bytecode = pcall(function()
+            return getscriptbytecode(script)
+        end)
+        if success and bytecode and #bytecode > 0 then
+            source = self:bytecodeToPlaceholder(script, bytecode)
+            decompileMethod = "BytecodeCapture"
+        end
+    end
+    
+    -- Method 4: Try getsenv for running scripts
+    if (not source or source == "") and getsenv then
+        pcall(function()
+            local env = getsenv(script)
+            if env then
+                source = self:envToSource(env, script)
+                decompileMethod = "EnvironmentReconstruction"
+            end
+        end)
+    end
+    
+    -- Fallback: Generate placeholder
+    if not source or source == "" then
+        self.stats.failedDecompiles = self.stats.failedDecompiles + 1
+        return self:generatePlaceholder(scriptInfo)
+    end
+    
+    self.stats.successfulDecompiles = self.stats.successfulDecompiles + 1
+    
+    -- Process the source code
+    local processedSource = self:processSource(source, scriptInfo, decompileMethod)
+    
+    -- Count lines
+    local _, lineCount = processedSource:gsub("\n", "")
+    self.stats.totalLines = self.stats.totalLines + lineCount
+    
+    return processedSource
+end
+
+-- Process and enhance decompiled source
+function Decompiler:processSource(source, scriptInfo, method)
+    local processed = source
+    
+    -- Step 1: Clean up formatting
+    processed = self:cleanupFormatting(processed)
+    
+    -- Step 2: Detect obfuscation
+    local obfuscationLevel, obfuscationDetails = self:detectObfuscation(processed)
+    
+    -- Step 3: Detect anti-cheat patterns
+    local antiCheatInfo = self:detectAntiCheat(processed)
+    
+    -- Step 4: Improve variable names (if readable enough)
+    if obfuscationLevel < 3 then
+        processed = self:improveVariableNames(processed)
+    end
+    
+    -- Step 5: Add comments for complex patterns
+    processed = self:addAnalysisComments(processed, antiCheatInfo)
+    
+    -- Step 6: Format code structure
+    processed = self:formatCodeStructure(processed)
+    
+    -- Generate comprehensive header
+    local header = self:generateHeader(scriptInfo, method, obfuscationLevel, obfuscationDetails, antiCheatInfo)
+    
+    return header .. processed
+end
+
+-- Cleanup code formatting
+function Decompiler:cleanupFormatting(source)
+    local cleaned = source
+    
+    -- Remove excessive blank lines
+    cleaned = cleaned:gsub("\n\n\n+", "\n\n")
+    
+    -- Remove trailing whitespace
+    cleaned = cleaned:gsub("[ \t]+\n", "\n")
+    
+    -- Fix common decompiler artifacts
+    cleaned = cleaned:gsub("%;%;+", ";")
+    cleaned = cleaned:gsub("do%s+do", "do")
+    cleaned = cleaned:gsub("end%s+end%s+end%s+end", "end\nend")
+    
+    -- Remove junk variable assignments like v1 = v1
+    cleaned = cleaned:gsub("local%s+v(%d+)%s*=%s*v%1%s*\n", "")
+    
+    -- Clean up empty functions
+    cleaned = cleaned:gsub("function%s*%(%s*%)%s*end", "function() end")
+    
+    -- Fix spacing around operators
+    cleaned = cleaned:gsub("([%w_])%s*=%s*([%w_\"'{])", "%1 = %2")
+    
+    return cleaned
+end
+
+-- Detect obfuscation level
+function Decompiler:detectObfuscation(source)
+    local score = 0
+    local details = {}
+    
+    for _, pattern in ipairs(self.obfuscationPatterns) do
+        if source:find(pattern) then
+            score = score + 1
+            table.insert(details, pattern)
+        end
+    end
+    
+    -- Check for single-letter variables density
+    local _, singleVars = source:gsub("local%s+[a-z]%s*=", "")
+    if singleVars > 20 then
+        score = score + 2
+        table.insert(details, "High single-letter variable density")
+    end
+    
+    -- Check for very long lines (often obfuscated)
+    for line in source:gmatch("[^\n]+") do
+        if #line > 500 then
+            score = score + 2
+            table.insert(details, "Very long lines detected")
             break
         end
     end
     
-    return props
+    -- Convert score to level (0-5)
+    local level = math.min(5, math.floor(score / 2))
+    
+    return level, details
 end
 
---=============================================================================
--- XML SERIALIZER
---=============================================================================
-local XMLSerializer = {}
-XMLSerializer.ReferentMap = {}
-XMLSerializer.ReferentCounter = 0
-
-function XMLSerializer:Reset()
-    self.ReferentMap = {}
-    self.ReferentCounter = 0
+-- Detect anti-cheat patterns
+function Decompiler:detectAntiCheat(source)
+    local findings = {}
+    
+    for _, info in ipairs(self.antiCheatPatterns) do
+        if source:find(info.pattern) then
+            table.insert(findings, {
+                type = info.type,
+                pattern = info.pattern,
+                description = info.desc
+            })
+        end
+    end
+    
+    return findings
 end
 
-function XMLSerializer:GetReferent(instance)
-    if not self.ReferentMap[instance] then
-        self.ReferentCounter = self.ReferentCounter + 1
-        self.ReferentMap[instance] = "RBX" .. tostring(self.ReferentCounter)
+-- Improve variable names
+function Decompiler:improveVariableNames(source)
+    local improved = source
+    
+    -- Apply pattern-based renaming hints as comments
+    for _, mapping in ipairs(self.variablePatterns) do
+        -- Add hint comments rather than renaming (safer)
+        if improved:find(mapping.pattern) then
+            -- Pattern exists, could add hints
+        end
     end
-    return self.ReferentMap[instance]
+    
+    -- Detect common variable patterns and suggest names
+    -- Player references
+    improved = improved:gsub(
+        "(local%s+)(v%d+)(%s*=%s*game%.Players%.LocalPlayer)",
+        "%1player%3 -- Renamed from %2"
+    )
+    
+    -- Character references
+    improved = improved:gsub(
+        "(local%s+)(v%d+)(%s*=%s*[%w_]+%.Character)",
+        "%1character%3 -- Renamed from %2"
+    )
+    
+    -- Humanoid references
+    improved = improved:gsub(
+        "(local%s+)(v%d+)(%s*=%s*[%w_]+:FindFirstChildOfClass%([\"']Humanoid[\"']%))",
+        "%1humanoid%3 -- Renamed from %2"
+    )
+    
+    -- Mouse references
+    improved = improved:gsub(
+        "(local%s+)(v%d+)(%s*=%s*[%w_]+:GetMouse%(%s*%))",
+        "%1mouse%3 -- Renamed from %2"
+    )
+    
+    -- Camera references
+    improved = improved:gsub(
+        "(local%s+)(v%d+)(%s*=%s*workspace%.CurrentCamera)",
+        "%1camera%3 -- Renamed from %2"
+    )
+    improved = improved:gsub(
+        "(local%s+)(v%d+)(%s*=%s*game%.Workspace%.CurrentCamera)",
+        "%1camera%3 -- Renamed from %2"
+    )
+    
+    return improved
 end
 
-function XMLSerializer:SerializeValue(value, propertyType)
-    if value == nil then
-        return nil
-    end
-    
-    local valueType = typeof(value)
-    
-    if valueType == "string" then
-        return '<string name="Value">' .. Utils.EscapeXml(value) .. '</string>'
-    elseif valueType == "number" then
-        if propertyType == "int" or propertyType == "Int32" then
-            return '<int name="Value">' .. tostring(math.floor(value)) .. '</int>'
-        elseif propertyType == "int64" or propertyType == "Int64" then
-            return '<int64 name="Value">' .. tostring(math.floor(value)) .. '</int64>'
-        elseif propertyType == "float" or propertyType == "Float" then
-            return '<float name="Value">' .. tostring(value) .. '</float>'
-        else
-            return '<double name="Value">' .. tostring(value) .. '</double>'
-        end
-    elseif valueType == "boolean" then
-        return '<bool name="Value">' .. tostring(value) .. '</bool>'
-    elseif valueType == "Vector3" then
-        return string.format([[<Vector3 name="Value">
-            <X>%f</X>
-            <Y>%f</Y>
-            <Z>%f</Z>
-        </Vector3>]], value.X, value.Y, value.Z)
-    elseif valueType == "Vector2" then
-        return string.format([[<Vector2 name="Value">
-            <X>%f</X>
-            <Y>%f</Y>
-        </Vector2>]], value.X, value.Y)
-    elseif valueType == "CFrame" then
-        local x, y, z, R00, R01, R02, R10, R11, R12, R20, R21, R22 = value:GetComponents()
-        return string.format([[<CoordinateFrame name="Value">
-            <X>%f</X>
-            <Y>%f</Y>
-            <Z>%f</Z>
-            <R00>%f</R00>
-            <R01>%f</R01>
-            <R02>%f</R02>
-            <R10>%f</R10>
-            <R11>%f</R11>
-            <R12>%f</R12>
-            <R20>%f</R20>
-            <R21>%f</R21>
-            <R22>%f</R22>
-        </CoordinateFrame>]], x, y, z, R00, R01, R02, R10, R11, R12, R20, R21, R22)
-    elseif valueType == "Color3" then
-        return string.format([[<Color3 name="Value">
-            <R>%f</R>
-            <G>%f</G>
-            <B>%f</B>
-        </Color3>]], value.R, value.G, value.B)
-    elseif valueType == "BrickColor" then
-        return '<int name="Value">' .. tostring(value.Number) .. '</int>'
-    elseif valueType == "UDim" then
-        return string.format([[<UDim name="Value">
-            <S>%f</S>
-            <O>%d</O>
-        </UDim>]], value.Scale, value.Offset)
-    elseif valueType == "UDim2" then
-        return string.format([[<UDim2 name="Value">
-            <XS>%f</XS>
-            <XO>%d</XO>
-            <YS>%f</YS>
-            <YO>%d</YO>
-        </UDim2>]], value.X.Scale, value.X.Offset, value.Y.Scale, value.Y.Offset)
-    elseif valueType == "Rect" then
-        return string.format([[<Rect2D name="Value">
-            <min>
-                <X>%f</X>
-                <Y>%f</Y>
-            </min>
-            <max>
-                <X>%f</X>
-                <Y>%f</Y>
-            </max>
-        </Rect2D>]], value.Min.X, value.Min.Y, value.Max.X, value.Max.Y)
-    elseif valueType == "NumberRange" then
-        return string.format([[<NumberRange name="Value">%f %f</NumberRange>]], value.Min, value.Max)
-    elseif valueType == "NumberSequence" then
-        local keypoints = {}
-        for _, kp in ipairs(value.Keypoints) do
-            table.insert(keypoints, string.format("%f %f %f", kp.Time, kp.Value, kp.Envelope))
-        end
-        return '<NumberSequence name="Value">' .. table.concat(keypoints, " ") .. '</NumberSequence>'
-    elseif valueType == "ColorSequence" then
-        local keypoints = {}
-        for _, kp in ipairs(value.Keypoints) do
-            table.insert(keypoints, string.format("%f %f %f %f 0", kp.Time, kp.Value.R, kp.Value.G, kp.Value.B))
-        end
-        return '<ColorSequence name="Value">' .. table.concat(keypoints, " ") .. '</ColorSequence>'
-    elseif valueType == "EnumItem" then
-        return '<token name="Value">' .. tostring(value.Value) .. '</token>'
-    elseif valueType == "Instance" then
-        if self.ReferentMap[value] then
-            return '<Ref name="Value">' .. self:GetReferent(value) .. '</Ref>'
-        else
-            return '<Ref name="Value">null</Ref>'
-        end
-    elseif valueType == "Ray" then
-        return string.format([[<Ray name="Value">
-            <origin>
-                <X>%f</X>
-                <Y>%f</Y>
-                <Z>%f</Z>
-            </origin>
-            <direction>
-                <X>%f</X>
-                <Y>%f</Y>
-                <Z>%f</Z>
-            </direction>
-        </Ray>]], value.Origin.X, value.Origin.Y, value.Origin.Z,
-                value.Direction.X, value.Direction.Y, value.Direction.Z)
-    elseif valueType == "Faces" then
-        local faces = {}
-        if value.Top then table.insert(faces, "Top") end
-        if value.Bottom then table.insert(faces, "Bottom") end
-        if value.Left then table.insert(faces, "Left") end
-        if value.Right then table.insert(faces, "Right") end
-        if value.Back then table.insert(faces, "Back") end
-        if value.Front then table.insert(faces, "Front") end
-        return '<Faces name="Value">' .. table.concat(faces, ", ") .. '</Faces>'
-    elseif valueType == "Axes" then
-        local axes = {}
-        if value.X then table.insert(axes, "X") end
-        if value.Y then table.insert(axes, "Y") end
-        if value.Z then table.insert(axes, "Z") end
-        return '<Axes name="Value">' .. table.concat(axes, ", ") .. '</Axes>'
-    elseif valueType == "PhysicalProperties" then
-        if value then
-            return string.format([[<PhysicalProperties name="Value">
-                <CustomPhysics>true</CustomPhysics>
-                <Density>%f</Density>
-                <Friction>%f</Friction>
-                <Elasticity>%f</Elasticity>
-                <FrictionWeight>%f</FrictionWeight>
-                <ElasticityWeight>%f</ElasticityWeight>
-            </PhysicalProperties>]], 
-                value.Density, value.Friction, value.Elasticity,
-                value.FrictionWeight, value.ElasticityWeight)
-        else
-            return [[<PhysicalProperties name="Value">
-                <CustomPhysics>false</CustomPhysics>
-            </PhysicalProperties>]]
-        end
-    elseif valueType == "Font" then
-        return string.format([[<Font name="Value">
-            <Family><url>%s</url></Family>
-            <Weight>%d</Weight>
-            <Style>%s</Style>
-        </Font>]], Utils.EscapeXml(value.Family), value.Weight.Value, value.Style.Name)
-    end
-    
-    -- Fallback to string
-    return '<string name="Value">' .. Utils.EscapeXml(tostring(value)) .. '</string>'
-end
-
-function XMLSerializer:SerializeProperty(instance, propertyName)
-    local success, value = pcall(function()
-        return instance[propertyName]
-    end)
-    
-    if not success then
-        -- Try hidden property
-        if ExecutorSupport.Functions.gethiddenproperty then
-            success, value = pcall(function()
-                return gethiddenproperty(instance, propertyName)
-            end)
-        end
-    end
-    
-    if not success or value == nil then
-        return nil
-    end
-    
-    local valueType = typeof(value)
-    local xml = ""
-    
-    if valueType == "string" then
-        xml = '<string name="' .. propertyName .. '">' .. Utils.EscapeXml(value) .. '</string>'
-    elseif valueType == "number" then
-        -- Determine if int or float based on property name patterns
-        local isInt = propertyName:match("Index$") or 
-                      propertyName:match("Count$") or 
-                      propertyName:match("Offset$") and propertyName:match("Pixel") or
-                      propertyName == "ZIndex" or
-                      propertyName == "LayoutOrder"
-        
-        if isInt then
-            xml = '<int name="' .. propertyName .. '">' .. tostring(math.floor(value)) .. '</int>'
-        else
-            xml = '<float name="' .. propertyName .. '">' .. tostring(value) .. '</float>'
-        end
-    elseif valueType == "boolean" then
-        xml = '<bool name="' .. propertyName .. '">' .. tostring(value) .. '</bool>'
-    elseif valueType == "Vector3" then
-        xml = string.format('<Vector3 name="%s"><X>%f</X><Y>%f</Y><Z>%f</Z></Vector3>', 
-            propertyName, value.X, value.Y, value.Z)
-    elseif valueType == "Vector2" then
-        xml = string.format('<Vector2 name="%s"><X>%f</X><Y>%f</Y></Vector2>',
-            propertyName, value.X, value.Y)
-    elseif valueType == "CFrame" then
-        local x, y, z, R00, R01, R02, R10, R11, R12, R20, R21, R22 = value:GetComponents()
-        xml = string.format([[<CoordinateFrame name="%s">
-            <X>%f</X><Y>%f</Y><Z>%f</Z>
-            <R00>%f</R00><R01>%f</R01><R02>%f</R02>
-            <R10>%f</R10><R11>%f</R11><R12>%f</R12>
-            <R20>%f</R20><R21>%f</R21><R22>%f</R22>
-        </CoordinateFrame>]], 
-            propertyName, x, y, z, R00, R01, R02, R10, R11, R12, R20, R21, R22)
-    elseif valueType == "Color3" then
-        -- Use Color3uint8 format
-        xml = string.format('<Color3uint8 name="%s">%d</Color3uint8>',
-            propertyName,
-            bit32.bor(
-                bit32.lshift(math.floor(value.B * 255), 16),
-                bit32.lshift(math.floor(value.G * 255), 8),
-                math.floor(value.R * 255)
-            ))
-    elseif valueType == "BrickColor" then
-        xml = '<int name="' .. propertyName .. '">' .. tostring(value.Number) .. '</int>'
-    elseif valueType == "UDim" then
-        xml = string.format('<UDim name="%s"><S>%f</S><O>%d</O></UDim>',
-            propertyName, value.Scale, value.Offset)
-    elseif valueType == "UDim2" then
-        xml = string.format('<UDim2 name="%s"><XS>%f</XS><XO>%d</XO><YS>%f</YS><YO>%d</YO></UDim2>',
-            propertyName, value.X.Scale, value.X.Offset, value.Y.Scale, value.Y.Offset)
-    elseif valueType == "Rect" then
-        xml = string.format([[<Rect2D name="%s">
-            <min><X>%f</X><Y>%f</Y></min>
-            <max><X>%f</X><Y>%f</Y></max>
-        </Rect2D>]], propertyName, value.Min.X, value.Min.Y, value.Max.X, value.Max.Y)
-    elseif valueType == "NumberRange" then
-        xml = string.format('<NumberRange name="%s">%f %f</NumberRange>', 
-            propertyName, value.Min, value.Max)
-    elseif valueType == "NumberSequence" then
-        local keypoints = {}
-        for _, kp in ipairs(value.Keypoints) do
-            table.insert(keypoints, string.format("%f %f %f", kp.Time, kp.Value, kp.Envelope))
-        end
-        xml = '<NumberSequence name="' .. propertyName .. '">' .. table.concat(keypoints, " ") .. '</NumberSequence>'
-    elseif valueType == "ColorSequence" then
-        local keypoints = {}
-        for _, kp in ipairs(value.Keypoints) do
-            table.insert(keypoints, string.format("%f %f %f %f 0", kp.Time, kp.Value.R, kp.Value.G, kp.Value.B))
-        end
-        xml = '<ColorSequence name="' .. propertyName .. '">' .. table.concat(keypoints, " ") .. '</ColorSequence>'
-    elseif valueType == "EnumItem" then
-        xml = '<token name="' .. propertyName .. '">' .. tostring(value.Value) .. '</token>'
-    elseif valueType == "Instance" then
-        if self.ReferentMap[value] then
-            xml = '<Ref name="' .. propertyName .. '">' .. self:GetReferent(value) .. '</Ref>'
-        else
-            xml = '<Ref name="' .. propertyName .. '">null</Ref>'
-        end
-    elseif valueType == "PhysicalProperties" then
-        xml = string.format([[<PhysicalProperties name="%s">
-            <CustomPhysics>true</CustomPhysics>
-            <Density>%f</Density>
-            <Friction>%f</Friction>
-            <Elasticity>%f</Elasticity>
-            <FrictionWeight>%f</FrictionWeight>
-            <ElasticityWeight>%f</ElasticityWeight>
-        </PhysicalProperties>]], 
-            propertyName, value.Density, value.Friction, value.Elasticity,
-            value.FrictionWeight, value.ElasticityWeight)
-    elseif valueType == "Font" then
-        xml = string.format([[<Font name="%s">
-            <Family><url>%s</url></Family>
-            <Weight>%d</Weight>
-            <Style>%s</Style>
-        </Font>]], propertyName, Utils.EscapeXml(value.Family), value.Weight.Value, value.Style.Name)
-    else
-        -- Try to serialize as string for unknown types
-        xml = '<string name="' .. propertyName .. '">' .. Utils.EscapeXml(tostring(value)) .. '</string>'
-    end
-    
-    return xml
-end
-
-function XMLSerializer:SerializeInstance(instance, depth)
-    depth = depth or 0
-    local indent = string.rep("\t", depth)
-    
-    if not Utils.IsValidInstance(instance) then
-        return ""
-    end
-    
-    local className = instance.ClassName
-    local referent = self:GetReferent(instance)
-    
-    local xml = indent .. '<Item class="' .. className .. '" referent="' .. referent .. '">\n'
-    xml = xml .. indent .. "\t<Properties>\n"
-    
-    -- Get properties for this class
-    local properties = PropertyDatabase.GetPropertiesForClass(className)
-    
-    for _, propName in ipairs(properties) do
-        if propName ~= "Parent" then -- Skip Parent property
-            local propXml = self:SerializeProperty(instance, propName)
-            if propXml then
-                xml = xml .. indent .. "\t\t" .. propXml .. "\n"
-            end
-        end
-    end
-    
-    xml = xml .. indent .. "\t</Properties>\n"
-    
-    -- Serialize children
-    local children = {}
-    pcall(function()
-        children = instance:GetChildren()
-    end)
-    
-    for _, child in ipairs(children) do
-        xml = xml .. self:SerializeInstance(child, depth + 1)
-    end
-    
-    xml = xml .. indent .. "</Item>\n"
-    
-    return xml
-end
-
---=============================================================================
--- TERRAIN SERIALIZER
---=============================================================================
-local TerrainSerializer = {}
-
-function TerrainSerializer:SerializeTerrain(terrain)
-    Logger:Info("Bắt đầu serialize Terrain...")
-    
-    local xml = '<Item class="Terrain" referent="' .. XMLSerializer:GetReferent(terrain) .. '">\n'
-    xml = xml .. "\t<Properties>\n"
-    
-    -- Terrain properties
-    local terrainProps = {
-        "Decoration", "GrassLength", "WaterColor", "WaterReflectance",
-        "WaterTransparency", "WaterWaveSize", "WaterWaveSpeed"
-    }
-    
-    for _, propName in ipairs(terrainProps) do
-        local propXml = XMLSerializer:SerializeProperty(terrain, propName)
-        if propXml then
-            xml = xml .. "\t\t" .. propXml .. "\n"
-        end
-    end
-    
-    -- Serialize MaterialColors
-    pcall(function()
-        local materialColors = terrain.MaterialColors
-        if materialColors then
-            xml = xml .. '\t\t<BinaryString name="MaterialColors">'
-            -- Encode MaterialColors to base64
-            local encoded = ""
-            -- MaterialColors serialization is complex, use placeholder
-            xml = xml .. '</BinaryString>\n'
-        end
-    end)
-    
-    -- Serialize terrain voxel data
-    local terrainRegion = terrain:GetMaterialColor(Enum.Material.Grass)
-    
-    -- Get terrain bounds
-    local success, err = pcall(function()
-        -- Get terrain size
-        local regionMin = Vector3.new(-32000, -32000, -32000)
-        local regionMax = Vector3.new(32000, 32000, 32000)
-        
-        -- Try to get actual terrain bounds
-        pcall(function()
-            local size = terrain.MaxExtents
-            regionMin = size.Min
-            regionMax = size.Max
-        end)
-        
-        -- Serialize SmoothGrid (terrain data)
-        Logger:Progress("Đang đọc dữ liệu Terrain voxels...")
-        
-        local resolution = 4
-        local chunkSize = 64
-        
-        local terrainData = {}
-        local hasData = false
-        
-        -- Scan terrain in chunks
-        for x = regionMin.X, regionMax.X, chunkSize * resolution do
-            for y = regionMin.Y, regionMax.Y, chunkSize * resolution do
-                for z = regionMin.Z, regionMax.Z, chunkSize * resolution do
-                    local region = Region3.new(
-                        Vector3.new(x, y, z),
-                        Vector3.new(
-                            math.min(x + chunkSize * resolution, regionMax.X),
-                            math.min(y + chunkSize * resolution, regionMax.Y),
-                            math.min(z + chunkSize * resolution, regionMax.Z)
-                        )
-                    )
-                    
-                    local success, materials, occupancies = pcall(function()
-                        return terrain:ReadVoxels(region, resolution)
-                    end)
-                    
-                    if success and materials then
-                        local size = materials.Size
-                        for xi = 1, size.X do
-                            for yi = 1, size.Y do
-                                for zi = 1, size.Z do
-                                    local material = materials[xi][yi][zi]
-                                    local occupancy = occupancies[xi][yi][zi]
-                                    
-                                    if material ~= Enum.Material.Air and occupancy > 0 then
-                                        hasData = true
-                                        table.insert(terrainData, {
-                                            x = x + (xi - 1) * resolution,
-                                            y = y + (yi - 1) * resolution,
-                                            z = z + (zi - 1) * resolution,
-                                            material = material.Value,
-                                            occupancy = occupancy
-                                        })
-                                    end
-                                end
-                            end
-                        end
-                    end
-                    
-                    -- Yield to prevent timeout
-                    if #terrainData % 1000 == 0 then
-                        task.wait()
-                    end
-                end
-            end
-        end
-        
-        if hasData then
-            Logger:Info("Đã tìm thấy " .. #terrainData .. " terrain voxels")
-            
-            -- Encode terrain data
-            local encodedData = HttpService:JSONEncode(terrainData)
-            local base64Data = ""
-            
-            -- Base64 encode
-            local b64chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
-            local data = encodedData
-            
-            for i = 1, #data, 3 do
-                local a, b, c = data:byte(i, i + 2)
-                a, b, c = a or 0, b or 0, c or 0
-                
-                local n = a * 65536 + b * 256 + c
-                
-                local c1 = bit32.rshift(n, 18) % 64
-                local c2 = bit32.rshift(n, 12) % 64
-                local c3 = bit32.rshift(n, 6) % 64
-                local c4 = n % 64
-                
-                base64Data = base64Data .. b64chars:sub(c1 + 1, c1 + 1)
-                base64Data = base64Data .. b64chars:sub(c2 + 1, c2 + 1)
-                
-                if i + 1 <= #data then
-                    base64Data = base64Data .. b64chars:sub(c3 + 1, c3 + 1)
-                else
-                    base64Data = base64Data .. "="
-                end
-                
-                if i + 2 <= #data then
-                    base64Data = base64Data .. b64chars:sub(c4 + 1, c4 + 1)
-                else
-                    base64Data = base64Data .. "="
-                end
-            end
-            
-            xml = xml .. '\t\t<BinaryString name="SmoothGrid">' .. base64Data .. '</BinaryString>\n'
-        end
-    end)
-    
-    xml = xml .. "\t</Properties>\n"
-    xml = xml .. "</Item>\n"
-    
-    Logger:Success("Terrain serialize hoàn tất!")
-    return xml
-end
-
---=============================================================================
--- SCRIPT SERIALIZER
---=============================================================================
-local ScriptSerializer = {}
-
-function ScriptSerializer:DecompileScript(script)
-    local source = ""
-    
-    -- Try to get source
-    local success = pcall(function()
-        source = script.Source
-    end)
-    
-    if success and source and source ~= "" then
+-- Add analysis comments
+function Decompiler:addAnalysisComments(source, antiCheatInfo)
+    if #antiCheatInfo == 0 then
         return source
     end
     
-    -- Try decompile function if available
-    if ExecutorSupport.Functions.decompile then
-        success, source = pcall(function()
-            return decompile(script)
-        end)
-        
-        if success and source then
-            return source
+    local commented = source
+    
+    -- Add inline comments for detected patterns
+    for _, info in ipairs(antiCheatInfo) do
+        local pattern = info.pattern:gsub("%%", "%%%%")
+        commented = commented:gsub(
+            "(" .. info.pattern .. ")",
+            "%1 --[[ [" .. info.type .. "] " .. info.description .. " ]]"
+        )
+    end
+    
+    return commented
+end
+
+-- Format code structure
+function Decompiler:formatCodeStructure(source)
+    local formatted = source
+    
+    -- Ensure proper line breaks after control structures
+    formatted = formatted:gsub("then%s+", "then\n\t")
+    formatted = formatted:gsub("do%s+([^%s])", "do\n\t%1")
+    formatted = formatted:gsub("else%s+([^%s])", "else\n\t%1")
+    
+    return formatted
+end
+
+-- Generate comprehensive header
+function Decompiler:generateHeader(scriptInfo, method, obfuscationLevel, obfuscationDetails, antiCheatInfo)
+    local obfuscationLabels = {"None", "Minimal", "Light", "Moderate", "Heavy", "Extreme"}
+    
+    local header = [[
+--[[
+═══════════════════════════════════════════════════════════════════════════════
+    ██████╗  █████╗  ██████╗ ███████╗ █████╗ ██╗   ██╗███████╗
+    ██╔══██╗██╔══██╗██╔═══██╗██╔════╝██╔══██╗██║   ██║██╔════╝
+    ██████╔╝███████║██║   ██║███████╗███████║██║   ██║█████╗  
+    ██╔══██╗██╔══██║██║   ██║╚════██║██╔══██║╚██╗ ██╔╝██╔══╝  
+    ██████╔╝██║  ██║╚██████╔╝███████║██║  ██║ ╚████╔╝ ███████╗
+    ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═╝  ╚═══╝  ╚══════╝
+    
+    DECOMPILED BY BAOSAVEINSTANCE V2 PRO
+═══════════════════════════════════════════════════════════════════════════════
+
+    Script Information:
+    ├── Name: ]] .. scriptInfo.name .. [[
+    
+    ├── Type: ]] .. scriptInfo.className .. [[
+    
+    ├── Path: ]] .. scriptInfo.path .. [[
+    
+    ├── Disabled: ]] .. tostring(scriptInfo.disabled) .. [[
+    
+    └── RunContext: ]] .. (scriptInfo.runContext or "Unknown") .. [[
+
+
+    Decompilation Info:
+    ├── Method: ]] .. method .. [[
+    
+    ├── Timestamp: ]] .. os.date("%Y-%m-%d %H:%M:%S") .. [[
+    
+    ├── Executor: ]] .. Executor.Name .. [[
+    
+    └── Quality: ]] .. (method == "DirectSource" and "Perfect" or 
+                        method == "ExecutorDecompile" and "High" or "Partial") .. [[
+
+
+    Analysis Results:
+    ├── Obfuscation Level: ]] .. obfuscationLabels[obfuscationLevel + 1] .. " (" .. obfuscationLevel .. "/5)" .. [[
+    
+    └── Anti-Cheat Patterns: ]] .. #antiCheatInfo .. " detected"
+    
+    -- Add anti-cheat details if any
+    if #antiCheatInfo > 0 then
+        header = header .. [[
+
+
+    Detected Security Patterns:]]
+        for i, info in ipairs(antiCheatInfo) do
+            header = header .. "\n    " .. (i < #antiCheatInfo and "├" or "└") .. 
+                     "── [" .. info.type .. "] " .. info.description
         end
     end
     
-    -- Try getscriptbytecode
-    if ExecutorSupport.Functions.getscriptbytecode then
-        local bytecode
-        success, bytecode = pcall(function()
-            return getscriptbytecode(script)
-        end)
-        
-        if success and bytecode then
-            return "-- Bytecode available but decompilation not supported\n-- Script: " .. script:GetFullName()
+    -- Add obfuscation details if any
+    if #obfuscationDetails > 0 then
+        header = header .. [[
+
+
+    Obfuscation Indicators:]]
+        for i, detail in ipairs(obfuscationDetails) do
+            header = header .. "\n    " .. (i < #obfuscationDetails and "├" or "└") .. 
+                     "── " .. detail
         end
     end
     
-    return "-- Could not retrieve script source\n-- Script: " .. script:GetFullName()
-end
+    header = header .. [[
 
-function ScriptSerializer:SerializeScript(script)
-    local className = script.ClassName
-    local referent = XMLSerializer:GetReferent(script)
-    
-    local xml = '<Item class="' .. className .. '" referent="' .. referent .. '">\n'
-    xml = xml .. "\t<Properties>\n"
-    
-    -- Name
-    xml = xml .. '\t\t<string name="Name">' .. Utils.EscapeXml(script.Name) .. '</string>\n'
-    
-    -- Disabled
-    if className ~= "ModuleScript" then
-        local disabled = false
-        pcall(function()
-            disabled = script.Disabled
-        end)
-        xml = xml .. '\t\t<bool name="Disabled">' .. tostring(disabled) .. '</bool>\n'
-    end
-    
-    -- RunContext (for Scripts)
-    if className == "Script" then
-        local runContext = 0
-        pcall(function()
-            runContext = script.RunContext.Value
-        end)
-        xml = xml .. '\t\t<token name="RunContext">' .. tostring(runContext) .. '</token>\n'
-    end
-    
-    -- Source
-    local source = self:DecompileScript(script)
-    xml = xml .. '\t\t<ProtectedString name="Source"><![CDATA[' .. source .. ']]></ProtectedString>\n'
-    
-    xml = xml .. "\t</Properties>\n"
-    
-    -- Serialize children
-    local children = {}
-    pcall(function()
-        children = script:GetChildren()
-    end)
-    
-    for _, child in ipairs(children) do
-        xml = xml .. XMLSerializer:SerializeInstance(child, 1)
-    end
-    
-    xml = xml .. "</Item>\n"
-    
-    return xml
-end
 
---=============================================================================
--- MAIN SAVE FUNCTIONS
---=============================================================================
-local SaveManager = {}
-SaveManager.Options = {
-    IncludeTerrain = true,
-    IncludeModels = true,
-    IncludeScripts = true,
-    DecompileScripts = true,
-    IgnoreDefaultProperties = true,
-    SaveNilInstances = false,
-    IgnoreSharedStrings = true,
-    Timeout = 300
-}
-
--- Instances to save
-SaveManager.Containers = {
-    game:GetService("Workspace"),
-    game:GetService("Lighting"),
-    game:GetService("ReplicatedFirst"),
-    game:GetService("ReplicatedStorage"),
-    game:GetService("StarterGui"),
-    game:GetService("StarterPack"),
-    game:GetService("StarterPlayer"),
-    game:GetService("Teams"),
-    game:GetService("SoundService"),
-    game:GetService("Chat"),
-    game:GetService("LocalizationService"),
-    game:GetService("TestService")
-}
-
-function SaveManager:GenerateFileName(prefix)
-    local gameId = game.PlaceId
-    local gameName = "Unknown"
-    
-    pcall(function()
-        gameName = game:GetService("MarketplaceService"):GetProductInfo(gameId).Name
-    end)
-    
-    gameName = gameName:gsub("[%p%c]", ""):gsub("%s+", "_")
-    
-    local timestamp = os.date("%Y%m%d_%H%M%S")
-    
-    return string.format("%s_%s_%s_%s.rbxl", prefix, gameName, gameId, timestamp)
-end
-
-function SaveManager:CreateRBXLHeader()
-    return [[<?xml version="1.0" encoding="utf-8"?>
-<roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4">
-    <Meta name="ExplicitAutoJoints">true</Meta>
-    <External>null</External>
-    <External>nil</External>
+═══════════════════════════════════════════════════════════════════════════════
 ]]
+    
+    return header .. "\n"
 end
 
-function SaveManager:CreateRBXLFooter()
-    return [[</roblox>]]
+-- Generate placeholder for failed decompiles
+function Decompiler:generatePlaceholder(scriptInfo)
+    return string.format([[
+--[[
+═══════════════════════════════════════════════════════════════════════════════
+    BAOSAVEINSTANCE V2 PRO - DECOMPILATION REPORT
+═══════════════════════════════════════════════════════════════════════════════
+
+    Script: %s
+    Type: %s
+    Path: %s
+    
+    Status: DECOMPILATION UNAVAILABLE
+    
+    Reason: The current executor does not support script decompilation,
+            or the script is protected/encrypted.
+    
+    Executor: %s
+    Decompile Support: %s
+    Bytecode Support: %s
+    
+    Recommendations:
+    1. Try using an executor with decompile support (Synapse X, Script-Ware)
+    2. The script may use custom encryption
+    3. Check if the script is a CoreScript (protected by Roblox)
+    
+═══════════════════════════════════════════════════════════════════════════════
+]]
+
+-- Placeholder generated by BaoSaveInstance V2
+-- The actual script content could not be recovered
+
+return nil -- Module placeholder
+]], scriptInfo.name, scriptInfo.className, scriptInfo.path,
+    Executor.Name, 
+    tostring(Executor.SupportsDecompile),
+    tostring(getscriptbytecode ~= nil))
 end
 
-function SaveManager:SaveTerrain()
-    Logger:Info("═══════════════════════════════════════")
-    Logger:Info("    BaoSaveInstance - SAVE TERRAIN     ")
-    Logger:Info("═══════════════════════════════════════")
-    Logger:Info("Executor: " .. ExecutorSupport.Name)
-    
-    XMLSerializer:Reset()
-    
-    local terrain = Workspace:FindFirstChildOfClass("Terrain")
-    if not terrain then
-        Logger:Error("Không tìm thấy Terrain trong game!")
-        return false
-    end
-    
-    Logger:Info("Bắt đầu save Terrain...")
-    
-    local xml = self:CreateRBXLHeader()
-    xml = xml .. TerrainSerializer:SerializeTerrain(terrain)
-    xml = xml .. self:CreateRBXLFooter()
-    
-    local fileName = self:GenerateFileName("Terrain")
-    
-    Logger:Progress("Đang ghi file: " .. fileName)
-    
-    local success, err = pcall(function()
-        writefile(fileName, xml)
+-- Generate bytecode placeholder
+function Decompiler:bytecodeToPlaceholder(script, bytecode)
+    local hash = ""
+    pcall(function()
+        hash = string.sub(HttpService:GenerateGUID(false), 1, 16)
     end)
     
-    if success then
-        Logger:Success("════════════════════════════════════")
-        Logger:Success("    SAVE TERRAIN HOÀN TẤT!          ")
-        Logger:Success("════════════════════════════════════")
-        Logger:Success("File: " .. fileName)
-        return true
-    else
-        Logger:Error("Lỗi khi ghi file: " .. tostring(err))
-        return false
-    end
+    return string.format([[
+--[[
+═══════════════════════════════════════════════════════════════════════════════
+    BAOSAVEINSTANCE V2 PRO - BYTECODE CAPTURE
+═══════════════════════════════════════════════════════════════════════════════
+
+    Script: %s
+    Type: %s
+    Path: %s
+    
+    Bytecode Information:
+    ├── Size: %d bytes
+    ├── Hash: %s
+    └── Format: Luau Bytecode
+    
+    Note: Full decompilation requires external tools.
+          Bytecode has been captured for offline analysis.
+    
+═══════════════════════════════════════════════════════════════════════════════
+]]
+
+-- Bytecode captured but not decompiled
+-- Use external Luau decompiler for full source recovery
+]], script.Name, script.ClassName, script:GetFullName(), #bytecode, hash)
 end
 
-function SaveManager:SaveAllModels()
-    Logger:Info("═══════════════════════════════════════")
-    Logger:Info("   BaoSaveInstance - SAVE ALL MODELS   ")
-    Logger:Info("═══════════════════════════════════════")
-    Logger:Info("Executor: " .. ExecutorSupport.Name)
+-- Reconstruct source from environment
+function Decompiler:envToSource(env, script)
+    local lines = {
+        "-- Reconstructed from script environment",
+        "-- Some details may be incomplete",
+        ""
+    }
     
-    XMLSerializer:Reset()
-    
-    local startTime = tick()
-    local totalInstances = 0
-    
-    -- First pass: assign referents to all instances
-    Logger:Progress("Đang quét và đánh dấu tất cả instances...")
-    
-    for _, container in ipairs(self.Containers) do
-        pcall(function()
-            for _, instance in pairs(container:GetDescendants()) do
-                if instance.ClassName ~= "Terrain" then
-                    XMLSerializer:GetReferent(instance)
-                    totalInstances = totalInstances + 1
-                end
-            end
-        end)
-    end
-    
-    Logger:Info("Tổng số instances: " .. totalInstances)
-    Logger:Progress("Đang serialize tất cả models...")
-    
-    local xml = self:CreateRBXLHeader()
-    
-    local processedCount = 0
-    
-    for _, container in ipairs(self.Containers) do
-        Logger:Progress("Đang xử lý: " .. container.Name)
-        
-        local containerXml = '<Item class="' .. container.ClassName .. '" referent="' .. XMLSerializer:GetReferent(container) .. '">\n'
-        containerXml = containerXml .. "\t<Properties>\n"
-        containerXml = containerXml .. '\t\t<string name="Name">' .. Utils.EscapeXml(container.Name) .. '</string>\n'
-        containerXml = containerXml .. "\t</Properties>\n"
-        
-        pcall(function()
-            for _, child in pairs(container:GetChildren()) do
-                if child.ClassName ~= "Terrain" and 
-                   child.ClassName ~= "Camera" and
-                   not child:IsA("Player") and
-                   not child:IsA("BaseScript") then
-                    containerXml = containerXml .. XMLSerializer:SerializeInstance(child, 1)
-                    processedCount = processedCount + 1
-                    
-                    if processedCount % 100 == 0 then
-                        Logger:Progress("Đã xử lý: " .. processedCount .. " instances")
-                        task.wait()
-                    end
-                end
-            end
-        end)
-        
-        containerXml = containerXml .. "</Item>\n"
-        xml = xml .. containerXml
-    end
-    
-    xml = xml .. self:CreateRBXLFooter()
-    
-    local fileName = self:GenerateFileName("Models")
-    
-    Logger:Progress("Đang ghi file: " .. fileName)
-    
-    local success, err = pcall(function()
-        writefile(fileName, xml)
-    end)
-    
-    local elapsed = tick() - startTime
-    
-    if success then
-        Logger:Success("════════════════════════════════════")
-        Logger:Success("   SAVE ALL MODELS HOÀN TẤT!       ")
-        Logger:Success("════════════════════════════════════")
-        Logger:Success("File: " .. fileName)
-        Logger:Success("Tổng instances: " .. totalInstances)
-        Logger:Success("Thời gian: " .. string.format("%.2f", elapsed) .. " giây")
-        return true
-    else
-        Logger:Error("Lỗi khi ghi file: " .. tostring(err))
-        return false
-    end
-end
-
-function SaveManager:SaveAllScripts()
-    Logger:Info("Đang save tất cả scripts...")
-    
-    local scripts = {}
-    
-    for _, container in ipairs(self.Containers) do
-        pcall(function()
-            for _, instance in pairs(container:GetDescendants()) do
-                if instance:IsA("BaseScript") or instance:IsA("ModuleScript") then
-                    table.insert(scripts, instance)
-                end
-            end
-        end)
-    end
-    
-    -- Also get nil instances if available
-    if ExecutorSupport.Functions.getnilinstances then
-        pcall(function()
-            for _, instance in pairs(getnilinstances()) do
-                if instance:IsA("BaseScript") or instance:IsA("ModuleScript") then
-                    table.insert(scripts, instance)
-                end
-            end
-        end)
-    end
-    
-    -- Get all scripts if available
-    if ExecutorSupport.Functions.getscripts then
-        pcall(function()
-            for _, script in pairs(getscripts()) do
-                if not table.find(scripts, script) then
-                    table.insert(scripts, script)
-                end
-            end
-        end)
-    end
-    
-    Logger:Info("Tìm thấy " .. #scripts .. " scripts")
-    
-    local xml = ""
-    for i, script in ipairs(scripts) do
-        xml = xml .. ScriptSerializer:SerializeScript(script)
-        
-        if i % 10 == 0 then
-            Logger:Progress("Đã xử lý script: " .. i .. "/" .. #scripts)
-            task.wait()
+    for name, value in pairs(env) do
+        if type(value) == "function" then
+            table.insert(lines, string.format("local function %s(...) end -- Function exists", name))
+        elseif type(value) == "table" then
+            table.insert(lines, string.format("local %s = {} -- Table with %d entries", name, #value))
+        else
+            table.insert(lines, string.format("local %s = %s", name, tostring(value)))
         end
     end
     
-    return xml
+    return table.concat(lines, "\n")
 end
 
-function SaveManager:SaveGame()
-    Logger:Info("═══════════════════════════════════════")
-    Logger:Info("      BaoSaveInstance - SAVE GAME      ")
-    Logger:Info("═══════════════════════════════════════")
-    Logger:Info("Executor: " .. ExecutorSupport.Name)
-    Logger:Info("Game ID: " .. game.PlaceId)
+-- Analyze script and get info
+function Decompiler:analyzeScript(script)
+    local info = {
+        name = script.Name,
+        className = script.ClassName,
+        path = script:GetFullName(),
+        disabled = false,
+        runContext = "Legacy"
+    }
     
-    -- Check if native saveinstance is available
-    if ExecutorSupport.Functions.saveinstance then
-        Logger:Info("Phát hiện saveinstance native, sử dụng phương pháp tối ưu...")
-        
-        local fileName = self:GenerateFileName("Game")
-        
-        local success, err = pcall(function()
-            local options = {
-                mode = "full",
-                noscripts = false,
-                scriptcache = true,
-                timeout = 300,
-                decompile = true,
-                DecompileIgnore = {},
-                IgnoreProperties = {},
-                IgnoreClasses = {"Player", "PlayerScripts", "PlayerGui"},
-                SaveBytecode = true,
-                FilePath = fileName
-            }
-            
-            -- Try different saveinstance signatures
-            if syn and syn.saveinstance then
-                syn.saveinstance(options)
-            else
-                saveinstance(options)
+    pcall(function()
+        if script:IsA("Script") or script:IsA("LocalScript") then
+            info.disabled = script.Disabled
+        end
+        if script:IsA("Script") then
+            info.runContext = tostring(script.RunContext)
+        end
+    end)
+    
+    return info
+end
+
+-- Get decompiler statistics
+function Decompiler:getStats()
+    return {
+        total = self.stats.totalScripts,
+        success = self.stats.successfulDecompiles,
+        failed = self.stats.failedDecompiles,
+        lines = self.stats.totalLines,
+        successRate = self.stats.totalScripts > 0 
+            and math.floor((self.stats.successfulDecompiles / self.stats.totalScripts) * 100) 
+            or 0
+    }
+end
+
+-- Reset statistics
+function Decompiler:resetStats()
+    self.stats = {
+        totalScripts = 0,
+        successfulDecompiles = 0,
+        failedDecompiles = 0,
+        totalLines = 0
+    }
+end
+
+-- ═══════════════════════════════════════════════════════════════════
+-- RBXL SERIALIZER
+-- ═══════════════════════════════════════════════════════════════════
+
+local Serializer = {}
+
+Serializer.PropertyBlacklist = {
+    "Parent", "DataCost", "RobloxLocked", "ClassName",
+    "Archivable", "UniqueId", "HistoryId", "SourceAssetId"
+}
+
+Serializer.ClassBlacklist = {
+    "Player", "PlayerScripts", "PlayerGui", "Backpack",
+    "Camera", "Terrain"  -- Terrain handled separately
+}
+
+function Serializer:canSerialize(instance)
+    if not instance then return false end
+    
+    -- Check class blacklist
+    for _, class in ipairs(self.ClassBlacklist) do
+        if instance.ClassName == class then
+            return false
+        end
+    end
+    
+    -- Check archivable
+    local archivable = true
+    pcall(function()
+        archivable = instance.Archivable
+    end)
+    
+    return archivable or Config.SaveHiddenInstances
+end
+
+function Serializer:getProperties(instance)
+    local properties = {}
+    
+    -- Common properties for all instances
+    local commonProps = {
+        "Name", "Parent"
+    }
+    
+    -- BasePart properties
+    local basePartProps = {
+        "Anchored", "CanCollide", "CanTouch", "CanQuery",
+        "CastShadow", "Color", "Material", "Reflectance",
+        "Transparency", "Size", "CFrame", "Position", "Orientation",
+        "BrickColor", "Shape", "TopSurface", "BottomSurface",
+        "LeftSurface", "RightSurface", "FrontSurface", "BackSurface"
+    }
+    
+    -- MeshPart specific
+    local meshPartProps = {
+        "MeshId", "TextureID", "MeshSize"
+    }
+    
+    -- Decal/Texture properties
+    local decalProps = {
+        "Texture", "Color3", "Transparency", "Face", "ZIndex"
+    }
+    
+    -- Get properties based on class
+    local propsToGet = commonProps
+    
+    if instance:IsA("BasePart") then
+        for _, p in ipairs(basePartProps) do
+            table.insert(propsToGet, p)
+        end
+        if instance:IsA("MeshPart") then
+            for _, p in ipairs(meshPartProps) do
+                table.insert(propsToGet, p)
             end
+        end
+    elseif instance:IsA("Decal") or instance:IsA("Texture") then
+        for _, p in ipairs(decalProps) do
+            table.insert(propsToGet, p)
+        end
+    end
+    
+    -- Fetch properties
+    for _, propName in ipairs(propsToGet) do
+        local success, value = pcall(function()
+            return instance[propName]
+        end)
+        if success and value ~= nil then
+            properties[propName] = value
+        end
+    end
+    
+    return properties
+end
+
+function Serializer:serializeValue(value)
+    local t = typeof(value)
+    
+    if t == "string" then
+        return string.format("%q", value)
+    elseif t == "number" then
+        return tostring(value)
+    elseif t == "boolean" then
+        return tostring(value)
+    elseif t == "Vector3" then
+        return string.format("Vector3.new(%f, %f, %f)", value.X, value.Y, value.Z)
+    elseif t == "CFrame" then
+        local components = {value:GetComponents()}
+        return string.format("CFrame.new(%s)", table.concat(components, ", "))
+    elseif t == "Color3" then
+        return string.format("Color3.new(%f, %f, %f)", value.R, value.G, value.B)
+    elseif t == "BrickColor" then
+        return string.format("BrickColor.new(%q)", value.Name)
+    elseif t == "UDim" then
+        return string.format("UDim.new(%f, %d)", value.Scale, value.Offset)
+    elseif t == "UDim2" then
+        return string.format("UDim2.new(%f, %d, %f, %d)", 
+            value.X.Scale, value.X.Offset, value.Y.Scale, value.Y.Offset)
+    elseif t == "Enum" then
+        return tostring(value)
+    elseif t == "Instance" then
+        return "nil -- Instance reference"
+    else
+        return "nil"
+    end
+end
+
+-- ═══════════════════════════════════════════════════════════════════
+-- TERRAIN SAVER
+-- ═══════════════════════════════════════════════════════════════════
+
+local TerrainSaver = {}
+
+function TerrainSaver:save()
+    Logger:info("Starting terrain save...")
+    
+    local terrain = workspace:FindFirstChildOfClass("Terrain")
+    if not terrain then
+        Logger:warn("No terrain found in workspace")
+        return nil
+    end
+    
+    local success, terrainData = pcall(function()
+        -- Get terrain region
+        local region = terrain:CopyRegion(terrain.MaxExtents)
+        return region
+    end)
+    
+    if success and terrainData then
+        Logger:success("Terrain captured successfully")
+        return {
+            region = terrainData,
+            waterWaveSize = terrain.WaterWaveSize,
+            waterWaveSpeed = terrain.WaterWaveSpeed,
+            waterTransparency = terrain.WaterTransparency,
+            waterReflectance = terrain.WaterReflectance,
+            waterColor = terrain.WaterColor
+        }
+    else
+        Logger:error("Failed to capture terrain: " .. tostring(terrainData))
+        return nil
+    end
+end
+
+-- ═══════════════════════════════════════════════════════════════════
+-- MODEL SAVER
+-- ═══════════════════════════════════════════════════════════════════
+
+local ModelSaver = {
+    savedCount = 0,
+    scriptCount = 0,
+    errorCount = 0
+}
+
+function ModelSaver:saveInstance(instance, parent)
+    if not Serializer:canSerialize(instance) then
+        return nil
+    end
+    
+    local clone = nil
+    
+    pcall(function()
+        clone = instance:Clone()
+    end)
+    
+    if not clone then
+        -- Try manual recreation
+        pcall(function()
+            clone = Instance.new(instance.ClassName)
+            
+            -- Copy properties
+            local props = Serializer:getProperties(instance)
+            for propName, propValue in pairs(props) do
+                if propName ~= "Parent" then
+                    pcall(function()
+                        clone[propName] = propValue
+                    end)
+                end
+            end
+        end)
+    end
+    
+    if clone then
+        self.savedCount = self.savedCount + 1
+        
+        -- Handle scripts
+        if clone:IsA("LuaSourceContainer") then
+            self.scriptCount = self.scriptCount + 1
+            if Config.DecompileScripts then
+                local source = Decompiler:decompile(instance)
+                pcall(function()
+                    clone.Source = source
+                end)
+            end
+        end
+        
+        if parent then
+            clone.Parent = parent
+        end
+    else
+        self.errorCount = self.errorCount + 1
+    end
+    
+    return clone
+end
+
+function ModelSaver:saveRecursive(instance, parent, depth)
+    depth = depth or 0
+    
+    if depth > 100 then return end -- Prevent infinite recursion
+    
+    -- Yield periodically to prevent timeout
+    if self.savedCount % 100 == 0 then
+        RunService.Heartbeat:Wait()
+    end
+    
+    local clone = self:saveInstance(instance, parent)
+    
+    if clone then
+        for _, child in ipairs(instance:GetChildren()) do
+            self:saveRecursive(child, clone, depth + 1)
+        end
+    end
+    
+    return clone
+end
+
+function ModelSaver:reset()
+    self.savedCount = 0
+    self.scriptCount = 0
+    self.errorCount = 0
+end
+
+-- ═══════════════════════════════════════════════════════════════════
+-- RBXL FILE BUILDER
+-- ═══════════════════════════════════════════════════════════════════
+
+local RBXLBuilder = {}
+
+function RBXLBuilder:createGameModel()
+    local gameModel = Instance.new("Model")
+    gameModel.Name = "BaoSaveInstance_Export"
+    return gameModel
+end
+
+function RBXLBuilder:saveToFile(model, filename)
+    if not Executor.SupportsFileIO then
+        Logger:error("File I/O not supported on this executor")
+        return false
+    end
+    
+    local fullName = filename .. ".rbxl"
+    
+    -- Use saveinstance if available (most complete method)
+    if saveinstance then
+        local success, err = pcall(function()
+            saveinstance({
+                FilePath = fullName,
+                Object = model,
+                DecompileMode = Config.DecompileScripts and "full" or "none",
+                SavePlayers = false,
+                ShowStatus = false
+            })
         end)
         
         if success then
-            Logger:Success("════════════════════════════════════")
-            Logger:Success("      SAVE GAME HOÀN TẤT!          ")
-            Logger:Success("════════════════════════════════════")
-            Logger:Success("File: " .. fileName)
+            Logger:success("Saved using native saveinstance: " .. fullName)
             return true
         else
-            Logger:Warning("Native saveinstance thất bại, sử dụng phương pháp thủ công...")
-            Logger:Warning("Lỗi: " .. tostring(err))
+            Logger:warn("Native saveinstance failed, using fallback: " .. tostring(err))
         end
     end
     
-    -- Manual save
-    XMLSerializer:Reset()
-    
-    local startTime = tick()
-    local totalInstances = 0
-    
-    -- First pass: assign referents
-    Logger:Progress("Đang quét tất cả instances...")
-    
-    for _, container in ipairs(self.Containers) do
-        pcall(function()
-            XMLSerializer:GetReferent(container)
-            for _, instance in pairs(container:GetDescendants()) do
-                XMLSerializer:GetReferent(instance)
-                totalInstances = totalInstances + 1
-            end
-        end)
-    end
-    
-    -- Add nil instances
-    if ExecutorSupport.Functions.getnilinstances then
-        pcall(function()
-            for _, instance in pairs(getnilinstances()) do
-                XMLSerializer:GetReferent(instance)
-                totalInstances = totalInstances + 1
-            end
-        end)
-    end
-    
-    Logger:Info("Tổng số instances: " .. totalInstances)
-    
-    -- Build XML
-    local xml = self:CreateRBXLHeader()
-    
-    -- Save Terrain first
-    Logger:Progress("Bước 1/3: Đang save Terrain...")
-    local terrain = Workspace:FindFirstChildOfClass("Terrain")
-    if terrain then
-        xml = xml .. TerrainSerializer:SerializeTerrain(terrain)
-    end
-    
-    -- Save all containers
-    Logger:Progress("Bước 2/3: Đang save tất cả Models...")
-    local processedCount = 0
-    
-    for _, container in ipairs(self.Containers) do
-        Logger:Progress("Đang xử lý: " .. container.Name)
-        
-        local containerXml = '<Item class="' .. container.ClassName .. '" referent="' .. XMLSerializer:GetReferent(container) .. '">\n'
-        containerXml = containerXml .. "\t<Properties>\n"
-        containerXml = containerXml .. '\t\t<string name="Name">' .. Utils.EscapeXml(container.Name) .. '</string>\n'
-        containerXml = containerXml .. "\t</Properties>\n"
-        
-        pcall(function()
-            for _, child in pairs(container:GetChildren()) do
-                if child.ClassName ~= "Terrain" and
-                   child.ClassName ~= "Camera" and
-                   not child:IsA("Player") then
-                    if child:IsA("BaseScript") or child:IsA("ModuleScript") then
-                        containerXml = containerXml .. ScriptSerializer:SerializeScript(child)
-                    else
-                        containerXml = containerXml .. XMLSerializer:SerializeInstance(child, 1)
-                    end
-                    
-                    processedCount = processedCount + 1
-                    
-                    if processedCount % 100 == 0 then
-                        Logger:Progress("Đã xử lý: " .. processedCount .. " instances")
-                        task.wait()
-                    end
-                end
-            end
+    -- Fallback: Use syn.saveinstance or similar
+    if syn and syn.saveinstance then
+        local success, err = pcall(function()
+            syn.saveinstance(model, fullName)
         end)
         
-        containerXml = containerXml .. "</Item>\n"
-        xml = xml .. containerXml
+        if success then
+            Logger:success("Saved using syn.saveinstance: " .. fullName)
+            return true
+        end
     end
     
-    -- Save scripts from nil
-    Logger:Progress("Bước 3/3: Đang save Scripts...")
-    if ExecutorSupport.Functions.getnilinstances then
-        pcall(function()
-            for _, instance in pairs(getnilinstances()) do
-                if instance:IsA("BaseScript") or instance:IsA("ModuleScript") then
-                    xml = xml .. ScriptSerializer:SerializeScript(instance)
-                end
-            end
+    -- Final fallback: Save as RBXMX (XML format)
+    if writefile then
+        local xml = self:toRBXMX(model)
+        local success, err = pcall(function()
+            writefile(filename .. ".rbxmx", xml)
         end)
+        
+        if success then
+            Logger:success("Saved as RBXMX (rename to .rbxl in Studio): " .. filename .. ".rbxmx")
+            return true
+        else
+            Logger:error("Failed to write file: " .. tostring(err))
+        end
     end
     
-    xml = xml .. self:CreateRBXLFooter()
-    
-    local fileName = self:GenerateFileName("Game")
-    
-    Logger:Progress("Đang ghi file: " .. fileName)
-    Logger:Progress("Kích thước: " .. string.format("%.2f", #xml / 1024 / 1024) .. " MB")
-    
-    local success, err = pcall(function()
-        writefile(fileName, xml)
-    end)
-    
-    local elapsed = tick() - startTime
-    
-    if success then
-        Logger:Success("════════════════════════════════════")
-        Logger:Success("      SAVE GAME HOÀN TẤT!          ")
-        Logger:Success("════════════════════════════════════")
-        Logger:Success("File: " .. fileName)
-        Logger:Success("Tổng instances: " .. totalInstances)
-        Logger:Success("Kích thước: " .. string.format("%.2f", #xml / 1024 / 1024) .. " MB")
-        Logger:Success("Thời gian: " .. string.format("%.2f", elapsed) .. " giây")
-        return true
-    else
-        Logger:Error("Lỗi khi ghi file: " .. tostring(err))
-        return false
-    end
+    Logger:error("No file save method available")
+    return false
 end
 
---=============================================================================
--- USER INTERFACE
---=============================================================================
+function RBXLBuilder:toRBXMX(instance)
+    local xml = '<?xml version="1.0" encoding="utf-8"?>\n'
+    xml = xml .. '<roblox version="4">\n'
+    xml = xml .. self:instanceToXML(instance, 1)
+    xml = xml .. '</roblox>'
+    return xml
+end
+
+function RBXLBuilder:instanceToXML(instance, indent)
+    local tabs = string.rep("\t", indent)
+    local xml = ""
+    
+    xml = xml .. tabs .. '<Item class="' .. instance.ClassName .. '">\n'
+    xml = xml .. tabs .. '\t<Properties>\n'
+    
+    -- Name property
+    xml = xml .. tabs .. '\t\t<string name="Name">' .. Utils.sanitizeString(instance.Name) .. '</string>\n'
+    
+    -- Add more properties based on class
+    if instance:IsA("BasePart") then
+        pcall(function()
+            xml = xml .. tabs .. '\t\t<bool name="Anchored">' .. tostring(instance.Anchored) .. '</bool>\n'
+            xml = xml .. tabs .. '\t\t<bool name="CanCollide">' .. tostring(instance.CanCollide) .. '</bool>\n'
+            xml = xml .. tabs .. string.format('\t\t<Vector3 name="Size"><X>%f</X><Y>%f</Y><Z>%f</Z></Vector3>\n',
+                instance.Size.X, instance.Size.Y, instance.Size.Z)
+        end)
+    end
+    
+    if instance:IsA("LuaSourceContainer") then
+        pcall(function()
+            local source = instance.Source or ""
+            xml = xml .. tabs .. '\t\t<ProtectedString name="Source"><![CDATA[' .. source .. ']]></ProtectedString>\n'
+        end)
+    end
+    
+    xml = xml .. tabs .. '\t</Properties>\n'
+    
+    -- Children
+    for _, child in ipairs(instance:GetChildren()) do
+        xml = xml .. self:instanceToXML(child, indent + 1)
+    end
+    
+    xml = xml .. tabs .. '</Item>\n'
+    
+    return xml
+end
+
+-- ═══════════════════════════════════════════════════════════════════
+-- UI LIBRARY
+-- ═══════════════════════════════════════════════════════════════════
+
 local UI = {}
 
-function UI:Create()
-    -- Destroy existing GUI if present
-    local existingGui = LocalPlayer:FindFirstChild("PlayerGui") and 
-                        LocalPlayer.PlayerGui:FindFirstChild("BaoSaveInstanceUI")
-    if existingGui then
-        existingGui:Destroy()
+function UI:create()
+    -- Destroy existing UI
+    local existing = CoreGui:FindFirstChild("BaoSaveInstanceUI")
+    if existing then existing:Destroy() end
+    
+    -- Main ScreenGui
+    local ScreenGui = Instance.new("ScreenGui")
+    ScreenGui.Name = "BaoSaveInstanceUI"
+    ScreenGui.ResetOnSpawn = false
+    ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    
+    -- Try to parent to CoreGui, fallback to PlayerGui
+    pcall(function()
+        ScreenGui.Parent = CoreGui
+    end)
+    if not ScreenGui.Parent then
+        ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
     end
     
-    -- Create ScreenGui
-    local screenGui = Instance.new("ScreenGui")
-    screenGui.Name = "BaoSaveInstanceUI"
-    screenGui.ResetOnSpawn = false
-    screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    -- Main Frame with glassmorphism effect
+    local MainFrame = Instance.new("Frame")
+    MainFrame.Name = "MainFrame"
+    MainFrame.Size = UDim2.new(0, 420, 0, 520)
+    MainFrame.Position = UDim2.new(0.5, -210, 0.5, -260)
+    MainFrame.BackgroundColor3 = Config.Theme.Background
+    MainFrame.BorderSizePixel = 0
+    MainFrame.Parent = ScreenGui
     
-    -- Protect GUI if possible
-    if syn and syn.protect_gui then
-        syn.protect_gui(screenGui)
-    elseif gethui then
-        screenGui.Parent = gethui()
-    else
-        screenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+    -- Corner rounding
+    local Corner = Instance.new("UICorner")
+    Corner.CornerRadius = UDim.new(0, 16)
+    Corner.Parent = MainFrame
+    
+    -- Gradient overlay for glass effect
+    local Gradient = Instance.new("UIGradient")
+    Gradient.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(40, 40, 60)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(20, 20, 35))
+    })
+    Gradient.Rotation = 45
+    Gradient.Parent = MainFrame
+    
+    -- Stroke for border glow
+    local Stroke = Instance.new("UIStroke")
+    Stroke.Color = Config.Theme.Primary
+    Stroke.Thickness = 2
+    Stroke.Transparency = 0.5
+    Stroke.Parent = MainFrame
+    
+    -- Header
+    local Header = Instance.new("Frame")
+    Header.Name = "Header"
+    Header.Size = UDim2.new(1, 0, 0, 80)
+    Header.BackgroundTransparency = 1
+    Header.Parent = MainFrame
+    
+    -- Logo Text
+    local Logo = Instance.new("TextLabel")
+    Logo.Name = "Logo"
+    Logo.Size = UDim2.new(1, -20, 0, 35)
+    Logo.Position = UDim2.new(0, 10, 0, 10)
+    Logo.BackgroundTransparency = 1
+    Logo.Text = "⚡ BaoSaveInstance"
+    Logo.TextColor3 = Config.Theme.Accent
+    Logo.TextSize = 28
+    Logo.Font = Enum.Font.GothamBold
+    Logo.TextXAlignment = Enum.TextXAlignment.Left
+    Logo.Parent = Header
+    
+    -- Version & Executor Info
+    local InfoLabel = Instance.new("TextLabel")
+    InfoLabel.Name = "InfoLabel"
+    InfoLabel.Size = UDim2.new(1, -20, 0, 20)
+    InfoLabel.Position = UDim2.new(0, 10, 0, 50)
+    InfoLabel.BackgroundTransparency = 1
+    InfoLabel.Text = string.format("v%s | Executor: %s | %s", 
+        Config.Version, 
+        Executor.Name,
+        workspace.StreamingEnabled and "⚠ Streaming" or "✓ Full Load")
+    InfoLabel.TextColor3 = Config.Theme.TextMuted
+    InfoLabel.TextSize = 13
+    InfoLabel.Font = Enum.Font.Gotham
+    InfoLabel.TextXAlignment = Enum.TextXAlignment.Left
+    InfoLabel.Parent = Header
+    
+    -- Separator
+    local Sep1 = Instance.new("Frame")
+    Sep1.Size = UDim2.new(1, -40, 0, 1)
+    Sep1.Position = UDim2.new(0, 20, 0, 80)
+    Sep1.BackgroundColor3 = Config.Theme.Primary
+    Sep1.BackgroundTransparency = 0.7
+    Sep1.BorderSizePixel = 0
+    Sep1.Parent = MainFrame
+    
+    -- Buttons Container
+    local ButtonsContainer = Instance.new("Frame")
+    ButtonsContainer.Name = "ButtonsContainer"
+    ButtonsContainer.Size = UDim2.new(1, -40, 0, 160)
+    ButtonsContainer.Position = UDim2.new(0, 20, 0, 95)
+    ButtonsContainer.BackgroundTransparency = 1
+    ButtonsContainer.Parent = MainFrame
+    
+    local ButtonLayout = Instance.new("UIListLayout")
+    ButtonLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    ButtonLayout.Padding = UDim.new(0, 10)
+    ButtonLayout.Parent = ButtonsContainer
+    
+    -- Create Button Function
+    local function createButton(name, text, icon, order, color)
+        local Button = Instance.new("TextButton")
+        Button.Name = name
+        Button.Size = UDim2.new(1, 0, 0, 45)
+        Button.BackgroundColor3 = color or Config.Theme.Surface
+        Button.BorderSizePixel = 0
+        Button.Text = ""
+        Button.LayoutOrder = order
+        Button.AutoButtonColor = false
+        Button.Parent = ButtonsContainer
+        
+        local BtnCorner = Instance.new("UICorner")
+        BtnCorner.CornerRadius = UDim.new(0, 10)
+        BtnCorner.Parent = Button
+        
+        local BtnStroke = Instance.new("UIStroke")
+        BtnStroke.Color = Config.Theme.Primary
+        BtnStroke.Thickness = 1
+        BtnStroke.Transparency = 0.7
+        BtnStroke.Parent = Button
+        
+        local BtnText = Instance.new("TextLabel")
+        BtnText.Size = UDim2.new(1, -20, 1, 0)
+        BtnText.Position = UDim2.new(0, 10, 0, 0)
+        BtnText.BackgroundTransparency = 1
+        BtnText.Text = icon .. "  " .. text
+        BtnText.TextColor3 = Config.Theme.Text
+        BtnText.TextSize = 16
+        BtnText.Font = Enum.Font.GothamMedium
+        BtnText.TextXAlignment = Enum.TextXAlignment.Left
+        BtnText.Parent = Button
+        
+        -- Hover effect
+        Button.MouseEnter:Connect(function()
+            TweenService:Create(Button, TweenInfo.new(0.2), {
+                BackgroundColor3 = Config.Theme.Primary
+            }):Play()
+            TweenService:Create(BtnStroke, TweenInfo.new(0.2), {
+                Transparency = 0
+            }):Play()
+        end)
+        
+        Button.MouseLeave:Connect(function()
+            TweenService:Create(Button, TweenInfo.new(0.2), {
+                BackgroundColor3 = Config.Theme.Surface
+            }):Play()
+            TweenService:Create(BtnStroke, TweenInfo.new(0.2), {
+                Transparency = 0.7
+            }):Play()
+        end)
+        
+        return Button
     end
     
-    if not screenGui.Parent then
-        screenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
-    end
+    -- Main Buttons
+    local BtnSaveGame = createButton("BtnSaveGame", "Save Game (Full Map)", "🎮", 1)
+    local BtnSaveTerrain = createButton("BtnSaveTerrain", "Save Terrain Only", "🏔️", 2)
+    local BtnSaveModels = createButton("BtnSaveModels", "Save All Models", "📦", 3)
     
-    -- Main Frame
-    local mainFrame = Instance.new("Frame")
-    mainFrame.Name = "MainFrame"
-    mainFrame.Size = UDim2.new(0, 300, 0, 350)
-    mainFrame.Position = UDim2.new(0.5, -150, 0.5, -175)
-    mainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
-    mainFrame.BorderSizePixel = 0
-    mainFrame.Active = true
-    mainFrame.Draggable = true
-    mainFrame.Parent = screenGui
+    -- Advanced Panel
+    local AdvancedPanel = Instance.new("Frame")
+    AdvancedPanel.Name = "AdvancedPanel"
+    AdvancedPanel.Size = UDim2.new(1, -40, 0, 120)
+    AdvancedPanel.Position = UDim2.new(0, 20, 0, 270)
+    AdvancedPanel.BackgroundColor3 = Config.Theme.Surface
+    AdvancedPanel.BackgroundTransparency = 0.5
+    AdvancedPanel.BorderSizePixel = 0
+    AdvancedPanel.Parent = MainFrame
     
-    -- Corner radius
-    local mainCorner = Instance.new("UICorner")
-    mainCorner.CornerRadius = UDim.new(0, 12)
-    mainCorner.Parent = mainFrame
+    local AdvCorner = Instance.new("UICorner")
+    AdvCorner.CornerRadius = UDim.new(0, 10)
+    AdvCorner.Parent = AdvancedPanel
     
-    -- Stroke
-    local mainStroke = Instance.new("UIStroke")
-    mainStroke.Color = Color3.fromRGB(80, 80, 120)
-    mainStroke.Thickness = 2
-    mainStroke.Parent = mainFrame
+    local AdvTitle = Instance.new("TextLabel")
+    AdvTitle.Size = UDim2.new(1, -20, 0, 25)
+    AdvTitle.Position = UDim2.new(0, 10, 0, 5)
+    AdvTitle.BackgroundTransparency = 1
+    AdvTitle.Text = "⚙️ Advanced Options"
+    AdvTitle.TextColor3 = Config.Theme.Accent
+    AdvTitle.TextSize = 14
+    AdvTitle.Font = Enum.Font.GothamBold
+    AdvTitle.TextXAlignment = Enum.TextXAlignment.Left
+    AdvTitle.Parent = AdvancedPanel
     
-    -- Title Bar
-    local titleBar = Instance.new("Frame")
-    titleBar.Name = "TitleBar"
-    titleBar.Size = UDim2.new(1, 0, 0, 45)
-    titleBar.BackgroundColor3 = Color3.fromRGB(35, 35, 50)
-    titleBar.BorderSizePixel = 0
-    titleBar.Parent = mainFrame
+    -- Toggle Options (simplified display)
+    local OptionsText = Instance.new("TextLabel")
+    OptionsText.Size = UDim2.new(1, -20, 0, 80)
+    OptionsText.Position = UDim2.new(0, 10, 0, 30)
+    OptionsText.BackgroundTransparency = 1
+    OptionsText.Text = string.format(
+        "☑ Deep Decompile: %s\n☑ Save Hidden: %s\n☑ Bypass Streaming: %s\n☑ Preserve Hierarchy: %s",
+        Config.DecompileScripts and "ON" or "OFF",
+        Config.SaveHiddenInstances and "ON" or "OFF",
+        Config.BypassStreamingEnabled and "ON" or "OFF",
+        Config.PreserveHierarchy and "ON" or "OFF"
+    )
+    OptionsText.TextColor3 = Config.Theme.TextMuted
+    OptionsText.TextSize = 12
+    OptionsText.Font = Enum.Font.Gotham
+    OptionsText.TextXAlignment = Enum.TextXAlignment.Left
+    OptionsText.TextYAlignment = Enum.TextYAlignment.Top
+    OptionsText.Parent = AdvancedPanel
     
-    local titleCorner = Instance.new("UICorner")
-    titleCorner.CornerRadius = UDim.new(0, 12)
-    titleCorner.Parent = titleBar
+    -- Progress Section
+    local ProgressSection = Instance.new("Frame")
+    ProgressSection.Name = "ProgressSection"
+    ProgressSection.Size = UDim2.new(1, -40, 0, 40)
+    ProgressSection.Position = UDim2.new(0, 20, 0, 400)
+    ProgressSection.BackgroundTransparency = 1
+    ProgressSection.Parent = MainFrame
     
-    -- Fix bottom corners of title bar
-    local titleFix = Instance.new("Frame")
-    titleFix.Size = UDim2.new(1, 0, 0, 15)
-    titleFix.Position = UDim2.new(0, 0, 1, -15)
-    titleFix.BackgroundColor3 = Color3.fromRGB(35, 35, 50)
-    titleFix.BorderSizePixel = 0
-    titleFix.Parent = titleBar
+    local ProgressBg = Instance.new("Frame")
+    ProgressBg.Size = UDim2.new(1, 0, 0, 8)
+    ProgressBg.Position = UDim2.new(0, 0, 0, 20)
+    ProgressBg.BackgroundColor3 = Config.Theme.Surface
+    ProgressBg.BorderSizePixel = 0
+    ProgressBg.Parent = ProgressSection
     
-    -- Title Text
-    local titleText = Instance.new("TextLabel")
-    titleText.Name = "Title"
-    titleText.Size = UDim2.new(1, -50, 1, 0)
-    titleText.Position = UDim2.new(0, 15, 0, 0)
-    titleText.BackgroundTransparency = 1
-    titleText.Text = "🎮 BaoSaveInstance v1.0"
-    titleText.TextColor3 = Color3.fromRGB(255, 255, 255)
-    titleText.TextSize = 18
-    titleText.Font = Enum.Font.GothamBold
-    titleText.TextXAlignment = Enum.TextXAlignment.Left
-    titleText.Parent = titleBar
+    local ProgressCorner = Instance.new("UICorner")
+    ProgressCorner.CornerRadius = UDim.new(1, 0)
+    ProgressCorner.Parent = ProgressBg
+    
+    local ProgressBar = Instance.new("Frame")
+    ProgressBar.Name = "ProgressBar"
+    ProgressBar.Size = UDim2.new(0, 0, 1, 0)
+    ProgressBar.BackgroundColor3 = Config.Theme.Accent
+    ProgressBar.BorderSizePixel = 0
+    ProgressBar.Parent = ProgressBg
+    
+    local ProgressBarCorner = Instance.new("UICorner")
+    ProgressBarCorner.CornerRadius = UDim.new(1, 0)
+    ProgressBarCorner.Parent = ProgressBar
+    
+    local ProgressLabel = Instance.new("TextLabel")
+    ProgressLabel.Size = UDim2.new(1, 0, 0, 20)
+    ProgressLabel.BackgroundTransparency = 1
+    ProgressLabel.Text = "Ready"
+    ProgressLabel.TextColor3 = Config.Theme.TextMuted
+    ProgressLabel.TextSize = 12
+    ProgressLabel.Font = Enum.Font.Gotham
+    ProgressLabel.Parent = ProgressSection
+    
+    -- Log Window
+    local LogWindow = Instance.new("ScrollingFrame")
+    LogWindow.Name = "LogWindow"
+    LogWindow.Size = UDim2.new(1, -40, 0, 55)
+    LogWindow.Position = UDim2.new(0, 20, 0, 450)
+    LogWindow.BackgroundColor3 = Color3.fromRGB(10, 10, 15)
+    LogWindow.BorderSizePixel = 0
+    LogWindow.ScrollBarThickness = 4
+    LogWindow.ScrollBarImageColor3 = Config.Theme.Primary
+    LogWindow.CanvasSize = UDim2.new(0, 0, 0, 0)
+    LogWindow.Parent = MainFrame
+    
+    local LogCorner = Instance.new("UICorner")
+    LogCorner.CornerRadius = UDim.new(0, 8)
+    LogCorner.Parent = LogWindow
+    
+    local LogLayout = Instance.new("UIListLayout")
+    LogLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    LogLayout.Padding = UDim.new(0, 2)
+    LogLayout.Parent = LogWindow
     
     -- Close Button
-    local closeBtn = Instance.new("TextButton")
-    closeBtn.Name = "CloseButton"
-    closeBtn.Size = UDim2.new(0, 35, 0, 35)
-    closeBtn.Position = UDim2.new(1, -40, 0, 5)
-    closeBtn.BackgroundColor3 = Color3.fromRGB(200, 60, 60)
-    closeBtn.Text = "✕"
-    closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    closeBtn.TextSize = 16
-    closeBtn.Font = Enum.Font.GothamBold
-    closeBtn.Parent = titleBar
+    local CloseBtn = Instance.new("TextButton")
+    CloseBtn.Size = UDim2.new(0, 30, 0, 30)
+    CloseBtn.Position = UDim2.new(1, -40, 0, 10)
+    CloseBtn.BackgroundColor3 = Config.Theme.Error
+    CloseBtn.BackgroundTransparency = 0.8
+    CloseBtn.Text = "✕"
+    CloseBtn.TextColor3 = Config.Theme.Text
+    CloseBtn.TextSize = 16
+    CloseBtn.Font = Enum.Font.GothamBold
+    CloseBtn.BorderSizePixel = 0
+    CloseBtn.Parent = MainFrame
     
-    local closeBtnCorner = Instance.new("UICorner")
-    closeBtnCorner.CornerRadius = UDim.new(0, 8)
-    closeBtnCorner.Parent = closeBtn
+    local CloseBtnCorner = Instance.new("UICorner")
+    CloseBtnCorner.CornerRadius = UDim.new(0, 8)
+    CloseBtnCorner.Parent = CloseBtn
     
-    closeBtn.MouseButton1Click:Connect(function()
-        screenGui:Destroy()
+    CloseBtn.MouseButton1Click:Connect(function()
+        ScreenGui:Destroy()
     end)
     
-    -- Content Frame
-    local contentFrame = Instance.new("Frame")
-    contentFrame.Name = "Content"
-    contentFrame.Size = UDim2.new(1, -30, 1, -60)
-    contentFrame.Position = UDim2.new(0, 15, 0, 50)
-    contentFrame.BackgroundTransparency = 1
-    contentFrame.Parent = mainFrame
+    -- Draggable
+    local dragging, dragInput, dragStart, startPos
     
-    -- Info Label
-    local infoLabel = Instance.new("TextLabel")
-    infoLabel.Name = "Info"
-    infoLabel.Size = UDim2.new(1, 0, 0, 40)
-    infoLabel.Position = UDim2.new(0, 0, 0, 0)
-    infoLabel.BackgroundTransparency = 1
-    infoLabel.Text = "Executor: " .. ExecutorSupport.Name .. "\nGame ID: " .. game.PlaceId
-    infoLabel.TextColor3 = Color3.fromRGB(180, 180, 200)
-    infoLabel.TextSize = 12
-    infoLabel.Font = Enum.Font.Gotham
-    infoLabel.TextXAlignment = Enum.TextXAlignment.Left
-    infoLabel.TextYAlignment = Enum.TextYAlignment.Top
-    infoLabel.Parent = contentFrame
-    
-    -- Button creation function
-    local function createButton(name, text, icon, color, yPos)
-        local btn = Instance.new("TextButton")
-        btn.Name = name
-        btn.Size = UDim2.new(1, 0, 0, 55)
-        btn.Position = UDim2.new(0, 0, 0, yPos)
-        btn.BackgroundColor3 = color
-        btn.Text = ""
-        btn.Parent = contentFrame
-        
-        local btnCorner = Instance.new("UICorner")
-        btnCorner.CornerRadius = UDim.new(0, 10)
-        btnCorner.Parent = btn
-        
-        local btnStroke = Instance.new("UIStroke")
-        btnStroke.Color = Color3.fromRGB(
-            math.min(color.R * 255 + 40, 255),
-            math.min(color.G * 255 + 40, 255),
-            math.min(color.B * 255 + 40, 255)
-        )
-        btnStroke.Thickness = 1
-        btnStroke.Transparency = 0.5
-        btnStroke.Parent = btn
-        
-        local iconLabel = Instance.new("TextLabel")
-        iconLabel.Size = UDim2.new(0, 40, 1, 0)
-        iconLabel.Position = UDim2.new(0, 10, 0, 0)
-        iconLabel.BackgroundTransparency = 1
-        iconLabel.Text = icon
-        iconLabel.TextSize = 24
-        iconLabel.Font = Enum.Font.GothamBold
-        iconLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-        iconLabel.Parent = btn
-        
-        local textLabel = Instance.new("TextLabel")
-        textLabel.Size = UDim2.new(1, -60, 0, 25)
-        textLabel.Position = UDim2.new(0, 55, 0, 8)
-        textLabel.BackgroundTransparency = 1
-        textLabel.Text = text
-        textLabel.TextSize = 16
-        textLabel.Font = Enum.Font.GothamBold
-        textLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-        textLabel.TextXAlignment = Enum.TextXAlignment.Left
-        textLabel.Parent = btn
-        
-        local descLabel = Instance.new("TextLabel")
-        descLabel.Size = UDim2.new(1, -60, 0, 15)
-        descLabel.Position = UDim2.new(0, 55, 0, 32)
-        descLabel.BackgroundTransparency = 1
-        descLabel.TextSize = 11
-        descLabel.Font = Enum.Font.Gotham
-        descLabel.TextColor3 = Color3.fromRGB(200, 200, 220)
-        descLabel.TextXAlignment = Enum.TextXAlignment.Left
-        descLabel.Parent = btn
-        
-        -- Hover effects
-        btn.MouseEnter:Connect(function()
-            TweenService:Create(btn, TweenInfo.new(0.2), {
-                BackgroundColor3 = Color3.fromRGB(
-                    math.min(color.R * 255 + 20, 255),
-                    math.min(color.G * 255 + 20, 255),
-                    math.min(color.B * 255 + 20, 255)
-                )
-            }):Play()
-        end)
-        
-        btn.MouseLeave:Connect(function()
-            TweenService:Create(btn, TweenInfo.new(0.2), {
-                BackgroundColor3 = color
-            }):Play()
-        end)
-        
-        return btn, descLabel
-    end
-    
-    -- Save Game Button
-    local saveGameBtn, saveGameDesc = createButton(
-        "SaveGame",
-        "Save Game",
-        "🎮",
-        Color3.fromRGB(60, 120, 60),
-        50
-    )
-    saveGameDesc.Text = "Save toàn bộ: Terrain + Models + Scripts"
-    
-    saveGameBtn.MouseButton1Click:Connect(function()
-        saveGameBtn.Text = "Đang save..."
-        task.spawn(function()
-            SaveManager:SaveGame()
-            saveGameBtn.Text = ""
-        end)
+    Header.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+            dragStart = input.Position
+            startPos = MainFrame.Position
+        end
     end)
     
-    -- Save Terrain Button
-    local saveTerrainBtn, saveTerrainDesc = createButton(
-        "SaveTerrain",
-        "Save Terrain",
-        "🏔️",
-        Color3.fromRGB(60, 100, 140),
-        115
-    )
-    saveTerrainDesc.Text = "Chỉ save địa hình, nước, vật liệu"
-    
-    saveTerrainBtn.MouseButton1Click:Connect(function()
-        saveTerrainBtn.Text = "Đang save..."
-        task.spawn(function()
-            SaveManager:SaveTerrain()
-            saveTerrainBtn.Text = ""
-        end)
+    Header.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = false
+        end
     end)
     
-    -- Save All Models Button
-    local saveModelsBtn, saveModelsDesc = createButton(
-        "SaveModels",
-        "Save All Models",
-        "📦",
-        Color3.fromRGB(140, 80, 60),
-        180
-    )
-    saveModelsDesc.Text = "Save tất cả models, parts, meshes"
-    
-    saveModelsBtn.MouseButton1Click:Connect(function()
-        saveModelsBtn.Text = "Đang save..."
-        task.spawn(function()
-            SaveManager:SaveAllModels()
-            saveModelsBtn.Text = ""
-        end)
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+            local delta = input.Position - dragStart
+            MainFrame.Position = UDim2.new(
+                startPos.X.Scale, startPos.X.Offset + delta.X,
+                startPos.Y.Scale, startPos.Y.Offset + delta.Y
+            )
+        end
     end)
     
-    -- Status Label
-    local statusLabel = Instance.new("TextLabel")
-    statusLabel.Name = "Status"
-    statusLabel.Size = UDim2.new(1, 0, 0, 50)
-    statusLabel.Position = UDim2.new(0, 0, 1, -55)
-    statusLabel.BackgroundColor3 = Color3.fromRGB(35, 35, 50)
-    statusLabel.Text = "📁 Files sẽ được lưu vào thư mục workspace"
-    statusLabel.TextColor3 = Color3.fromRGB(150, 150, 180)
-    statusLabel.TextSize = 11
-    statusLabel.Font = Enum.Font.Gotham
-    statusLabel.TextWrapped = true
-    statusLabel.Parent = contentFrame
+    -- Store references
+    self.ScreenGui = ScreenGui
+    self.MainFrame = MainFrame
+    self.ProgressBar = ProgressBar
+    self.ProgressLabel = ProgressLabel
+    self.LogWindow = LogWindow
+    self.LogLayout = LogLayout
+    self.BtnSaveGame = BtnSaveGame
+    self.BtnSaveTerrain = BtnSaveTerrain
+    self.BtnSaveModels = BtnSaveModels
     
-    local statusCorner = Instance.new("UICorner")
-    statusCorner.CornerRadius = UDim.new(0, 8)
-    statusCorner.Parent = statusLabel
-    
-    Logger:Success("BaoSaveInstance UI đã được tạo thành công!")
-    
-    return screenGui
-end
-
---=============================================================================
--- INITIALIZATION
---=============================================================================
-function BaoSaveInstance.Init()
-    Logger:Info("═══════════════════════════════════════")
-    Logger:Info("       BaoSaveInstance Khởi động       ")
-    Logger:Info("═══════════════════════════════════════")
-    Logger:Info("Phiên bản: " .. BaoSaveInstance.Version)
-    Logger:Info("Executor: " .. ExecutorSupport.Name)
-    Logger:Info("")
-    Logger:Info("Các tính năng hỗ trợ:")
-    
-    for funcName, supported in pairs(ExecutorSupport.Functions) do
-        if supported then
-            Logger:Info("  ✓ " .. funcName)
+    -- Fade in animation
+    MainFrame.BackgroundTransparency = 1
+    for _, child in ipairs(MainFrame:GetDescendants()) do
+        if child:IsA("Frame") or child:IsA("TextLabel") or child:IsA("TextButton") then
+            if child.BackgroundTransparency < 1 then
+                child.BackgroundTransparency = 1
+            end
+            if child:IsA("TextLabel") or child:IsA("TextButton") then
+                child.TextTransparency = 1
+            end
         end
     end
     
-    Logger:Info("")
-    Logger:Info("Đang tạo giao diện...")
+    -- Animate in
+    TweenService:Create(MainFrame, TweenInfo.new(0.5, Enum.EasingStyle.Quart), {
+        BackgroundTransparency = 0
+    }):Play()
     
-    UI:Create()
+    for _, child in ipairs(MainFrame:GetDescendants()) do
+        if child:IsA("Frame") and child.BackgroundTransparency > 0 then
+            TweenService:Create(child, TweenInfo.new(0.5, Enum.EasingStyle.Quart), {
+                BackgroundTransparency = child.Name == "LogWindow" and 0 or 
+                    (child.Name == "AdvancedPanel" and 0.5 or 
+                    (child.Name == "ProgressBg" and 0 or 0))
+            }):Play()
+        end
+        if child:IsA("TextLabel") then
+            TweenService:Create(child, TweenInfo.new(0.5, Enum.EasingStyle.Quart), {
+                TextTransparency = 0
+            }):Play()
+        end
+        if child:IsA("TextButton") then
+            TweenService:Create(child, TweenInfo.new(0.5, Enum.EasingStyle.Quart), {
+                BackgroundTransparency = 0,
+                TextTransparency = 0
+            }):Play()
+        end
+    end
     
-    Logger:Success("BaoSaveInstance đã sẵn sàng!")
+    -- Setup log callback
+    Logger:onLog(function(entry)
+        self:addLog(entry)
+    end)
+    
+    return ScreenGui
 end
 
--- Export
-BaoSaveInstance.SaveManager = SaveManager
-BaoSaveInstance.XMLSerializer = XMLSerializer
-BaoSaveInstance.TerrainSerializer = TerrainSerializer
-BaoSaveInstance.ScriptSerializer = ScriptSerializer
-BaoSaveInstance.Logger = Logger
-BaoSaveInstance.Utils = Utils
-BaoSaveInstance.ExecutorSupport = ExecutorSupport
-BaoSaveInstance.UI = UI
+function UI:addLog(entry)
+    local color = Config.Theme.Text
+    if entry.level == "SUCCESS" then color = Config.Theme.Success
+    elseif entry.level == "WARN" then color = Config.Theme.Warning
+    elseif entry.level == "ERROR" then color = Config.Theme.Error
+    end
+    
+    local LogEntry = Instance.new("TextLabel")
+    LogEntry.Size = UDim2.new(1, -10, 0, 14)
+    LogEntry.BackgroundTransparency = 1
+    LogEntry.Text = string.format("[%s] %s", entry.time, entry.message)
+    LogEntry.TextColor3 = color
+    LogEntry.TextSize = 10
+    LogEntry.Font = Enum.Font.Code
+    LogEntry.TextXAlignment = Enum.TextXAlignment.Left
+    LogEntry.TextTruncate = Enum.TextTruncate.AtEnd
+    LogEntry.LayoutOrder = #Logger.logs
+    LogEntry.Parent = self.LogWindow
+    
+    -- Update canvas size
+    self.LogWindow.CanvasSize = UDim2.new(0, 0, 0, self.LogLayout.AbsoluteContentSize.Y + 10)
+    self.LogWindow.CanvasPosition = Vector2.new(0, self.LogLayout.AbsoluteContentSize.Y)
+end
 
--- Auto-run
-BaoSaveInstance.Init()
+function UI:setProgress(percent, text)
+    TweenService:Create(self.ProgressBar, TweenInfo.new(0.3), {
+        Size = UDim2.new(percent, 0, 1, 0)
+    }):Play()
+    
+    if text then
+        self.ProgressLabel.Text = text
+    end
+end
 
-return BaoSaveInstance
+function UI:setButtonsEnabled(enabled)
+    local buttons = {self.BtnSaveGame, self.BtnSaveTerrain, self.BtnSaveModels}
+    for _, btn in ipairs(buttons) do
+        btn.Active = enabled
+        btn.BackgroundTransparency = enabled and 0 or 0.5
+    end
+end
+
+-- ═══════════════════════════════════════════════════════════════════
+-- SAVE CONTROLLER
+-- ═══════════════════════════════════════════════════════════════════
+
+local SaveController = {}
+
+function SaveController:saveGame()
+    Logger:info("Starting full game save...")
+    UI:setButtonsEnabled(false)
+    UI:setProgress(0, "Initializing...")
+    
+    local gameModel = RBXLBuilder:createGameModel()
+    local timestamp = Utils.getTimestamp()
+    local filename = Config.FileName .. "_" .. timestamp
+    
+    -- Save workspace contents
+    UI:setProgress(0.1, "Saving workspace...")
+    Logger:info("Processing workspace...")
+    
+    ModelSaver:reset()
+    
+    local workspaceModel = Instance.new("Folder")
+    workspaceModel.Name = "Workspace"
+    workspaceModel.Parent = gameModel
+    
+    local children = workspace:GetChildren()
+    local total = #children
+    
+    for i, child in ipairs(children) do
+        if child.ClassName ~= "Camera" and child.ClassName ~= "Terrain" then
+            ModelSaver:saveRecursive(child, workspaceModel)
+        end
+        
+        if i % 10 == 0 then
+            UI:setProgress(0.1 + (i / total) * 0.4, string.format("Workspace: %d/%d", i, total))
+        end
+    end
+    
+    -- Save terrain
+    if Config.SaveTerrain then
+        UI:setProgress(0.5, "Saving terrain...")
+        Logger:info("Processing terrain...")
+        
+        local terrainData = TerrainSaver:save()
+        if terrainData then
+            -- Terrain will be saved in the RBXL file
+            local terrainInfo = Instance.new("Configuration")
+            terrainInfo.Name = "TerrainData"
+            terrainInfo.Parent = gameModel
+        end
+    end
+    
+    -- Save other services
+    UI:setProgress(0.6, "Saving services...")
+    
+    local servicesToSave = {
+        {service = Lighting, name = "Lighting"},
+        {service = ReplicatedStorage, name = "ReplicatedStorage"},
+        {service = StarterPlayer, name = "StarterPlayer"},
+        {service = StarterGui, name = "StarterGui"},
+        {service = Teams, name = "Teams"}
+    }
+    
+    for i, svc in ipairs(servicesToSave) do
+        local serviceModel = Instance.new("Folder")
+        serviceModel.Name = svc.name
+        serviceModel.Parent = gameModel
+        
+        for _, child in ipairs(svc.service:GetChildren()) do
+            ModelSaver:saveRecursive(child, serviceModel)
+        end
+        
+        UI:setProgress(0.6 + (i / #servicesToSave) * 0.2, "Services: " .. svc.name)
+    end
+    
+    -- Export
+    UI:setProgress(0.8, "Exporting .rbxl...")
+    Logger:info("Exporting to file...")
+    
+    local success = RBXLBuilder:saveToFile(gameModel, filename)
+    
+    -- Cleanup
+    gameModel:Destroy()
+    
+    if success then
+        UI:setProgress(1, "✓ Save completed!")
+        Logger:success(string.format("Saved! Models: %d | Scripts: %d | Errors: %d",
+            ModelSaver.savedCount, ModelSaver.scriptCount, ModelSaver.errorCount))
+    else
+        UI:setProgress(1, "✗ Save failed")
+        Logger:error("Save failed. Check executor capabilities.")
+    end
+    
+    UI:setButtonsEnabled(true)
+end
+
+function SaveController:saveTerrain()
+    Logger:info("Starting terrain-only save...")
+    UI:setButtonsEnabled(false)
+    UI:setProgress(0, "Initializing...")
+    
+    local timestamp = Utils.getTimestamp()
+    local filename = "Terrain_" .. timestamp
+    
+    UI:setProgress(0.3, "Capturing terrain...")
+    local terrainData = TerrainSaver:save()
+    
+    if terrainData then
+        UI:setProgress(0.7, "Exporting...")
+        
+        local terrainModel = Instance.new("Model")
+        terrainModel.Name = "TerrainExport"
+        
+        -- Note: Full terrain export requires saveinstance
+        if saveinstance then
+            pcall(function()
+                saveinstance({
+                    FilePath = filename .. ".rbxl",
+                    Object = workspace.Terrain,
+                    ShowStatus = false
+                })
+            end)
+            Logger:success("Terrain saved: " .. filename .. ".rbxl")
+            UI:setProgress(1, "✓ Terrain saved!")
+        else
+            Logger:warn("Full terrain save requires native saveinstance support")
+            UI:setProgress(1, "⚠ Limited terrain save")
+        end
+        
+        terrainModel:Destroy()
+    else
+        UI:setProgress(1, "✗ No terrain found")
+    end
+    
+    UI:setButtonsEnabled(true)
+end
+
+function SaveController:saveModels()
+    Logger:info("Starting models-only save...")
+    UI:setButtonsEnabled(false)
+    UI:setProgress(0, "Initializing...")
+    
+    local timestamp = Utils.getTimestamp()
+    local filename = "Models_" .. timestamp
+    
+    local modelsFolder = Instance.new("Model")
+    modelsFolder.Name = "ModelsExport"
+    
+    ModelSaver:reset()
+    
+    UI:setProgress(0.1, "Finding models...")
+    
+    -- Find all Models, MeshParts, Unions in workspace
+    local items = {}
+    for _, item in ipairs(workspace:GetDescendants()) do
+        if item:IsA("Model") or item:IsA("MeshPart") or item:IsA("UnionOperation") then
+            table.insert(items, item)
+        end
+    end
+    
+    local total = #items
+    Logger:info(string.format("Found %d models/meshes to save", total))
+    
+    for i, item in ipairs(items) do
+        ModelSaver:saveRecursive(item, modelsFolder)
+        
+        if i % 20 == 0 then
+            UI:setProgress(0.1 + (i / total) * 0.7, string.format("Models: %d/%d", i, total))
+        end
+    end
+    
+    UI:setProgress(0.8, "Exporting...")
+    
+    local success = RBXLBuilder:saveToFile(modelsFolder, filename)
+    
+    modelsFolder:Destroy()
+    
+    if success then
+        UI:setProgress(1, "✓ Models saved!")
+        Logger:success(string.format("Saved %d models", ModelSaver.savedCount))
+    else
+        UI:setProgress(1, "✗ Save failed")
+    end
+    
+    UI:setButtonsEnabled(true)
+end
+
+-- ═══════════════════════════════════════════════════════════════════
+-- MAIN INITIALIZATION
+-- ═══════════════════════════════════════════════════════════════════
+
+local function main()
+    print([[
+    
+    ██████╗  █████╗  ██████╗ ███████╗ █████╗ ██╗   ██╗███████╗
+    ██╔══██╗██╔══██╗██╔═══██╗██╔════╝██╔══██╗██║   ██║██╔════╝
+    ██████╔╝███████║██║   ██║███████╗███████║██║   ██║█████╗  
+    ██╔══██╗██╔══██║██║   ██║╚════██║██╔══██║╚██╗ ██╔╝██╔══╝  
+    ██████╔╝██║  ██║╚██████╔╝███████║██║  ██║ ╚████╔╝ ███████╗
+    ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═╝  ╚═══╝  ╚══════╝
+    
+    BaoSaveInstance V2.0.0
+    Production SaveInstance & Decompiler
+    
+    ]])
+    
+    Logger:info("Initializing BaoSaveInstance V2...")
+    Logger:info("Executor detected: " .. Executor.Name)
+    Logger:info("Decompile support: " .. tostring(Executor.SupportsDecompile))
+    Logger:info("File I/O support: " .. tostring(Executor.SupportsFileIO))
+    
+    -- Create UI
+    UI:create()
+    
+    -- Connect button events
+    UI.BtnSaveGame.MouseButton1Click:Connect(function()
+        task.spawn(function()
+            SaveController:saveGame()
+        end)
+    end)
+    
+    UI.BtnSaveTerrain.MouseButton1Click:Connect(function()
+        task.spawn(function()
+            SaveController:saveTerrain()
+        end)
+    end)
+    
+    UI.BtnSaveModels.MouseButton1Click:Connect(function()
+        task.spawn(function()
+            SaveController:saveModels()
+        end)
+    end)
+    
+    Logger:success("BaoSaveInstance V2 loaded successfully!")
+    Logger:info("Select an option above to begin saving.")
+end
+
+-- Run
+main()
