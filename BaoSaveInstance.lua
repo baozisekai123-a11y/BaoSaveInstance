@@ -1035,6 +1035,7 @@ TerrainSerializer.Materials = {
 }
 
 function TerrainSerializer.Dump(terrain, onProgress)
+    terrain = Stealth.Cloneref(terrain) -- Safe reference
     if not terrain or not terrain:IsA("Terrain") then
         return nil, "Invalid terrain"
     end
@@ -1381,11 +1382,33 @@ function InstanceDumper.SerializeScript(instance, indent)
     return xml
 end
 
+-- Safe Child Traversal
+function Stealth.SafeGetChildren(instance)
+    local safeInstance = Stealth.Cloneref(instance)
+    local children = {}
+    local success = pcall(function()
+        children = safeInstance:GetChildren()
+    end)
+    
+    if success and children then
+        -- Wrap all children in cloneref immediately
+        local safeChildren = {}
+        for _, child in ipairs(children) do
+            table.insert(safeChildren, Stealth.Cloneref(child))
+        end
+        return safeChildren
+    end
+    return {}
+end
+
 function InstanceDumper.DumpInstance(instance, depth, onProgress)
     depth = depth or 0
     local indent = string.rep("  ", depth)
     
     if not instance then return "" end
+    
+    -- Ensure we are working with a safe reference
+    instance = Stealth.Cloneref(instance)
     
     -- Skip check
     if InstanceDumper.ShouldSkip(instance) then
@@ -1415,13 +1438,10 @@ function InstanceDumper.DumpInstance(instance, depth, onProgress)
     
     xml = xml .. indent .. "  </Properties>\n"
     
-    -- Get children
-    local children = {}
-    local childSuccess = pcall(function()
-        children = instance:GetChildren()
-    end)
+    -- Get children safely
+    local children = Stealth.SafeGetChildren(instance)
     
-    if childSuccess and #children > 0 then
+    if #children > 0 then
         for _, child in ipairs(children) do
             local childXml = InstanceDumper.DumpInstance(child, depth + 1, onProgress)
             xml = xml .. childXml
@@ -2178,7 +2198,9 @@ function UI.SaveFullModel()
         UI.UpdateProgress(percent, status, string.format("Progress: %d/%d", count, totalEstimate))
     end
     
-    for _, child in ipairs(Workspace:GetChildren()) do
+    -- Safe Traversal for Workspace
+    local workspaceChildren = Stealth.SafeGetChildren(Workspace)
+    for _, child in ipairs(workspaceChildren) do
         if not child:IsA("Terrain") and not child:IsA("Camera") then
             local childXml = InstanceDumper.DumpInstance(child, 1, progressCallback)
             xml = xml .. childXml
