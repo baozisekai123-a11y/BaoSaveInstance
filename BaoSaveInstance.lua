@@ -1,932 +1,1188 @@
 --[[
-    ╔═══════════════════════════════════════════════════════════╗
-    ║           BaoSaveInstance - Advanced SaveInstance         ║
-    ║              High-Accuracy Decompiler System              ║
-    ║                    By Bao - 2024                          ║
-    ╚═══════════════════════════════════════════════════════════╝
-    
-    ✅ Features:
-    - Full Terrain/Model/Script Decompilation
-    - Single .rbxl output file
-    - Auto-detect executor (Xeno, Solara, Wave, TNG, Velocity)
-    - Clean UI with progress tracking
-    - No external dependencies
-    - Production-ready stability
+    ╔══════════════════════════════════════════════════════════════════╗
+    ║                      BaoSaveInstance v1.0                        ║
+    ║         Advanced Roblox Place/Model Decompiler & Exporter        ║
+    ╠══════════════════════════════════════════════════════════════════╣
+    ║  Modes:                                                          ║
+    ║    1. DecompileFullGame()  - Full game with scripts & terrain    ║
+    ║    2. DecompileFullModel() - Models only (no scripts/terrain)    ║
+    ║    3. DecompileTerrain()   - Terrain data only                   ║
+    ╚══════════════════════════════════════════════════════════════════╝
 ]]
 
--- ═══════════════════════════════════════════════════════════
--- 🔧 EXECUTOR DETECTION & API COMPATIBILITY LAYER
--- ═══════════════════════════════════════════════════════════
+local BaoSaveInstance = {}
+BaoSaveInstance.__index = BaoSaveInstance
 
-local ExecutorAPI = {}
+--------------------------------------------------------------------------------
+-- CONFIGURATION
+--------------------------------------------------------------------------------
 
--- Auto-detect executor and map functions
-function ExecutorAPI:Initialize()
-    local detected = "Unknown"
+BaoSaveInstance.Config = {
+    -- Output Settings
+    OutputFormat = "rbxlx",
+    OutputFolder = "BaoSaveInstance",
+    AutoCreateFolder = true,
     
-    -- Detect executor
-    if XENO_ENABLED or identifyexecutor and identifyexecutor():lower():find("xeno") then
-        detected = "Xeno"
-    elseif identifyexecutor and identifyexecutor():lower():find("solara") then
-        detected = "Solara"
-    elseif identifyexecutor and identifyexecutor():lower():find("wave") then
-        detected = "Wave"
-    elseif TNG_EXECUTOR then
-        detected = "TNG"
-    elseif VELOCITY_LOADED then
-        detected = "Velocity"
-    elseif syn then
-        detected = "Synapse-Compatible"
-    end
+    -- Decompilation Settings
+    DecompileScripts = true,
+    DecompileTimeout = 10,
+    MaxRetries = 3,
     
-    -- Map decompile function
-    self.decompile = 
-        decompile or 
-        syn and syn.decompile or
-        getscriptfunction or
-        function(script)
-            return "-- [BaoSaveInstance] Decompiler not available on " .. detected
-        end
+    -- Export Settings
+    PreserveDisabled = true,
+    IncludePlayerScripts = false,
+    IncludeTerrain = true,
+    IncludeCamera = false,
     
-    -- Map saveinstance function (fallback to custom)
-    self.saveinstance = saveinstance or syn and syn.saveinstance
+    -- Performance Settings
+    YieldInterval = 100,
+    MaxInstancesPerCycle = 500,
     
-    -- Map filesystem functions
-    self.writefile = writefile or syn and syn.write_file
-    self.makefolder = makefolder or syn and syn.create_folder or function() end
-    self.isfolder = isfolder or function() return false end
+    -- Debug Settings
+    DebugMode = false,
+    ProgressLogging = true,
     
-    -- Map game functions
-    self.getinstances = getinstances or syn and syn.get_instances or function()
-        return game:GetDescendants()
-    end
+    -- Services to export in full game mode
+    ServicesToExport = {
+        "Workspace",
+        "Lighting",
+        "MaterialService",
+        "ReplicatedFirst",
+        "ReplicatedStorage",
+        "ServerScriptService",
+        "ServerStorage",
+        "StarterGui",
+        "StarterPack",
+        "StarterPlayer",
+        "SoundService",
+        "Chat",
+        "LocalizationService",
+        "Teams",
+        "TestService"
+    },
     
-    -- Map table utilities
-    self.getreg = getreg or debug.getregistry or function() return {} end
-    self.getgc = getgc or get_gc_objects or function() return {} end
+    -- Blacklist Configuration
+    Blacklist = {
+        ClassNames = {
+            "Player",
+            "PlayerGui",
+            "PlayerScripts",
+            "Backpack",
+            "CoreGui",
+            "CorePackages",
+            "RobloxPluginGuiService"
+        },
+        InstanceNames = {},
+        Paths = {}
+    },
     
-    -- Map protection bypass
-    self.getnilinstances = getnilinstances or function() return {} end
-    
-    self.executor = detected
-    return self
-end
-
-ExecutorAPI:Initialize()
-
-print("[BaoSaveInstance] Executor detected: " .. ExecutorAPI.executor)
-
--- ═══════════════════════════════════════════════════════════
--- 🧠 ADVANCED DECOMPILER ENGINE
--- ═══════════════════════════════════════════════════════════
-
-local Decompiler = {}
-Decompiler.__index = Decompiler
-
-function Decompiler.new()
-    local self = setmetatable({}, Decompiler)
-    self.cache = {}
-    self.stats = {
-        success = 0,
-        failed = 0,
-        partial = 0
+    -- Whitelist (if enabled, only these will be exported)
+    Whitelist = {
+        Enabled = false,
+        ClassNames = {},
+        InstanceNames = {},
+        Paths = {}
     }
-    return self
+}
+
+--------------------------------------------------------------------------------
+-- INTERNAL STATE
+--------------------------------------------------------------------------------
+
+local State = {
+    TotalInstances = 0,
+    ProcessedInstances = 0,
+    Errors = {},
+    Warnings = {},
+    StartTime = 0,
+    CurrentMode = nil
+}
+
+--------------------------------------------------------------------------------
+-- UTILITY FUNCTIONS
+--------------------------------------------------------------------------------
+
+local HttpService = game:GetService("HttpService")
+local RunService = game:GetService("RunService")
+local ContentProvider = game:GetService("ContentProvider")
+
+local function Log(level, message)
+    if not BaoSaveInstance.Config.DebugMode and level == "DEBUG" then
+        return
+    end
+    
+    local prefix = {
+        DEBUG = "[DEBUG]",
+        INFO = "[INFO]",
+        WARN = "[WARN]",
+        ERROR = "[ERROR]",
+        PROGRESS = "[PROGRESS]"
+    }
+    
+    print(string.format("%s BaoSaveInstance: %s", prefix[level] or "[LOG]", tostring(message)))
 end
 
--- Core decompilation with error handling
-function Decompiler:Decompile(scriptInstance)
-    if not scriptInstance:IsA("LuaSourceContainer") then
-        return nil, "Not a script"
-    end
+local function LogProgress(current, total, operation)
+    if not BaoSaveInstance.Config.ProgressLogging then return end
     
-    -- Check cache
-    local cacheKey = scriptInstance:GetFullName()
-    if self.cache[cacheKey] then
-        return self.cache[cacheKey]
-    end
-    
-    local success, source = pcall(function()
-        -- Try direct source access first
-        if scriptInstance.Source and #scriptInstance.Source > 0 then
-            return scriptInstance.Source
-        end
-        
-        -- Try executor decompile
-        local decompiledSource = ExecutorAPI.decompile(scriptInstance)
-        
-        if decompiledSource and #decompiledSource > 10 then
-            return decompiledSource
-        end
-        
-        -- Fallback for protected scripts
-        return self:AdvancedDecompile(scriptInstance)
-    end)
-    
-    local result
-    if success and source then
-        result = source
-        self.stats.success = self.stats.success + 1
-    else
-        result = string.format([[
--- [BaoSaveInstance] Failed to decompile: %s
--- Reason: %s
--- Path: %s
--- ClassName: %s
+    local percentage = math.floor((current / total) * 100)
+    Log("PROGRESS", string.format("%s: %d%% (%d/%d)", operation, percentage, current, total))
+end
 
--- This script was protected or bytecode-only
-]], 
-            scriptInstance.Name,
-            tostring(source),
-            scriptInstance:GetFullName(),
-            scriptInstance.ClassName
-        )
-        self.stats.failed = self.stats.failed + 1
+local function SafeCall(func, ...)
+    local success, result = pcall(func, ...)
+    if not success then
+        table.insert(State.Errors, tostring(result))
+        Log("ERROR", result)
+        return nil, result
     end
-    
-    self.cache[cacheKey] = result
     return result
 end
 
--- Advanced decompilation for protected scripts
-function Decompiler:AdvancedDecompile(scriptInstance)
-    local source = "-- Advanced decompilation attempt\n\n"
+local function YieldIfNeeded(counter)
+    if counter % BaoSaveInstance.Config.YieldInterval == 0 then
+        RunService.Heartbeat:Wait()
+    end
+end
+
+local function EnsureFolder(path)
+    if not BaoSaveInstance.Config.AutoCreateFolder then return true end
     
-    -- Try to extract constants from bytecode
-    local constants = self:ExtractConstants(scriptInstance)
-    if #constants > 0 then
-        source = source .. "-- Detected Constants:\n"
-        for _, const in ipairs(constants) do
-            source = source .. string.format("-- %s\n", tostring(const))
+    local success, err = pcall(function()
+        if isfolder and not isfolder(path) then
+            makefolder(path)
         end
-        self.stats.partial = self.stats.partial + 1
+    end)
+    
+    return success
+end
+
+local function GetGameName()
+    local name = game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId).Name or "Unknown"
+    name = string.gsub(name, "[^%w%s%-_]", "")
+    name = string.gsub(name, "%s+", "_")
+    return name
+end
+
+local function GenerateFileName(mode)
+    local gameName = SafeCall(GetGameName) or "Game"
+    local timestamp = os.date("%Y%m%d_%H%M%S")
+    local format = BaoSaveInstance.Config.OutputFormat
+    
+    local prefix = {
+        FullGame = "BaoSaveInstance_FullGame",
+        FullModel = "BaoSaveInstance_Models",
+        Terrain = "BaoSaveInstance_Terrain"
+    }
+    
+    return string.format("%s/%s_%s_%s.%s", 
+        BaoSaveInstance.Config.OutputFolder,
+        prefix[mode] or "BaoSaveInstance",
+        gameName,
+        timestamp,
+        format
+    )
+end
+
+--------------------------------------------------------------------------------
+-- XML SERIALIZATION ENGINE
+--------------------------------------------------------------------------------
+
+local XMLSerializer = {}
+
+local function EscapeXML(str)
+    if type(str) ~= "string" then
+        str = tostring(str)
     end
     
-    -- Try to extract upvalues
-    local upvalues = self:ExtractUpvalues(scriptInstance)
-    if #upvalues > 0 then
-        source = source .. "\n-- Detected Upvalues:\n"
-        for name, value in pairs(upvalues) do
-            source = source .. string.format("-- %s = %s\n", name, tostring(value))
+    str = string.gsub(str, "&", "&amp;")
+    str = string.gsub(str, "<", "&lt;")
+    str = string.gsub(str, ">", "&gt;")
+    str = string.gsub(str, '"', "&quot;")
+    str = string.gsub(str, "'", "&apos;")
+    
+    -- Remove invalid XML characters
+    str = string.gsub(str, "[\x00-\x08\x0B\x0C\x0E-\x1F]", "")
+    
+    return str
+end
+
+local function EncodeBase64(data)
+    local b = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+    return ((data:gsub('.', function(x) 
+        local r, b = '', x:byte()
+        for i = 8, 1, -1 do r = r .. (b % 2 ^ i - b % 2 ^ (i - 1) > 0 and '1' or '0') end
+        return r
+    end) .. '0000'):gsub('%d%d%d?%d?%d?%d?', function(x)
+        if #x < 6 then return '' end
+        local c = 0
+        for i = 1, 6 do c = c + (x:sub(i, i) == '1' and 2 ^ (6 - i) or 0) end
+        return b:sub(c + 1, c + 1)
+    end) .. ({ '', '==', '=' })[#data % 3 + 1])
+end
+
+local PropertySerializers = {}
+
+PropertySerializers["string"] = function(value)
+    return string.format("<string>%s</string>", EscapeXML(value))
+end
+
+PropertySerializers["number"] = function(value)
+    if value == math.huge then
+        return "<float>INF</float>"
+    elseif value == -math.huge then
+        return "<float>-INF</float>"
+    elseif value ~= value then
+        return "<float>NAN</float>"
+    else
+        return string.format("<float>%s</float>", tostring(value))
+    end
+end
+
+PropertySerializers["boolean"] = function(value)
+    return string.format("<bool>%s</bool>", value and "true" or "false")
+end
+
+PropertySerializers["Vector3"] = function(value)
+    return string.format([[<Vector3>
+        <X>%s</X>
+        <Y>%s</Y>
+        <Z>%s</Z>
+    </Vector3>]], value.X, value.Y, value.Z)
+end
+
+PropertySerializers["Vector2"] = function(value)
+    return string.format([[<Vector2>
+        <X>%s</X>
+        <Y>%s</Y>
+    </Vector2>]], value.X, value.Y)
+end
+
+PropertySerializers["CFrame"] = function(value)
+    local components = {value:GetComponents()}
+    return string.format([[<CoordinateFrame>
+        <X>%s</X><Y>%s</Y><Z>%s</Z>
+        <R00>%s</R00><R01>%s</R01><R02>%s</R02>
+        <R10>%s</R10><R11>%s</R11><R12>%s</R12>
+        <R20>%s</R20><R21>%s</R21><R22>%s</R22>
+    </CoordinateFrame>]], unpack(components))
+end
+
+PropertySerializers["Color3"] = function(value)
+    return string.format([[<Color3>
+        <R>%s</R>
+        <G>%s</G>
+        <B>%s</B>
+    </Color3>]], value.R, value.G, value.B)
+end
+
+PropertySerializers["BrickColor"] = function(value)
+    return string.format("<int>%d</int>", value.Number)
+end
+
+PropertySerializers["UDim"] = function(value)
+    return string.format([[<UDim>
+        <S>%s</S>
+        <O>%d</O>
+    </UDim>]], value.Scale, value.Offset)
+end
+
+PropertySerializers["UDim2"] = function(value)
+    return string.format([[<UDim2>
+        <XS>%s</XS><XO>%d</XO>
+        <YS>%s</YS><YO>%d</YO>
+    </UDim2>]], value.X.Scale, value.X.Offset, value.Y.Scale, value.Y.Offset)
+end
+
+PropertySerializers["Rect"] = function(value)
+    return string.format([[<Rect2D>
+        <min><X>%s</X><Y>%s</Y></min>
+        <max><X>%s</X><Y>%s</Y></max>
+    </Rect2D>]], value.Min.X, value.Min.Y, value.Max.X, value.Max.Y)
+end
+
+PropertySerializers["NumberSequence"] = function(value)
+    local keypoints = {}
+    for _, kp in ipairs(value.Keypoints) do
+        table.insert(keypoints, string.format("%s %s %s", kp.Time, kp.Value, kp.Envelope))
+    end
+    return string.format("<NumberSequence>%s</NumberSequence>", table.concat(keypoints, " "))
+end
+
+PropertySerializers["ColorSequence"] = function(value)
+    local keypoints = {}
+    for _, kp in ipairs(value.Keypoints) do
+        table.insert(keypoints, string.format("%s %s %s %s 0", 
+            kp.Time, kp.Value.R, kp.Value.G, kp.Value.B))
+    end
+    return string.format("<ColorSequence>%s</ColorSequence>", table.concat(keypoints, " "))
+end
+
+PropertySerializers["NumberRange"] = function(value)
+    return string.format("<NumberRange>%s %s</NumberRange>", value.Min, value.Max)
+end
+
+PropertySerializers["Ray"] = function(value)
+    return string.format([[<Ray>
+        <origin><X>%s</X><Y>%s</Y><Z>%s</Z></origin>
+        <direction><X>%s</X><Y>%s</Y><Z>%s</Z></direction>
+    </Ray>]], value.Origin.X, value.Origin.Y, value.Origin.Z,
+        value.Direction.X, value.Direction.Y, value.Direction.Z)
+end
+
+PropertySerializers["Faces"] = function(value)
+    local faces = 0
+    if value.Top then faces = faces + 1 end
+    if value.Bottom then faces = faces + 2 end
+    if value.Left then faces = faces + 4 end
+    if value.Right then faces = faces + 8 end
+    if value.Back then faces = faces + 16 end
+    if value.Front then faces = faces + 32 end
+    return string.format("<Faces>%d</Faces>", faces)
+end
+
+PropertySerializers["Axes"] = function(value)
+    local axes = 0
+    if value.X then axes = axes + 1 end
+    if value.Y then axes = axes + 2 end
+    if value.Z then axes = axes + 4 end
+    return string.format("<Axes>%d</Axes>", axes)
+end
+
+PropertySerializers["PhysicalProperties"] = function(value)
+    if value then
+        return string.format([[<PhysicalProperties>
+            <CustomPhysics>true</CustomPhysics>
+            <Density>%s</Density>
+            <Friction>%s</Friction>
+            <Elasticity>%s</Elasticity>
+            <FrictionWeight>%s</FrictionWeight>
+            <ElasticityWeight>%s</ElasticityWeight>
+        </PhysicalProperties>]], 
+            value.Density, value.Friction, value.Elasticity,
+            value.FrictionWeight, value.ElasticityWeight)
+    else
+        return [[<PhysicalProperties><CustomPhysics>false</CustomPhysics></PhysicalProperties>]]
+    end
+end
+
+PropertySerializers["EnumItem"] = function(value)
+    return string.format("<token>%d</token>", value.Value)
+end
+
+PropertySerializers["Instance"] = function(value, refMap)
+    if value and refMap[value] then
+        return string.format("<Ref>%s</Ref>", refMap[value])
+    else
+        return "<Ref>null</Ref>"
+    end
+end
+
+PropertySerializers["Content"] = function(value)
+    return string.format("<Content><url>%s</url></Content>", EscapeXML(tostring(value)))
+end
+
+local function SerializeProperty(name, value, refMap)
+    if value == nil then return nil end
+    
+    local valueType = typeof(value)
+    local serializer = PropertySerializers[valueType]
+    
+    if serializer then
+        if valueType == "Instance" then
+            return string.format('<Item name="%s">%s</Item>', name, serializer(value, refMap))
+        else
+            return string.format('<Item name="%s">%s</Item>', name, serializer(value))
         end
+    elseif valueType == "table" then
+        return nil
+    else
+        return string.format('<Item name="%s"><string>%s</string></Item>', name, EscapeXML(tostring(value)))
+    end
+end
+
+--------------------------------------------------------------------------------
+-- INSTANCE SERIALIZATION
+--------------------------------------------------------------------------------
+
+local InstanceSerializer = {}
+
+local PropertiesToIgnore = {
+    "Parent", "DataCost", "RobloxLocked", "Archivable", "ClassName",
+    "className", "archivable", "RobloxLocked"
+}
+
+local PropertiesToIgnoreSet = {}
+for _, prop in ipairs(PropertiesToIgnore) do
+    PropertiesToIgnoreSet[prop] = true
+end
+
+local function GetInstanceProperties(instance)
+    local properties = {}
+    
+    local success, props = pcall(function()
+        if getproperties then
+            return getproperties(instance)
+        elseif gethiddenproperties and getproperties then
+            local visible = getproperties(instance)
+            local hidden = gethiddenproperties(instance)
+            for k, v in pairs(hidden) do
+                visible[k] = v
+            end
+            return visible
+        end
+        return nil
+    end)
+    
+    if success and props then
+        for propName, propValue in pairs(props) do
+            if not PropertiesToIgnoreSet[propName] then
+                properties[propName] = propValue
+            end
+        end
+    else
+        -- Fallback: Try common properties
+        local commonProps = {
+            "Name", "Position", "Size", "CFrame", "Color", "BrickColor",
+            "Material", "Transparency", "Reflectance", "Anchored", "CanCollide",
+            "Shape", "FormFactor", "TopSurface", "BottomSurface", "LeftSurface",
+            "RightSurface", "FrontSurface", "BackSurface", "Velocity", "RotVelocity",
+            "Locked", "Massless", "RootPriority", "CustomPhysicalProperties",
+            "Text", "TextColor3", "TextSize", "Font", "TextScaled", "TextWrapped",
+            "BackgroundColor3", "BackgroundTransparency", "BorderColor3", "BorderSizePixel",
+            "Image", "ImageColor3", "ImageTransparency", "ScaleType", "SliceCenter",
+            "SoundId", "Volume", "PlaybackSpeed", "Looped", "Playing",
+            "MeshId", "TextureId", "Scale", "Offset", "VertexColor",
+            "Brightness", "Range", "Shadows", "Enabled", "Face",
+            "Adornee", "AlwaysOnTop", "ExtentsOffset", "ExtentsOffsetWorldSpace",
+            "MaxDistance", "StudsOffset", "StudsOffsetWorldSpace",
+            "Source", "LinkedSource", "Disabled",
+            "Animation", "Priority", "Looped",
+            "Attachment0", "Attachment1", "Visible",
+            "C0", "C1", "Part0", "Part1",
+            "MaxForce", "MaxTorque", "P", "D",
+            "DesiredAngle", "MaxVelocity",
+            "Value", "MaxValue", "MinValue"
+        }
+        
+        for _, propName in ipairs(commonProps) do
+            local propSuccess, propValue = pcall(function()
+                return instance[propName]
+            end)
+            if propSuccess and propValue ~= nil then
+                properties[propName] = propValue
+            end
+        end
+    end
+    
+    return properties
+end
+
+local function CreateRefId()
+    return HttpService:GenerateGUID(false):gsub("-", "")
+end
+
+local function BuildRefMap(instances)
+    local refMap = {}
+    for _, instance in ipairs(instances) do
+        refMap[instance] = "RBX" .. CreateRefId()
+    end
+    return refMap
+end
+
+function InstanceSerializer.SerializeInstance(instance, refMap, depth)
+    depth = depth or 0
+    local indent = string.rep("  ", depth)
+    
+    local className = instance.ClassName
+    local refId = refMap[instance] or ("RBX" .. CreateRefId())
+    
+    local lines = {}
+    table.insert(lines, string.format('%s<Item class="%s" referent="%s">', indent, className, refId))
+    table.insert(lines, string.format('%s  <Properties>', indent))
+    
+    -- Name property
+    table.insert(lines, string.format('%s    <string name="Name">%s</string>', indent, EscapeXML(instance.Name)))
+    
+    -- Get and serialize properties
+    local properties = GetInstanceProperties(instance)
+    for propName, propValue in pairs(properties) do
+        if propName ~= "Name" then
+            local serialized = SerializeProperty(propName, propValue, refMap)
+            if serialized then
+                table.insert(lines, string.format('%s    %s', indent, serialized))
+            end
+        end
+    end
+    
+    table.insert(lines, string.format('%s  </Properties>', indent))
+    
+    -- Serialize children
+    local children = instance:GetChildren()
+    if #children > 0 then
+        for i, child in ipairs(children) do
+            local childXml = InstanceSerializer.SerializeInstance(child, refMap, depth + 1)
+            if childXml then
+                table.insert(lines, childXml)
+            end
+            YieldIfNeeded(i)
+        end
+    end
+    
+    table.insert(lines, string.format('%s</Item>', indent))
+    
+    return table.concat(lines, "\n")
+end
+
+--------------------------------------------------------------------------------
+-- SCRIPT DECOMPILATION
+--------------------------------------------------------------------------------
+
+local ScriptHandler = {}
+
+function ScriptHandler.DecompileScript(script)
+    if not BaoSaveInstance.Config.DecompileScripts then
+        return "-- Decompilation disabled"
+    end
+    
+    local source = nil
+    
+    -- Try to get source directly
+    local success, result = pcall(function()
+        return script.Source
+    end)
+    
+    if success and result and #result > 0 then
+        source = result
+    else
+        -- Try decompile function
+        for _, attempt in ipairs({
+            function() return decompile(script) end,
+            function() return getscriptbytecode and getscriptbytecode(script) end,
+            function() return debug.getinfo and debug.getinfo(script).source end
+        }) do
+            local decompileSuccess, decompileResult = pcall(attempt)
+            if decompileSuccess and decompileResult and #tostring(decompileResult) > 0 then
+                source = decompileResult
+                break
+            end
+        end
+    end
+    
+    if not source or #source == 0 then
+        source = string.format("-- Failed to decompile %s: %s", script.ClassName, script:GetFullName())
+        table.insert(State.Warnings, "Failed to decompile: " .. script:GetFullName())
     end
     
     return source
 end
 
--- Extract constants from script
-function Decompiler:ExtractConstants(scriptInstance)
-    local constants = {}
+function ScriptHandler.GetAllScripts(root)
+    local scripts = {}
     
-    pcall(function()
-        local func = ExecutorAPI.getgc()
-        for _, obj in ipairs(func) do
-            if type(obj) == "string" or type(obj) == "number" then
-                table.insert(constants, obj)
-            end
+    local function search(instance)
+        if instance:IsA("LuaSourceContainer") then
+            table.insert(scripts, instance)
         end
-    end)
-    
-    return constants
-end
-
--- Extract upvalues if possible
-function Decompiler:ExtractUpvalues(scriptInstance)
-    local upvalues = {}
-    
-    pcall(function()
-        local registry = ExecutorAPI.getreg()
-        for k, v in pairs(registry) do
-            if type(k) == "string" and not k:find("^__") then
-                upvalues[k] = v
-            end
-        end
-    end)
-    
-    return upvalues
-end
-
--- Decompile all scripts in game
-function Decompiler:DecompileAll(progressCallback)
-    local allScripts = {}
-    
-    -- Get all script instances
-    for _, descendant in ipairs(game:GetDescendants()) do
-        if descendant:IsA("LuaSourceContainer") then
-            table.insert(allScripts, descendant)
+        for _, child in ipairs(instance:GetChildren()) do
+            search(child)
         end
     end
     
-    -- Include nil instances
-    pcall(function()
-        for _, instance in ipairs(ExecutorAPI.getnilinstances()) do
-            if instance:IsA("LuaSourceContainer") then
-                table.insert(allScripts, instance)
-            end
+    if type(root) == "table" then
+        for _, r in ipairs(root) do
+            search(r)
         end
-    end)
-    
-    local total = #allScripts
-    local results = {}
-    
-    for i, script in ipairs(allScripts) do
-        local source = self:Decompile(script)
-        
-        results[script] = {
-            source = source,
-            path = script:GetFullName(),
-            className = script.ClassName
-        }
-        
-        if progressCallback then
-            progressCallback(i, total, script.Name)
-        end
-        
-        -- Prevent timeout
-        if i % 10 == 0 then
-            task.wait()
-        end
+    else
+        search(root)
     end
     
-    return results
+    return scripts
 end
 
--- ═══════════════════════════════════════════════════════════
--- 🌍 TERRAIN SAVER
--- ═══════════════════════════════════════════════════════════
+--------------------------------------------------------------------------------
+-- TERRAIN SERIALIZATION
+--------------------------------------------------------------------------------
 
-local TerrainSaver = {}
+local TerrainSerializer = {}
 
-function TerrainSaver:Save()
+function TerrainSerializer.SerializeTerrain()
     local terrain = workspace:FindFirstChildOfClass("Terrain")
     if not terrain then
-        return nil, "No terrain found"
+        Log("WARN", "No terrain found in workspace")
+        return nil
     end
     
-    local terrainData = {
-        WaterWaveSize = terrain.WaterWaveSize,
-        WaterWaveSpeed = terrain.WaterWaveSpeed,
-        WaterReflectance = terrain.WaterReflectance,
-        WaterTransparency = terrain.WaterTransparency,
-        Decoration = terrain.Decoration,
-    }
+    Log("INFO", "Serializing terrain data...")
     
-    -- Copy terrain to new instance
-    local terrainClone = Instance.new("Terrain")
-    terrainClone.Name = "Terrain"
+    local terrainData = {}
     
-    -- Copy properties
-    for prop, value in pairs(terrainData) do
-        pcall(function()
-            terrainClone[prop] = value
-        end)
-    end
-    
-    -- Copy region data
-    pcall(function()
-        local region = terrain:CopyRegion(terrain.MaxExtents)
-        terrain:PasteRegion(region, terrainClone, Vector3.new(0, 0, 0), true)
+    -- Get terrain region
+    local success, result = pcall(function()
+        local regionStart = Vector3.new(-2048, -512, -2048)
+        local regionEnd = Vector3.new(2048, 512, 2048)
+        local region = Region3.new(regionStart, regionEnd)
+        
+        local materials, occupancies = terrain:ReadVoxels(region, 4)
+        
+        terrainData.RegionStart = regionStart
+        terrainData.RegionEnd = regionEnd
+        terrainData.Resolution = 4
+        terrainData.Size = materials.Size
+        
+        -- Encode terrain data
+        local materialData = {}
+        local occupancyData = {}
+        
+        for x = 1, materials.Size.X do
+            for y = 1, materials.Size.Y do
+                for z = 1, materials.Size.Z do
+                    local material = materials[x][y][z]
+                    local occupancy = occupancies[x][y][z]
+                    
+                    if material ~= Enum.Material.Air and occupancy > 0 then
+                        table.insert(materialData, {x, y, z, material.Value, occupancy})
+                    end
+                end
+                YieldIfNeeded(y)
+            end
+            LogProgress(x, materials.Size.X, "Reading terrain voxels")
+        end
+        
+        terrainData.VoxelData = materialData
+        
+        -- Get water properties
+        terrainData.WaterWaveSize = terrain.WaterWaveSize
+        terrainData.WaterWaveSpeed = terrain.WaterWaveSpeed
+        terrainData.WaterReflectance = terrain.WaterReflectance
+        terrainData.WaterTransparency = terrain.WaterTransparency
+        terrainData.WaterColor = {
+            R = terrain.WaterColor.R,
+            G = terrain.WaterColor.G,
+            B = terrain.WaterColor.B
+        }
+        
+        return terrainData
     end)
     
-    return terrainClone
+    if not success then
+        Log("ERROR", "Failed to read terrain: " .. tostring(result))
+        return nil
+    end
+    
+    return terrainData
 end
 
--- ═══════════════════════════════════════════════════════════
--- 📦 MODEL SAVER
--- ═══════════════════════════════════════════════════════════
-
-local ModelSaver = {}
-
-function ModelSaver:CloneWithProperties(instance)
-    local clone = instance:Clone()
+function TerrainSerializer.CreateTerrainXML(terrainData)
+    if not terrainData then return "" end
     
-    -- Preserve attributes
-    pcall(function()
-        for name, value in pairs(instance:GetAttributes()) do
-            clone:SetAttribute(name, value)
-        end
-    end)
+    local lines = {}
+    table.insert(lines, '<Item class="Terrain" referent="RBXTerrain">')
+    table.insert(lines, '  <Properties>')
+    table.insert(lines, '    <string name="Name">Terrain</string>')
+    table.insert(lines, string.format('    <float name="WaterWaveSize">%s</float>', terrainData.WaterWaveSize or 0.15))
+    table.insert(lines, string.format('    <float name="WaterWaveSpeed">%s</float>', terrainData.WaterWaveSpeed or 10))
+    table.insert(lines, string.format('    <float name="WaterReflectance">%s</float>', terrainData.WaterReflectance or 1))
+    table.insert(lines, string.format('    <float name="WaterTransparency">%s</float>', terrainData.WaterTransparency or 0.3))
     
-    -- Preserve tags
-    pcall(function()
-        if instance:HasTag then
-            for _, tag in ipairs(instance:GetTags()) do
-                clone:AddTag(tag)
+    if terrainData.WaterColor then
+        table.insert(lines, string.format([[    <Color3 name="WaterColor">
+        <R>%s</R>
+        <G>%s</G>
+        <B>%s</B>
+    </Color3>]], terrainData.WaterColor.R, terrainData.WaterColor.G, terrainData.WaterColor.B))
+    end
+    
+    -- Encode voxel data as base64 (simplified)
+    if terrainData.VoxelData and #terrainData.VoxelData > 0 then
+        local encodedData = HttpService:JSONEncode(terrainData.VoxelData)
+        local base64Data = EncodeBase64(encodedData)
+        table.insert(lines, string.format('    <BinaryString name="SmoothGrid">%s</BinaryString>', base64Data))
+    end
+    
+    table.insert(lines, '  </Properties>')
+    table.insert(lines, '</Item>')
+    
+    return table.concat(lines, "\n")
+end
+
+--------------------------------------------------------------------------------
+-- FILTERING FUNCTIONS
+--------------------------------------------------------------------------------
+
+local Filter = {}
+
+function Filter.ShouldInclude(instance, mode)
+    local config = BaoSaveInstance.Config
+    
+    -- Check blacklist
+    if config.Blacklist.ClassNames then
+        for _, className in ipairs(config.Blacklist.ClassNames) do
+            if instance:IsA(className) then
+                return false
             end
         end
-    end)
+    end
     
-    return clone
-end
-
-function ModelSaver:SaveContainer(container, includeScripts)
-    local clone = Instance.new("Folder")
-    clone.Name = container.Name
-    
-    for _, child in ipairs(container:GetChildren()) do
-        local shouldInclude = true
-        
-        if not includeScripts and child:IsA("LuaSourceContainer") then
-            shouldInclude = false
-        end
-        
-        if shouldInclude then
-            pcall(function()
-                local childClone = self:CloneWithProperties(child)
-                childClone.Parent = clone
-            end)
+    if config.Blacklist.InstanceNames then
+        for _, name in ipairs(config.Blacklist.InstanceNames) do
+            if instance.Name == name then
+                return false
+            end
         end
     end
     
-    return clone
-end
-
--- ═══════════════════════════════════════════════════════════
--- 💾 FILE EXPORTER (Single .rbxl output)
--- ═══════════════════════════════════════════════════════════
-
-local FileExporter = {}
-
-function FileExporter:ExportToRBXL(dataModel, fileName)
-    -- Create workspace folder
-    local folderName = "BaoSaveInstance"
-    if not ExecutorAPI.isfolder(folderName) then
-        ExecutorAPI.makefolder(folderName)
+    -- Mode-specific filtering
+    if mode == "FullModel" then
+        -- Exclude scripts and terrain
+        if instance:IsA("LuaSourceContainer") then
+            return false
+        end
+        if instance:IsA("Terrain") then
+            return false
+        end
+    elseif mode == "Terrain" then
+        -- Only include terrain
+        if not instance:IsA("Terrain") and instance ~= workspace then
+            return false
+        end
     end
     
-    local fullPath = folderName .. "/" .. fileName .. ".rbxl"
-    
-    -- Use executor's saveinstance if available
-    if ExecutorAPI.saveinstance then
-        pcall(function()
-            ExecutorAPI.saveinstance({
-                FileName = fullPath,
-                RecompileScripts = false,
-                SavePlayers = false,
-                FilePath = folderName
-            })
-        end)
-        return fullPath
-    end
-    
-    -- Fallback: Manual XML-based .rbxl generation
-    return self:ManualRBXLExport(dataModel, fullPath)
-end
-
-function FileExporter:ManualRBXLExport(dataModel, path)
-    -- Generate simplified RBXL XML structure
-    local xml = '<?xml version="1.0" encoding="UTF-8"?>\n'
-    xml = xml .. '<roblox version="4">\n'
-    
-    -- Serialize instances
-    local function serializeInstance(instance, depth)
-        local indent = string.rep("  ", depth)
-        local result = string.format('%s<Item class="%s">\n', indent, instance.ClassName)
+    -- Check whitelist if enabled
+    if config.Whitelist.Enabled then
+        local whitelisted = false
         
-        -- Properties
-        result = result .. string.format('%s  <Properties>\n', indent)
-        result = result .. string.format('%s    <string name="Name">%s</string>\n', indent, instance.Name)
-        
-        -- Add source for scripts
-        if instance:IsA("LuaSourceContainer") and instance:FindFirstChild("Source") then
-            local source = instance.Source or ""
-            result = result .. string.format('%s    <ProtectedString name="Source"><![CDATA[%s]]></ProtectedString>\n', 
-                indent, source)
+        if config.Whitelist.ClassNames then
+            for _, className in ipairs(config.Whitelist.ClassNames) do
+                if instance:IsA(className) then
+                    whitelisted = true
+                    break
+                end
+            end
         end
         
-        result = result .. string.format('%s  </Properties>\n', indent)
+        if not whitelisted and config.Whitelist.InstanceNames then
+            for _, name in ipairs(config.Whitelist.InstanceNames) do
+                if instance.Name == name then
+                    whitelisted = true
+                    break
+                end
+            end
+        end
         
-        -- Children
+        if not whitelisted then
+            return false
+        end
+    end
+    
+    return true
+end
+
+function Filter.CollectInstances(roots, mode)
+    local instances = {}
+    local counter = 0
+    
+    local function collect(instance, depth)
+        counter = counter + 1
+        YieldIfNeeded(counter)
+        
+        if not Filter.ShouldInclude(instance, mode) then
+            return
+        end
+        
+        table.insert(instances, instance)
+        
         for _, child in ipairs(instance:GetChildren()) do
-            result = result .. serializeInstance(child, depth + 1)
+            collect(child, depth + 1)
         end
-        
-        result = result .. string.format('%s</Item>\n', indent)
-        return result
     end
     
-    for _, child in ipairs(dataModel:GetChildren()) do
-        xml = xml .. serializeInstance(child, 1)
+    for _, root in ipairs(roots) do
+        Log("INFO", "Collecting from: " .. root:GetFullName())
+        collect(root, 0)
     end
     
-    xml = xml .. '</roblox>'
-    
-    -- Write file
-    ExecutorAPI.writefile(path, xml)
-    return path
+    Log("INFO", string.format("Collected %d instances", #instances))
+    return instances
 end
 
--- ═══════════════════════════════════════════════════════════
--- 🎨 UI SYSTEM
--- ═══════════════════════════════════════════════════════════
+--------------------------------------------------------------------------------
+-- XML DOCUMENT GENERATION
+--------------------------------------------------------------------------------
 
-local UI = {}
+local function GenerateXMLDocument(content)
+    return [[<?xml version="1.0" encoding="utf-8"?>
+<roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4">
+    <Meta name="ExplicitAutoJoints">true</Meta>
+]] .. content .. [[
+</roblox>]]
+end
 
-function UI:Create()
-    -- Destroy existing UI
-    local existingUI = game:GetService("CoreGui"):FindFirstChild("BaoSaveInstanceUI")
-    if existingUI then
-        existingUI:Destroy()
+local function SerializeServiceContainer(service, refMap, mode)
+    local lines = {}
+    
+    local serviceName = service.ClassName
+    local refId = refMap[service] or ("RBX" .. CreateRefId())
+    
+    table.insert(lines, string.format('<Item class="%s" referent="%s">', serviceName, refId))
+    table.insert(lines, '  <Properties>')
+    table.insert(lines, string.format('    <string name="Name">%s</string>', serviceName))
+    table.insert(lines, '  </Properties>')
+    
+    -- Serialize children
+    local children = service:GetChildren()
+    local processedCount = 0
+    
+    for i, child in ipairs(children) do
+        if Filter.ShouldInclude(child, mode) then
+            local childXml = InstanceSerializer.SerializeInstance(child, refMap, 1)
+            if childXml then
+                table.insert(lines, childXml)
+                processedCount = processedCount + 1
+            end
+        end
+        YieldIfNeeded(i)
+        LogProgress(i, #children, "Serializing " .. serviceName)
     end
     
-    -- Create ScreenGui
-    local screenGui = Instance.new("ScreenGui")
-    screenGui.Name = "BaoSaveInstanceUI"
-    screenGui.ResetOnSpawn = false
-    screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    table.insert(lines, '</Item>')
     
-    -- Main Frame
-    local mainFrame = Instance.new("Frame")
-    mainFrame.Name = "MainFrame"
-    mainFrame.Size = UDim2.new(0, 450, 0, 350)
-    mainFrame.Position = UDim2.new(0.5, -225, 0.5, -175)
-    mainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
-    mainFrame.BorderSizePixel = 0
-    mainFrame.Parent = screenGui
+    Log("INFO", string.format("Serialized %s: %d instances", serviceName, processedCount))
     
-    -- Add UICorner
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 12)
-    corner.Parent = mainFrame
+    return table.concat(lines, "\n")
+end
+
+--------------------------------------------------------------------------------
+-- NATIVE SAVEINSTANCE WRAPPER
+--------------------------------------------------------------------------------
+
+local function TryNativeSaveInstance(options)
+    if not saveinstance then
+        return false, "saveinstance not available"
+    end
     
-    -- Title
-    local title = Instance.new("TextLabel")
-    title.Name = "Title"
-    title.Size = UDim2.new(1, 0, 0, 50)
-    title.BackgroundColor3 = Color3.fromRGB(35, 35, 50)
-    title.BorderSizePixel = 0
-    title.Text = "🎯 BaoSaveInstance"
-    title.TextColor3 = Color3.fromRGB(255, 255, 255)
-    title.TextSize = 20
-    title.Font = Enum.Font.GothamBold
-    title.Parent = mainFrame
+    local success, result = pcall(function()
+        saveinstance(options)
+    end)
     
-    local titleCorner = Instance.new("UICorner")
-    titleCorner.CornerRadius = UDim.new(0, 12)
-    titleCorner.Parent = title
-    
-    -- Subtitle
-    local subtitle = Instance.new("TextLabel")
-    subtitle.Size = UDim2.new(1, -20, 0, 20)
-    subtitle.Position = UDim2.new(0, 10, 0, 55)
-    subtitle.BackgroundTransparency = 1
-    subtitle.Text = "Advanced Decompiler & SaveInstance System"
-    subtitle.TextColor3 = Color3.fromRGB(150, 150, 160)
-    subtitle.TextSize = 12
-    subtitle.Font = Enum.Font.Gotham
-    subtitle.TextXAlignment = Enum.TextXAlignment.Left
-    subtitle.Parent = mainFrame
-    
-    -- Progress Text
-    local progressText = Instance.new("TextLabel")
-    progressText.Name = "ProgressText"
-    progressText.Size = UDim2.new(1, -20, 0, 30)
-    progressText.Position = UDim2.new(0, 10, 0, 80)
-    progressText.BackgroundTransparency = 1
-    progressText.Text = "Ready"
-    progressText.TextColor3 = Color3.fromRGB(100, 200, 100)
-    progressText.TextSize = 14
-    progressText.Font = Enum.Font.GothamMedium
-    progressText.TextXAlignment = Enum.TextXAlignment.Left
-    progressText.Parent = mainFrame
-    
-    -- Button container
-    local buttonContainer = Instance.new("Frame")
-    buttonContainer.Size = UDim2.new(1, -20, 1, -120)
-    buttonContainer.Position = UDim2.new(0, 10, 0, 110)
-    buttonContainer.BackgroundTransparency = 1
-    buttonContainer.Parent = mainFrame
-    
-    local buttonLayout = Instance.new("UIListLayout")
-    buttonLayout.Padding = UDim.new(0, 10)
-    buttonLayout.Parent = buttonContainer
-    
-    -- Create buttons
-    local buttons = {
-        {name = "Decompile All", color = Color3.fromRGB(100, 150, 255)},
-        {name = "Decompile Full Script", color = Color3.fromRGB(255, 150, 100)},
-        {name = "Decompile Full Terrain", color = Color3.fromRGB(100, 255, 150)},
-        {name = "Decompile Full Model", color = Color3.fromRGB(200, 100, 255)},
+    return success, result
+end
+
+local function BuildNativeOptions(mode, fileName)
+    local options = {
+        FileName = fileName,
+        
+        -- Decompilation
+        DecompileMode = BaoSaveInstance.Config.DecompileScripts and "decompile" or "ignore",
+        DecompileTimeout = BaoSaveInstance.Config.DecompileTimeout,
+        
+        -- Behavior
+        ExtraInstances = {},
+        NilInstances = false,
+        RemovePlayerCharacters = true,
+        
+        -- Timeout
+        Timeout = 60,
+        
+        -- Callbacks
+        IgnoreList = {},
     }
     
-    local buttonInstances = {}
-    
-    for _, btnData in ipairs(buttons) do
-        local button = Instance.new("TextButton")
-        button.Name = btnData.name
-        button.Size = UDim2.new(1, 0, 0, 45)
-        button.BackgroundColor3 = btnData.color
-        button.BorderSizePixel = 0
-        button.Text = btnData.name
-        button.TextColor3 = Color3.fromRGB(255, 255, 255)
-        button.TextSize = 14
-        button.Font = Enum.Font.GothamBold
-        button.AutoButtonColor = false
-        button.Parent = buttonContainer
+    if mode == "FullGame" then
+        options.Mode = "full"
+        options.SavePlayers = false
         
-        local btnCorner = Instance.new("UICorner")
-        btnCorner.CornerRadius = UDim.new(0, 8)
-        btnCorner.Parent = button
+        for _, className in ipairs(BaoSaveInstance.Config.Blacklist.ClassNames or {}) do
+            table.insert(options.IgnoreList, className)
+        end
         
-        buttonInstances[btnData.name] = button
+    elseif mode == "FullModel" then
+        options.Mode = "scripts"
+        options.DecompileMode = "ignore"
         
-        -- Hover effect
-        button.MouseEnter:Connect(function()
-            button.BackgroundColor3 = Color3.new(
-                math.min(btnData.color.R + 0.1, 1),
-                math.min(btnData.color.G + 0.1, 1),
-                math.min(btnData.color.B + 0.1, 1)
-            )
-        end)
+        table.insert(options.IgnoreList, "Terrain")
+        table.insert(options.IgnoreList, "Script")
+        table.insert(options.IgnoreList, "LocalScript")
+        table.insert(options.IgnoreList, "ModuleScript")
         
-        button.MouseLeave:Connect(function()
-            button.BackgroundColor3 = btnData.color
-        end)
+    elseif mode == "Terrain" then
+        options.Mode = "optimized"
+        options.ExtraInstances = {workspace:FindFirstChildOfClass("Terrain")}
     end
     
-    -- Close button
-    local closeBtn = Instance.new("TextButton")
-    closeBtn.Size = UDim2.new(0, 30, 0, 30)
-    closeBtn.Position = UDim2.new(1, -40, 0, 10)
-    closeBtn.BackgroundColor3 = Color3.fromRGB(255, 60, 60)
-    closeBtn.BorderSizePixel = 0
-    closeBtn.Text = "✕"
-    closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    closeBtn.TextSize = 18
-    closeBtn.Font = Enum.Font.GothamBold
-    closeBtn.Parent = mainFrame
-    
-    local closeBtnCorner = Instance.new("UICorner")
-    closeBtnCorner.CornerRadius = UDim.new(1, 0)
-    closeBtnCorner.Parent = closeBtn
-    
-    closeBtn.MouseButton1Click:Connect(function()
-        screenGui:Destroy()
-    end)
-    
-    -- Make draggable
-    local dragging, dragInput, dragStart, startPos
-    
-    mainFrame.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            dragging = true
-            dragStart = input.Position
-            startPos = mainFrame.Position
-        end
-    end)
-    
-    mainFrame.InputChanged:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseMovement then
-            dragInput = input
-        end
-    end)
-    
-    game:GetService("UserInputService").InputChanged:Connect(function(input)
-        if input == dragInput and dragging then
-            local delta = input.Position - dragStart
-            mainFrame.Position = UDim2.new(
-                startPos.X.Scale, startPos.X.Offset + delta.X,
-                startPos.Y.Scale, startPos.Y.Offset + delta.Y
-            )
-        end
-    end)
-    
-    mainFrame.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            dragging = false
-        end
-    end)
-    
-    screenGui.Parent = game:GetService("CoreGui")
-    
-    return {
-        gui = screenGui,
-        frame = mainFrame,
-        progressText = progressText,
-        buttons = buttonInstances
-    }
+    return options
 end
 
-function UI:UpdateProgress(text, color)
-    if self.progressText then
-        self.progressText.Text = text
-        if color then
-            self.progressText.TextColor3 = color
-        end
-    end
-end
+--------------------------------------------------------------------------------
+-- MAIN EXPORT FUNCTIONS
+--------------------------------------------------------------------------------
 
-function UI:SetButtonsEnabled(enabled)
-    if not self.buttons then return end
+local function ExportToFile(content, fileName)
+    Log("INFO", "Exporting to: " .. fileName)
     
-    for _, button in pairs(self.buttons) do
-        button.Interactable = enabled
-        button.BackgroundTransparency = enabled and 0 or 0.5
-    end
-end
-
--- ═══════════════════════════════════════════════════════════
--- 🎯 MAIN CONTROLLER
--- ═══════════════════════════════════════════════════════════
-
-local BaoSaveInstance = {}
-BaoSaveInstance.__index = BaoSaveInstance
-
-function BaoSaveInstance.new()
-    local self = setmetatable({}, BaoSaveInstance)
+    -- Ensure output folder exists
+    EnsureFolder(BaoSaveInstance.Config.OutputFolder)
     
-    self.decompiler = Decompiler.new()
-    self.ui = UI:Create()
-    self.isRunning = false
-    
-    self:BindButtons()
-    
-    return self
-end
-
-function BaoSaveInstance:BindButtons()
-    local buttons = self.ui.buttons
-    
-    -- Decompile All
-    buttons["Decompile All"].MouseButton1Click:Connect(function()
-        self:DecompileAll()
-    end)
-    
-    -- Decompile Full Script
-    buttons["Decompile Full Script"].MouseButton1Click:Connect(function()
-        self:DecompileScripts()
-    end)
-    
-    -- Decompile Full Terrain
-    buttons["Decompile Full Terrain"].MouseButton1Click:Connect(function()
-        self:DecompileTerrain()
-    end)
-    
-    -- Decompile Full Model
-    buttons["Decompile Full Model"].MouseButton1Click:Connect(function()
-        self:DecompileModels()
-    end)
-end
-
-function BaoSaveInstance:DecompileAll()
-    if self.isRunning then return end
-    self.isRunning = true
-    
-    UI:SetButtonsEnabled(false)
-    UI:UpdateProgress("🔄 Starting Decompile All...", Color3.fromRGB(100, 150, 255))
-    
-    task.spawn(function()
-        local dataModel = Instance.new("DataModel")
-        
-        -- 1. Decompile Scripts
-        UI:UpdateProgress("📝 Decompiling Scripts... (1/3)", Color3.fromRGB(255, 200, 100))
-        local scriptResults = self.decompiler:DecompileAll(function(current, total, name)
-            UI:UpdateProgress(string.format("📝 Scripts: %d/%d - %s", current, total, name), 
-                Color3.fromRGB(255, 200, 100))
-        end)
-        
-        -- Create script container
-        local scriptFolder = Instance.new("Folder")
-        scriptFolder.Name = "Scripts"
-        scriptFolder.Parent = dataModel
-        
-        for script, data in pairs(scriptResults) do
-            pcall(function()
-                local scriptClone = script:Clone()
-                scriptClone.Source = data.source
-                scriptClone.Parent = scriptFolder
-            end)
-        end
-        
-        -- 2. Save Terrain
-        UI:UpdateProgress("🌍 Saving Terrain... (2/3)", Color3.fromRGB(100, 255, 150))
-        local terrain = TerrainSaver:Save()
-        if terrain then
-            terrain.Parent = dataModel
-        end
-        
-        -- 3. Save Models
-        UI:UpdateProgress("📦 Saving Models... (3/3)", Color3.fromRGB(200, 100, 255))
-        
-        local containers = {
-            workspace,
-            game:GetService("ReplicatedStorage"),
-            game:GetService("ServerStorage"),
-            game:GetService("StarterPack"),
-            game:GetService("StarterGui")
-        }
-        
-        for _, container in ipairs(containers) do
-            pcall(function()
-                local clone = ModelSaver:SaveContainer(container, true)
-                clone.Parent = dataModel
-            end)
-        end
-        
-        -- Export to file
-        UI:UpdateProgress("💾 Exporting to .rbxl...", Color3.fromRGB(255, 255, 100))
-        
-        local gameName = game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId).Name
-        local fileName = string.format("BaoSaveInstance_%s_Full", gameName:gsub("[^%w]", "_"))
-        
-        local path = FileExporter:ExportToRBXL(dataModel, fileName)
-        
-        -- Complete
-        UI:UpdateProgress(string.format("✅ Completed! Saved to: %s", path), 
-            Color3.fromRGB(100, 255, 100))
-        
-        print(string.format([[
-╔════════════════════════════════════════════╗
-║     BaoSaveInstance - Completed!           ║
-╠════════════════════════════════════════════╣
-║ Scripts Decompiled: %d                     ║
-║ - Success: %d                              ║
-║ - Failed: %d                               ║
-║ - Partial: %d                              ║
-║                                            ║
-║ Output File: %s
-╚════════════════════════════════════════════╝
-        ]], 
-            self.decompiler.stats.success + self.decompiler.stats.failed,
-            self.decompiler.stats.success,
-            self.decompiler.stats.failed,
-            self.decompiler.stats.partial,
-            path
-        ))
-        
-        UI:SetButtonsEnabled(true)
-        self.isRunning = false
-    end)
-end
-
-function BaoSaveInstance:DecompileScripts()
-    if self.isRunning then return end
-    self.isRunning = true
-    
-    UI:SetButtonsEnabled(false)
-    UI:UpdateProgress("📝 Decompiling Scripts...", Color3.fromRGB(255, 150, 100))
-    
-    task.spawn(function()
-        local dataModel = Instance.new("DataModel")
-        local scriptFolder = Instance.new("Folder")
-        scriptFolder.Name = "DecompiledScripts"
-        scriptFolder.Parent = dataModel
-        
-        local scriptResults = self.decompiler:DecompileAll(function(current, total, name)
-            UI:UpdateProgress(string.format("📝 %d/%d - %s", current, total, name), 
-                Color3.fromRGB(255, 150, 100))
-        end)
-        
-        -- Organize by hierarchy
-        for script, data in pairs(scriptResults) do
-            pcall(function()
-                local scriptClone = script:Clone()
-                scriptClone.Source = data.source
-                
-                -- Create hierarchy path
-                local pathParts = {}
-                local parent = script.Parent
-                while parent and parent ~= game do
-                    table.insert(pathParts, 1, parent.Name)
-                    parent = parent.Parent
-                end
-                
-                local currentParent = scriptFolder
-                for _, partName in ipairs(pathParts) do
-                    local folder = currentParent:FindFirstChild(partName)
-                    if not folder then
-                        folder = Instance.new("Folder")
-                        folder.Name = partName
-                        folder.Parent = currentParent
-                    end
-                    currentParent = folder
-                end
-                
-                scriptClone.Parent = currentParent
-            end)
-        end
-        
-        UI:UpdateProgress("💾 Exporting Scripts...", Color3.fromRGB(255, 200, 100))
-        
-        local gameName = game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId).Name
-        local fileName = string.format("BaoSaveInstance_%s_Scripts", gameName:gsub("[^%w]", "_"))
-        
-        local path = FileExporter:ExportToRBXL(dataModel, fileName)
-        
-        UI:UpdateProgress(string.format("✅ Scripts saved to: %s", path), 
-            Color3.fromRGB(100, 255, 100))
-        
-        UI:SetButtonsEnabled(true)
-        self.isRunning = false
-    end)
-end
-
-function BaoSaveInstance:DecompileTerrain()
-    if self.isRunning then return end
-    self.isRunning = true
-    
-    UI:SetButtonsEnabled(false)
-    UI:UpdateProgress("🌍 Saving Terrain...", Color3.fromRGB(100, 255, 150))
-    
-    task.spawn(function()
-        local dataModel = Instance.new("DataModel")
-        
-        local terrain, err = TerrainSaver:Save()
-        if terrain then
-            terrain.Parent = dataModel
-            
-            UI:UpdateProgress("💾 Exporting Terrain...", Color3.fromRGB(150, 255, 150))
-            
-            local gameName = game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId).Name
-            local fileName = string.format("BaoSaveInstance_%s_Terrain", gameName:gsub("[^%w]", "_"))
-            
-            local path = FileExporter:ExportToRBXL(dataModel, fileName)
-            
-            UI:UpdateProgress(string.format("✅ Terrain saved to: %s", path), 
-                Color3.fromRGB(100, 255, 100))
+    local success, err = pcall(function()
+        if writefile then
+            writefile(fileName, content)
         else
-            UI:UpdateProgress("❌ Error: " .. tostring(err), Color3.fromRGB(255, 100, 100))
+            error("writefile function not available")
         end
-        
-        UI:SetButtonsEnabled(true)
-        self.isRunning = false
     end)
+    
+    if success then
+        Log("INFO", "Successfully exported: " .. fileName)
+    else
+        Log("ERROR", "Export failed: " .. tostring(err))
+    end
+    
+    return success, err
 end
 
-function BaoSaveInstance:DecompileModels()
-    if self.isRunning then return end
-    self.isRunning = true
+local function PerformExport(mode)
+    State.StartTime = tick()
+    State.CurrentMode = mode
+    State.Errors = {}
+    State.Warnings = {}
+    State.ProcessedInstances = 0
     
-    UI:SetButtonsEnabled(false)
-    UI:UpdateProgress("📦 Saving Models...", Color3.fromRGB(200, 100, 255))
+    local fileName = GenerateFileName(mode)
     
-    task.spawn(function()
-        local dataModel = Instance.new("DataModel")
-        
-        local containers = {
-            {service = workspace, name = "Workspace"},
-            {service = game:GetService("ReplicatedStorage"), name = "ReplicatedStorage"},
-            {service = game:GetService("ServerStorage"), name = "ServerStorage"},
-            {service = game:GetService("StarterPack"), name = "StarterPack"},
-            {service = game:GetService("StarterGui"), name = "StarterGui"}
-        }
-        
-        for i, containerData in ipairs(containers) do
-            UI:UpdateProgress(string.format("📦 Saving %s... (%d/%d)", 
-                containerData.name, i, #containers), 
-                Color3.fromRGB(200, 100, 255))
-            
-            pcall(function()
-                local clone = ModelSaver:SaveContainer(containerData.service, false)
-                clone.Name = containerData.name
-                clone.Parent = dataModel
+    Log("INFO", string.format("Starting %s export...", mode))
+    Log("INFO", "Output file: " .. fileName)
+    
+    -- Try native saveinstance first
+    local nativeOptions = BuildNativeOptions(mode, fileName)
+    local nativeSuccess, nativeResult = TryNativeSaveInstance(nativeOptions)
+    
+    if nativeSuccess then
+        Log("INFO", "Export completed using native saveinstance")
+        local elapsed = tick() - State.StartTime
+        Log("INFO", string.format("Total time: %.2f seconds", elapsed))
+        return true, fileName
+    end
+    
+    Log("INFO", "Native saveinstance unavailable, using custom serialization...")
+    
+    -- Custom serialization fallback
+    local xmlContent = {}
+    local allInstances = {}
+    
+    if mode == "FullGame" then
+        -- Collect from all services
+        for _, serviceName in ipairs(BaoSaveInstance.Config.ServicesToExport) do
+            local success, service = pcall(function()
+                return game:GetService(serviceName)
             end)
             
-            task.wait()
+            if success and service then
+                local instances = Filter.CollectInstances({service}, mode)
+                for _, inst in ipairs(instances) do
+                    table.insert(allInstances, inst)
+                end
+            end
         end
         
-        UI:UpdateProgress("💾 Exporting Models...", Color3.fromRGB(220, 120, 255))
+    elseif mode == "FullModel" then
+        -- Collect models from Workspace only
+        allInstances = Filter.CollectInstances({workspace}, mode)
         
-        local gameName = game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId).Name
-        local fileName = string.format("BaoSaveInstance_%s_Models", gameName:gsub("[^%w]", "_"))
+    elseif mode == "Terrain" then
+        -- Terrain only
+        local terrain = workspace:FindFirstChildOfClass("Terrain")
+        if terrain then
+            table.insert(allInstances, terrain)
+        end
+    end
+    
+    State.TotalInstances = #allInstances
+    Log("INFO", string.format("Total instances to serialize: %d", State.TotalInstances))
+    
+    -- Build reference map
+    local refMap = BuildRefMap(allInstances)
+    
+    -- Serialize based on mode
+    if mode == "FullGame" then
+        for _, serviceName in ipairs(BaoSaveInstance.Config.ServicesToExport) do
+            local success, service = pcall(function()
+                return game:GetService(serviceName)
+            end)
+            
+            if success and service then
+                local serviceXml = SerializeServiceContainer(service, refMap, mode)
+                table.insert(xmlContent, serviceXml)
+            end
+        end
         
-        local path = FileExporter:ExportToRBXL(dataModel, fileName)
+    elseif mode == "FullModel" then
+        -- Create a virtual Workspace container
+        table.insert(xmlContent, '<Item class="Workspace" referent="RBXWorkspace">')
+        table.insert(xmlContent, '  <Properties>')
+        table.insert(xmlContent, '    <string name="Name">Workspace</string>')
+        table.insert(xmlContent, '  </Properties>')
         
-        UI:UpdateProgress(string.format("✅ Models saved to: %s", path), 
-            Color3.fromRGB(100, 255, 100))
+        for i, instance in ipairs(allInstances) do
+            if instance.Parent == workspace then
+                local instanceXml = InstanceSerializer.SerializeInstance(instance, refMap, 1)
+                if instanceXml then
+                    table.insert(xmlContent, instanceXml)
+                end
+            end
+            State.ProcessedInstances = i
+            LogProgress(i, #allInstances, "Serializing models")
+        end
         
-        UI:SetButtonsEnabled(true)
-        self.isRunning = false
-    end)
+        table.insert(xmlContent, '</Item>')
+        
+    elseif mode == "Terrain" then
+        local terrainData = TerrainSerializer.SerializeTerrain()
+        if terrainData then
+            table.insert(xmlContent, '<Item class="Workspace" referent="RBXWorkspace">')
+            table.insert(xmlContent, '  <Properties>')
+            table.insert(xmlContent, '    <string name="Name">Workspace</string>')
+            table.insert(xmlContent, '  </Properties>')
+            table.insert(xmlContent, TerrainSerializer.CreateTerrainXML(terrainData))
+            table.insert(xmlContent, '</Item>')
+        end
+    end
+    
+    -- Generate final XML
+    local finalXml = GenerateXMLDocument(table.concat(xmlContent, "\n"))
+    
+    -- Export
+    local exportSuccess, exportErr = ExportToFile(finalXml, fileName)
+    
+    -- Report
+    local elapsed = tick() - State.StartTime
+    Log("INFO", string.format("Export completed in %.2f seconds", elapsed))
+    Log("INFO", string.format("Processed %d instances", State.ProcessedInstances))
+    
+    if #State.Warnings > 0 then
+        Log("WARN", string.format("%d warnings during export", #State.Warnings))
+    end
+    
+    if #State.Errors > 0 then
+        Log("ERROR", string.format("%d errors during export", #State.Errors))
+    end
+    
+    return exportSuccess, exportSuccess and fileName or exportErr
 end
 
--- ═══════════════════════════════════════════════════════════
--- 🚀 INITIALIZATION
--- ═══════════════════════════════════════════════════════════
+--------------------------------------------------------------------------------
+-- PUBLIC API
+--------------------------------------------------------------------------------
 
-local instance = BaoSaveInstance.new()
+function BaoSaveInstance.DecompileFullGame()
+    Log("INFO", "=== DECOMPILE FULL GAME ===")
+    return PerformExport("FullGame")
+end
 
-print([[
-╔════════════════════════════════════════════════════════════╗
-║                  BaoSaveInstance v1.0                      ║
-║            Advanced Decompiler & SaveInstance              ║
-╠════════════════════════════════════════════════════════════╣
-║ ✅ Executor: ]] .. ExecutorAPI.executor .. string.rep(" ", 44 - #ExecutorAPI.executor) .. [[║
-║ ✅ UI Loaded Successfully                                  ║
-║ ✅ Decompiler Engine Ready                                 ║
-║ ✅ File Exporter Ready                                     ║
-╚════════════════════════════════════════════════════════════╝
+function BaoSaveInstance.DecompileFullModel()
+    Log("INFO", "=== DECOMPILE FULL MODEL ===")
+    return PerformExport("FullModel")
+end
 
-📌 Features:
-  • Decompile All - Full game decompilation
-  • Decompile Scripts - Scripts only with hierarchy
-  • Decompile Terrain - Complete terrain data
-  • Decompile Models - All models without scripts
+function BaoSaveInstance.DecompileTerrain()
+    Log("INFO", "=== DECOMPILE TERRAIN ===")
+    return PerformExport("Terrain")
+end
 
-💾 Output: Single .rbxl file per operation
-📁 Location: workspace/BaoSaveInstance/
+-- Advanced export with custom options
+function BaoSaveInstance.Export(options)
+    options = options or {}
+    
+    -- Merge options with config
+    for key, value in pairs(options) do
+        if BaoSaveInstance.Config[key] ~= nil then
+            BaoSaveInstance.Config[key] = value
+        end
+    end
+    
+    local mode = options.Mode or "FullGame"
+    
+    if mode == "FullGame" then
+        return BaoSaveInstance.DecompileFullGame()
+    elseif mode == "FullModel" then
+        return BaoSaveInstance.DecompileFullModel()
+    elseif mode == "Terrain" then
+        return BaoSaveInstance.DecompileTerrain()
+    else
+        Log("ERROR", "Unknown export mode: " .. tostring(mode))
+        return false, "Unknown mode"
+    end
+end
 
-🎯 Ready to use! Click any button to start.
-]])
+-- Get export status
+function BaoSaveInstance.GetStatus()
+    return {
+        CurrentMode = State.CurrentMode,
+        TotalInstances = State.TotalInstances,
+        ProcessedInstances = State.ProcessedInstances,
+        Progress = State.TotalInstances > 0 and (State.ProcessedInstances / State.TotalInstances * 100) or 0,
+        Errors = State.Errors,
+        Warnings = State.Warnings,
+        ElapsedTime = State.StartTime > 0 and (tick() - State.StartTime) or 0
+    }
+end
+
+-- Set configuration
+function BaoSaveInstance.SetConfig(key, value)
+    if BaoSaveInstance.Config[key] ~= nil then
+        BaoSaveInstance.Config[key] = value
+        Log("INFO", string.format("Config updated: %s = %s", key, tostring(value)))
+        return true
+    end
+    Log("WARN", "Unknown config key: " .. tostring(key))
+    return false
+end
+
+-- Add to blacklist
+function BaoSaveInstance.AddToBlacklist(category, value)
+    if category == "ClassName" then
+        table.insert(BaoSaveInstance.Config.Blacklist.ClassNames, value)
+    elseif category == "InstanceName" then
+        table.insert(BaoSaveInstance.Config.Blacklist.InstanceNames, value)
+    elseif category == "Path" then
+        table.insert(BaoSaveInstance.Config.Blacklist.Paths, value)
+    end
+end
+
+-- Add to whitelist
+function BaoSaveInstance.AddToWhitelist(category, value)
+    if category == "ClassName" then
+        table.insert(BaoSaveInstance.Config.Whitelist.ClassNames, value)
+    elseif category == "InstanceName" then
+        table.insert(BaoSaveInstance.Config.Whitelist.InstanceNames, value)
+    elseif category == "Path" then
+        table.insert(BaoSaveInstance.Config.Whitelist.Paths, value)
+    end
+end
+
+-- Quick export functions
+function BaoSaveInstance.QuickSaveGame()
+    BaoSaveInstance.Config.DecompileScripts = true
+    BaoSaveInstance.Config.IncludeTerrain = true
+    return BaoSaveInstance.DecompileFullGame()
+end
+
+function BaoSaveInstance.QuickSaveModels()
+    return BaoSaveInstance.DecompileFullModel()
+end
+
+function BaoSaveInstance.QuickSaveTerrain()
+    return BaoSaveInstance.DecompileTerrain()
+end
+
+--------------------------------------------------------------------------------
+-- REGISTER GLOBAL
+--------------------------------------------------------------------------------
+
+if getgenv then
+    getgenv().BaoSaveInstance = BaoSaveInstance
+end
+
+Log("INFO", "BaoSaveInstance loaded successfully")
+Log("INFO", "Available modes: DecompileFullGame(), DecompileFullModel(), DecompileTerrain()")
 
 return BaoSaveInstance
