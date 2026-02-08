@@ -761,7 +761,46 @@ function InstanceProperties.GetAll(instance)
     return props
 end
 
---// ADVANCED DECOMPILER
+--// LUA BEAUTIFIER (Simple Formatter)
+local LuaBeautifier = {}
+
+function LuaBeautifier.Format(source)
+    if not source or source == "" then return source end
+    
+    local formatted = ""
+    local indentLevel = 0
+    local indentStr = "    "
+    
+    -- Split by newlines
+    local lines = string.split(source, "\n")
+    
+    for _, line in ipairs(lines) do
+        -- Trim whitespace
+        line = line:gsub("^%s+", ""):gsub("%s+$", "")
+        
+        if line ~= "" then
+            -- Check indentation decrease
+            if line:find("^end") or line:find("^else") or line:find("^elseif") or line:find("^}") or line:find("^]") or line:find("^%)") then
+                indentLevel = math.max(0, indentLevel - 1)
+            end
+            
+            -- Add line with current indentation
+            formatted = formatted .. string.rep(indentStr, indentLevel) .. line .. "\n"
+            
+            -- Check indentation increase
+            if (line:find("then$") or line:find("do$") or line:find("repeat$") or line:find("function.*%($") or line:find("{$") or line:find("%($") or line:find("%[$") or line:find("=$")) 
+            and not (line:find("end$") or line:find("}$") or line:find("%)%s*$")) then
+                indentLevel = indentLevel + 1
+            end
+        else
+            formatted = formatted .. "\n"
+        end
+    end
+    
+    return formatted
+end
+
+--// ADVANCED DECOMPILER (ENHANCED)
 local Decompiler = {}
 Decompiler.Cache = {}
 Decompiler.Stats = {
@@ -773,97 +812,95 @@ Decompiler.Stats = {
 
 -- Decompile methods in order of preference
 Decompiler.Methods = {
-    -- Method 1: Direct decompile function
+    -- Method 1: Standard decompile with timeouts and options
     function(script)
         if ExecutorInfo.Functions.decompile then
             local success, result = pcall(ExecutorInfo.Functions.decompile, script)
-            if success and result and #result > 0 and not result:find("^%-%-") then
+            if success and result and #result > 10 and not result:find("Error:") then
                 return result, "decompile"
             end
         end
         return nil
     end,
     
-    -- Method 2: GetScriptHash + Cache lookup
+    -- Method 2: Decompile Script Closure/Function (Solara/Wave often support this better)
     function(script)
-        if ExecutorInfo.Functions.getscripthash then
-            local success, hash = pcall(ExecutorInfo.Functions.getscripthash, script)
-            if success and hash then
-                -- Could implement hash-based lookup here
-                return nil -- Placeholder for hash system
+        if ExecutorInfo.Functions.decompile and (getscriptclosure or get_script_function) then
+            local getFn = getscriptclosure or get_script_function
+            local success, fn = pcall(getFn, script)
+            if success and fn then
+                local s2, result = pcall(ExecutorInfo.Functions.decompile, fn)
+                if s2 and result and #result > 10 then
+                    return result, "decompile_closure"
+                end
             end
         end
         return nil
     end,
     
-    -- Method 3: Try Source property directly
+    -- Method 3: GetScriptSource (Synapse compatibility)
     function(script)
-        local success, source = pcall(function()
-            return script.Source
-        end)
-        if success and source and #source > 0 then
-            return source, "source"
-        end
-        return nil
-    end,
-    
-    -- Method 4: Hidden property access
-    function(script)
-        if ExecutorInfo.Functions.gethiddenproperty then
-            local success, source = pcall(ExecutorInfo.Functions.gethiddenproperty, script, "Source")
-            if success and source and #source > 0 then
-                return source, "hidden"
+        if getscriptsource then
+            local success, result = pcall(getscriptsource, script)
+            if success and result and #result > 0 then
+                return result, "getscriptsource"
             end
         end
         return nil
     end,
     
-    -- Method 5: getscriptbytecode (returns bytecode, useful for debug)
+    -- Method 4: Properties (Source/LinkedSource)
     function(script)
+        local props = {"Source", "LinkedSource"}
+        for _, prop in ipairs(props) do
+            local success, result = Util.SafeGetProperty(script, prop)
+            if success and result and #result > 0 then
+                return result, prop
+            end
+        end
+        return nil
+    end,
+    
+    -- Method 5: Fallback Bytecode/Debug
+    function(script)
+        local debugInfo = ""
+        if debug and debug.info then
+            pcall(function()
+                debugInfo = string.format("-- Source: %s\n-- Line: %d", debug.info(1, "s"), debug.info(1, "l"))
+            end)
+        end
+        
         if ExecutorInfo.Functions.getscriptbytecode then
-            local success, bytecode = pcall(ExecutorInfo.Functions.getscriptbytecode, script)
-            if success and bytecode and #bytecode > 0 then
-                return string.format("-- Bytecode (Length: %d)\n-- Cannot decompile, bytecode available\n-- Hash: %s", 
-                    #bytecode, 
-                    tostring(bytecode):sub(1, 32):gsub(".", function(c) return string.format("%02x", c:byte()) end)
+            local s, bc = pcall(ExecutorInfo.Functions.getscriptbytecode, script)
+            if s and bc then
+                return string.format("-- Bytecode Dump (%d bytes)\n-- Hash: %s\n%s\n-- [Use a bytecode decompiler to view logic]", 
+                    #bc, 
+                    tostring(bc):sub(1,10), -- simple hash
+                    debugInfo
                 ), "bytecode"
             end
         end
         return nil
-    end,
-    
-    -- Method 6: Debug info extraction
-    function(script)
-        if debug and debug.info then
-            local info = {}
-            pcall(function()
-                info.name = debug.info(1, "n") or "unknown"
-                info.source = debug.info(1, "s") or "unknown"
-            end)
-            if info.source and info.source ~= "unknown" then
-                return string.format("-- Debug Info\n-- Name: %s\n-- Source: %s", info.name, info.source), "debug"
-            end
-        end
-        return nil
-    end,
+    end
 }
 
 function Decompiler.FormatSource(source, scriptName)
     if not source then return "-- No source available" end
     
-    -- Clean up
-    source = source:gsub("\r\n", "\n")
-    source = source:gsub("\r", "\n")
-    source = source:gsub("[\0-\8\11\12\14-\31]", "") -- Remove control chars
-    
-    -- Add header
+    -- Header
     local header = string.format(
-        "-- Decompiled by BaoSaveInstance Pro\n-- Script: %s\n-- Time: %s\n\n",
+        "-- Decompiled by BaoSaveInstance Pro\n-- Script: %s\n-- Generated: %s\n\n",
         scriptName or "Unknown",
         os.date("%Y-%m-%d %H:%M:%S")
     )
     
-    return header .. source
+    -- Clean null bytes
+    source = source:gsub("[\0-\8\11\12\14-\31]", "")
+    
+    -- Beautify
+    local beautified = LuaBeautifier.Format(source)
+    
+    return header .. beautified
 end
 
 function Decompiler.Decompile(script)
@@ -877,63 +914,50 @@ function Decompiler.Decompile(script)
         return Decompiler.Cache[script].source, Decompiler.Cache[script].method
     end
     
-    -- Check ignore list
+    -- Check ignore
     local scriptName = script.Name or "Unknown"
     for _, ignore in ipairs(Options.DecompileIgnore) do
         if scriptName:lower():find(ignore:lower()) then
-            return "-- Ignored by DecompileIgnore setting", "ignored"
+            return "-- Ignored by settings", "ignored"
         end
     end
     
-    -- Custom decompiler callback
-    if Options.CustomDecompiler then
-        local success, result = pcall(Options.CustomDecompiler, script)
-        if success and result then
-            Decompiler.Stats.Success = Decompiler.Stats.Success + 1
-            return Decompiler.FormatSource(result, scriptName), "custom"
-        end
-    end
+    -- Attempt methods
+    local bestSource, bestMethod = nil, nil
     
-    -- Try each method with timeout
-    local source, method = nil, nil
-    
-    for i, decompileMethod in ipairs(Decompiler.Methods) do
-        local result, methodName = nil, nil
-        
-        -- Timeout handling
-        local startTime = tick()
+    for _, method in ipairs(Decompiler.Methods) do
+        -- Use thread for timeout safety
         local thread = coroutine.create(function()
-            result, methodName = decompileMethod(script)
+            local s, m = method(script)
+            if s then
+                bestSource = s
+                bestMethod = m
+            end
         end)
         
-        local success = coroutine.resume(thread)
+        coroutine.resume(thread)
         
-        -- Simple timeout (not true async, but helps with stuck calls)
-        if tick() - startTime > Options.DecompileTimeout then
-            break
+        local start = tick()
+        while coroutine.status(thread) ~= "dead" do
+            if tick() - start > (Options.DecompileTimeout or 5) then
+                break -- Timeout this method
+            end
+            RunService.Heartbeat:Wait()
         end
         
-        if result then
-            source = result
-            method = methodName
-            break
-        end
+        if bestSource then break end
     end
     
-    if source then
+    if bestSource then
         Decompiler.Stats.Success = Decompiler.Stats.Success + 1
-        local formatted = Decompiler.FormatSource(source, scriptName)
-        
-        -- Cache result
+        local formatted = Decompiler.FormatSource(bestSource, scriptName)
         if Options.ScriptCache then
-            Decompiler.Cache[script] = {source = formatted, method = method}
+            Decompiler.Cache[script] = {source = formatted, method = bestMethod}
         end
-        
-        return formatted, method
+        return formatted, bestMethod
     else
         Decompiler.Stats.Failed = Decompiler.Stats.Failed + 1
-        return string.format("-- Decompilation failed for: %s\n-- Script type: %s\n-- All methods exhausted", 
-            scriptName, script.ClassName), "failed"
+        return string.format("-- Failed to decompile %s (%s)", scriptName, script.ClassName), "failed"
     end
 end
 
@@ -946,6 +970,7 @@ local TerrainSerializer = {}
 
 TerrainSerializer.Materials = {
     [Enum.Material.Air] = 0,
+
     [Enum.Material.Water] = 1,
     [Enum.Material.Grass] = 2,
     [Enum.Material.Slate] = 3,
