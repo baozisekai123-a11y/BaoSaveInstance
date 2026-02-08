@@ -101,6 +101,154 @@ end
 detectExecutor()
 
 -- ═══════════════════════════════════════════════════════════════════
+-- ANTI-CHEAT BYPASS & PROTECTION
+-- ═══════════════════════════════════════════════════════════════════
+
+local AntiCheatBypass = {}
+
+function AntiCheatBypass:init()
+    print("[BaoSaveInstance] Initializing anti-cheat bypass...")
+    
+    -- Bypass 1: Disable common anti-cheat connections
+    self:disableAntiCheatConnections()
+    
+    -- Bypass 2: Hook kick/ban functions
+    self:hookKickFunctions()
+    
+    -- Bypass 3: Spoof detection methods
+    self:spoofDetection()
+    
+    -- Bypass 4: Protect our UI
+    self:protectUI()
+    
+    print("[BaoSaveInstance] Anti-cheat bypass initialized!")
+end
+
+-- Disable anti-cheat script connections
+function AntiCheatBypass:disableAntiCheatConnections()
+    pcall(function()
+        if getconnections then
+            -- Disable RenderStepped anti-cheats
+            for _, connection in ipairs(getconnections(RunService.RenderStepped)) do
+                pcall(function()
+                    if connection.Function then
+                        local info = debug.getinfo(connection.Function)
+                        if info and info.source then
+                            local src = string.lower(info.source)
+                            if src:find("anti") or src:find("cheat") or src:find("detect") or src:find("kick") then
+                                connection:Disable()
+                            end
+                        end
+                    end
+                end)
+            end
+            
+            -- Disable Heartbeat anti-cheats
+            for _, connection in ipairs(getconnections(RunService.Heartbeat)) do
+                pcall(function()
+                    if connection.Function then
+                        local info = debug.getinfo(connection.Function)
+                        if info and info.source then
+                            local src = string.lower(info.source)
+                            if src:find("anti") or src:find("cheat") or src:find("detect") then
+                                connection:Disable()
+                            end
+                        end
+                    end
+                end)
+            end
+        end
+    end)
+end
+
+-- Hook kick/ban functions to prevent kicks
+function AntiCheatBypass:hookKickFunctions()
+    pcall(function()
+        -- Hook Player:Kick
+        if hookfunction then
+            local oldKick = nil
+            oldKick = hookfunction(game.Players.LocalPlayer.Kick, function(self, ...)
+                print("[BaoSaveInstance] Kick attempt blocked!")
+                return nil -- Block the kick
+            end)
+        end
+    end)
+    
+    -- Hook RemoteEvents that might kick
+    pcall(function()
+        if hookmetamethod then
+            local oldNamecall = nil
+            oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+                local method = getnamecallmethod()
+                local args = {...}
+                
+                -- Block suspicious remote calls
+                if method == "FireServer" or method == "InvokeServer" then
+                    local remoteName = self.Name:lower()
+                    if remoteName:find("kick") or remoteName:find("ban") or 
+                       remoteName:find("report") or remoteName:find("cheat") or
+                       remoteName:find("detect") or remoteName:find("punish") then
+                        print("[BaoSaveInstance] Blocked suspicious remote: " .. self.Name)
+                        return nil
+                    end
+                end
+                
+                return oldNamecall(self, ...)
+            end)
+        end
+    end)
+end
+
+-- Spoof detection methods
+function AntiCheatBypass:spoofDetection()
+    pcall(function()
+        -- Hide executor traces
+        if hookfunction and getrawmetatable then
+            -- Make getgenv harder to detect
+            local oldType = type
+            hookfunction(type, function(obj)
+                if obj == hookfunction or obj == getgenv or obj == getconnections then
+                    return "function"
+                end
+                return oldType(obj)
+            end)
+        end
+    end)
+    
+    pcall(function()
+        -- Hide our GUI from detection scripts
+        if hookfunction then
+            local oldFindFirstChild = game.FindFirstChild
+            hookfunction(game.FindFirstChild, function(self, name, ...)
+                if name == "BaoSaveInstanceUI" or name == "BaoSaveInstance" then
+                    return nil
+                end
+                return oldFindFirstChild(self, name, ...)
+            end)
+        end
+    end)
+end
+
+-- Protect our UI from being destroyed
+function AntiCheatBypass:protectUI()
+    pcall(function()
+        -- We'll set this up later when UI is created
+        self.uiProtectionEnabled = true
+    end)
+end
+
+-- Cleanup function
+function AntiCheatBypass:cleanup()
+    -- Restore hooks if needed
+    self.uiProtectionEnabled = false
+end
+
+-- Initialize anti-cheat bypass immediately
+pcall(function()
+    AntiCheatBypass:init()
+end)
+
+-- ═══════════════════════════════════════════════════════════════════
 -- UTILITY FUNCTIONS
 -- ═══════════════════════════════════════════════════════════════════
 
@@ -1117,21 +1265,88 @@ local UI = {}
 
 function UI:create()
     -- Destroy existing UI
-    local existing = CoreGui:FindFirstChild("BaoSaveInstanceUI")
-    if existing then existing:Destroy() end
+    pcall(function()
+        local existing = CoreGui:FindFirstChild("BaoSaveInstanceUI")
+        if existing then existing:Destroy() end
+    end)
+    pcall(function()
+        if gethui then
+            local existing = gethui():FindFirstChild("BaoSaveInstanceUI")
+            if existing then existing:Destroy() end
+        end
+    end)
     
     -- Main ScreenGui
     local ScreenGui = Instance.new("ScreenGui")
     ScreenGui.Name = "BaoSaveInstanceUI"
     ScreenGui.ResetOnSpawn = false
     ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    ScreenGui.DisplayOrder = 999999
+    ScreenGui.IgnoreGuiInset = true
     
-    -- Try to parent to CoreGui, fallback to PlayerGui
-    pcall(function()
-        ScreenGui.Parent = CoreGui
-    end)
-    if not ScreenGui.Parent then
-        ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+    -- Try multiple methods to parent GUI (compatibility)
+    local parentSuccess = false
+    
+    -- Method 1: gethui (most executors)
+    if not parentSuccess then
+        pcall(function()
+            if gethui then
+                ScreenGui.Parent = gethui()
+                parentSuccess = true
+                print("[BaoSaveInstance] UI parented via gethui")
+            end
+        end)
+    end
+    
+    -- Method 2: protect_gui + CoreGui
+    if not parentSuccess then
+        pcall(function()
+            if protect_gui then
+                protect_gui(ScreenGui)
+                ScreenGui.Parent = CoreGui
+                parentSuccess = true
+                print("[BaoSaveInstance] UI parented via protect_gui + CoreGui")
+            end
+        end)
+    end
+    
+    -- Method 3: syn.protect_gui
+    if not parentSuccess then
+        pcall(function()
+            if syn and syn.protect_gui then
+                syn.protect_gui(ScreenGui)
+                ScreenGui.Parent = CoreGui
+                parentSuccess = true
+                print("[BaoSaveInstance] UI parented via syn.protect_gui")
+            end
+        end)
+    end
+    
+    -- Method 4: Direct CoreGui
+    if not parentSuccess then
+        pcall(function()
+            ScreenGui.Parent = CoreGui
+            parentSuccess = ScreenGui.Parent ~= nil
+            if parentSuccess then
+                print("[BaoSaveInstance] UI parented via CoreGui")
+            end
+        end)
+    end
+    
+    -- Method 5: PlayerGui fallback
+    if not parentSuccess then
+        pcall(function()
+            ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui", 5)
+            parentSuccess = ScreenGui.Parent ~= nil
+            if parentSuccess then
+                print("[BaoSaveInstance] UI parented via PlayerGui")
+            end
+        end)
+    end
+    
+    if not parentSuccess then
+        warn("[BaoSaveInstance] Failed to parent UI!")
+        return nil
     end
     
     -- Main Frame with glassmorphism effect
@@ -1445,49 +1660,28 @@ function UI:create()
     self.BtnSaveTerrain = BtnSaveTerrain
     self.BtnSaveModels = BtnSaveModels
     
-    -- Fade in animation
-    MainFrame.BackgroundTransparency = 1
-    for _, child in ipairs(MainFrame:GetDescendants()) do
-        if child:IsA("Frame") or child:IsA("TextLabel") or child:IsA("TextButton") then
-            if child.BackgroundTransparency < 1 then
-                child.BackgroundTransparency = 1
-            end
-            if child:IsA("TextLabel") or child:IsA("TextButton") then
-                child.TextTransparency = 1
-            end
-        end
-    end
-    
-    -- Animate in
-    TweenService:Create(MainFrame, TweenInfo.new(0.5, Enum.EasingStyle.Quart), {
-        BackgroundTransparency = 0
-    }):Play()
-    
-    for _, child in ipairs(MainFrame:GetDescendants()) do
-        if child:IsA("Frame") and child.BackgroundTransparency > 0 then
-            TweenService:Create(child, TweenInfo.new(0.5, Enum.EasingStyle.Quart), {
-                BackgroundTransparency = child.Name == "LogWindow" and 0 or 
-                    (child.Name == "AdvancedPanel" and 0.5 or 
-                    (child.Name == "ProgressBg" and 0 or 0))
-            }):Play()
-        end
-        if child:IsA("TextLabel") then
-            TweenService:Create(child, TweenInfo.new(0.5, Enum.EasingStyle.Quart), {
-                TextTransparency = 0
-            }):Play()
-        end
-        if child:IsA("TextButton") then
-            TweenService:Create(child, TweenInfo.new(0.5, Enum.EasingStyle.Quart), {
-                BackgroundTransparency = 0,
-                TextTransparency = 0
-            }):Play()
-        end
-    end
-    
-    -- Setup log callback
+    -- Setup log callback FIRST before any animation
     Logger:onLog(function(entry)
-        self:addLog(entry)
+        pcall(function()
+            self:addLog(entry)
+        end)
     end)
+    
+    -- Simple fade animation (optional - wrapped in pcall)
+    pcall(function()
+        -- Quick initial setup
+        MainFrame.BackgroundTransparency = 0.3
+        
+        -- Animate to full opacity
+        task.spawn(function()
+            task.wait(0.1)
+            TweenService:Create(MainFrame, TweenInfo.new(0.3), {
+                BackgroundTransparency = 0
+            }):Play()
+        end)
+    end)
+    
+    print("[BaoSaveInstance] UI created successfully!")
     
     return ScreenGui
 end
