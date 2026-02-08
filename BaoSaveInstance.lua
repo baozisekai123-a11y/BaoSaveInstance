@@ -176,6 +176,7 @@ local function DetectExecutor()
         getscripts = getscripts,
         getrunningscripts = getrunningscripts,
         getloadedmodules = getloadedmodules,
+        cloneref = cloneref, -- Critical for bypass
         
         -- Environment
         getgenv = getgenv,
@@ -188,6 +189,7 @@ local function DetectExecutor()
         
         -- Closure
         hookfunction = hookfunction or replaceclosure,
+        hookmetamethod = hookmetamethod,
         newcclosure = newcclosure,
         islclosure = islclosure,
         iscclosure = iscclosure,
@@ -208,6 +210,40 @@ local function DetectExecutor()
 end
 
 DetectExecutor()
+
+--// STEALTH / BYPASS MODULE
+local Stealth = {}
+Stealth.Cloneref = ExecutorInfo.Functions.cloneref or function(o) return o end
+
+-- Safe Service Getter (Bypasses __namecall hooks on game)
+function Stealth.GetService(serviceName)
+    local success, service = pcall(function()
+        return Stealth.Cloneref(game:GetService(serviceName))
+    end)
+    if success then return service end
+    return game:GetService(serviceName) -- Fallback
+end
+
+--// SERVICES
+local Players = Stealth.GetService("Players")
+local TweenService = Stealth.GetService("TweenService")
+local HttpService = Stealth.GetService("HttpService")
+local RunService = Stealth.GetService("RunService")
+local UserInputService = Stealth.GetService("UserInputService")
+local CoreGui = Stealth.GetService("CoreGui")
+local Workspace = Stealth.GetService("Workspace")
+local Lighting = Stealth.GetService("Lighting")
+local ReplicatedStorage = Stealth.GetService("ReplicatedStorage")
+local ReplicatedFirst = Stealth.GetService("ReplicatedFirst")
+local StarterGui = Stealth.GetService("StarterGui")
+local StarterPack = Stealth.GetService("StarterPack")
+local StarterPlayer = Stealth.GetService("StarterPlayer")
+local Teams = Stealth.GetService("Teams")
+local SoundService = Stealth.GetService("SoundService")
+local Chat = Stealth.GetService("Chat")
+local LocalizationService = Stealth.GetService("LocalizationService")
+local MaterialService = Stealth.GetService("MaterialService")
+local TestService = Stealth.GetService("TestService")
 
 --// UTILITIES
 local Util = {}
@@ -275,15 +311,18 @@ end
 
 function Util.GetFullName(instance)
     local success, name = pcall(function()
-        return instance:GetFullName()
+        return Stealth.Cloneref(instance):GetFullName()
     end)
     return success and name or "Unknown"
 end
 
 function Util.SafeGetProperty(instance, property)
-    -- Try normal access
+    -- Use Cloneref to bypass __index hooks on the original userdata
+    local safeInstance = Stealth.Cloneref(instance)
+    
+    -- Try normal access on safe reference
     local success, value = pcall(function()
-        return instance[property]
+        return safeInstance[property]
     end)
     
     if success then
@@ -293,7 +332,7 @@ function Util.SafeGetProperty(instance, property)
     -- Try hidden property
     if ExecutorInfo.Functions.gethiddenproperty then
         success, value = pcall(function()
-            return ExecutorInfo.Functions.gethiddenproperty(instance, property)
+            return ExecutorInfo.Functions.gethiddenproperty(safeInstance, property)
         end)
         if success then
             return true, value
