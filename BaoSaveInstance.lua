@@ -83,6 +83,7 @@ local DefaultOptions = {
     IgnoreNotArchivable = true,
     IgnorePropertiesOfNotScriptsOnScriptsMode = false,
     SharedStringOverwrite = false,
+    TurboMode = true, -- Speed x10 (Allows lag)
     
     -- Safety
     SafeMode = false,
@@ -1505,33 +1506,46 @@ function SettingsManager.Save()
     end
 end
 
---// PERFORMANCE BALANCER
+--// PERFORMANCE BALANCER (TURBO UPDATE)
 local Performance = {}
 Performance.LastYield = tick()
 Performance.FrameTime = 0
 Performance.TargetFPS = 60
-Performance.MinFPS = 30
+Performance.MinFPS = Options.TurboMode and 15 or 30 -- Allow lower FPS in Turbo
+Performance.BatchSize = Options.TurboMode and 100 or 10
 
 RunService.Heartbeat:Connect(function(dt)
     Performance.FrameTime = dt
 end)
 
 function Performance.Check(iterCount)
-    -- Dynamic yielding based on FPS
-    local fps = 1 / Performance.FrameTime
-    local stress = 1 - math.clamp((fps - Performance.MinFPS) / (Performance.TargetFPS - Performance.MinFPS), 0, 1)
+    -- If Turbo Mode, we force huge batches
+    local batch = Options.TurboMode and 500 or 50
     
-    -- Base check interval on stress (highly stressed = check more often)
-    local checkInterval = math.floor(100 + (1 - stress) * 400)
-    
-    if iterCount % checkInterval == 0 then
-        if stress > 0.5 then
-            task.wait(stress * 0.1) -- Wait longer if stressed
+    if iterCount % batch == 0 then
+        -- Dynamic yielding based on FPS
+        local fps = 1 / math.max(Performance.FrameTime, 0.001)
+        
+        -- In Turbo Mode, we only yield if FPS is CRITICALLY low (<15)
+        local minFPS = Options.TurboMode and 15 or 30
+        
+        if fps < minFPS then
+            task.wait() -- Mandatory yield to prevent crash
         else
-            task.wait()
+            -- Optional yield to keep game responsive-ish
+            if not Options.TurboMode then
+                 task.wait()
+            else
+                -- In Turbo, we skip yielding most frames
+                if tick() - Performance.LastYield > 0.5 then
+                     task.wait()
+                     Performance.LastYield = tick()
+                end
+            end
         end
     end
 end
+
 
 --// UI FRAMEWORK
 local UI = {}
