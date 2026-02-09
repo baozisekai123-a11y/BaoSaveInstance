@@ -134,16 +134,27 @@ function Utils.DeepClone(tbl)
     return copy
 end
 
---- Generate a unique reference ID
 local refCounter = 0
+local instanceMap = {} -- [Instance] = RefID
+
 function Utils.GenerateRefId()
     refCounter = refCounter + 1
     return "RBX" .. tostring(refCounter)
 end
 
---- Reset reference counter
+--- Get or generate a referent ID for an instance
+function Utils.GetRefId(instance)
+    if not instance or typeof(instance) ~= "Instance" then return "null" end
+    if instanceMap[instance] then return instanceMap[instance] end
+    local id = Utils.GenerateRefId()
+    instanceMap[instance] = id
+    return id
+end
+
+--- Reset reference counter and map
 function Utils.ResetRefCounter()
     refCounter = 0
+    instanceMap = {}
 end
 
 --=============================================================================
@@ -153,35 +164,36 @@ local PropertySerializer = {}
 
 -- Property type handlers for XML serialization
 PropertySerializer.TypeHandlers = {
-    ["string"] = function(value)
-        return string.format("<string>%s</string>", Utils.EscapeXML(value))
+    ["string"] = function(name, value)
+        return string.format('<string name="%s">%s</string>', Utils.EscapeXML(name), Utils.EscapeXML(value))
     end,
     
-    ["number"] = function(value)
+    ["number"] = function(name, value)
         if value == math.floor(value) then
-            return string.format("<int>%d</int>", value)
+            return string.format('<int name="%s">%d</int>', Utils.EscapeXML(name), value)
         else
-            return string.format("<float>%s</float>", tostring(value))
+            return string.format('<float name="%s">%s</float>', Utils.EscapeXML(name), tostring(value))
         end
     end,
     
-    ["boolean"] = function(value)
-        return string.format("<bool>%s</bool>", tostring(value))
+    ["boolean"] = function(name, value)
+        return string.format('<bool name="%s">%s</bool>', Utils.EscapeXML(name), tostring(value))
     end,
     
-    ["Vector3"] = function(value)
-        return string.format("<Vector3><X>%s</X><Y>%s</Y><Z>%s</Z></Vector3>",
-            tostring(value.X), tostring(value.Y), tostring(value.Z))
+    ["Vector3"] = function(name, value)
+        return string.format('<Vector3 name="%s"><X>%s</X><Y>%s</Y><Z>%s</Z></Vector3>',
+            Utils.EscapeXML(name), tostring(value.X), tostring(value.Y), tostring(value.Z))
     end,
     
-    ["Vector2"] = function(value)
-        return string.format("<Vector2><X>%s</X><Y>%s</Y></Vector2>",
-            tostring(value.X), tostring(value.Y))
+    ["Vector2"] = function(name, value)
+        return string.format('<Vector2 name="%s"><X>%s</X><Y>%s</Y></Vector2>',
+            Utils.EscapeXML(name), tostring(value.X), tostring(value.Y))
     end,
     
-    ["CFrame"] = function(value)
+    ["CFrame"] = function(name, value)
         local components = {value:GetComponents()}
-        return string.format("<CoordinateFrame>%s</CoordinateFrame>",
+        return string.format('<CoordinateFrame name="%s">%s</CoordinateFrame>',
+            Utils.EscapeXML(name),
             table.concat({"<X>" .. components[1] .. "</X>",
                 "<Y>" .. components[2] .. "</Y>",
                 "<Z>" .. components[3] .. "</Z>",
@@ -196,70 +208,72 @@ PropertySerializer.TypeHandlers = {
                 "<R22>" .. components[12] .. "</R22>"}, ""))
     end,
     
-    ["Color3"] = function(value)
-        return string.format("<Color3><R>%s</R><G>%s</G><B>%s</B></Color3>",
-            tostring(value.R), tostring(value.G), tostring(value.B))
+    ["Color3"] = function(name, value)
+        return string.format('<Color3 name="%s"><R>%s</R><G>%s</G><B>%s</B></Color3>',
+            Utils.EscapeXML(name), tostring(value.R), tostring(value.G), tostring(value.B))
     end,
     
-    ["BrickColor"] = function(value)
-        return string.format("<int name=\"BrickColor\">%d</int>", value.Number)
+    ["BrickColor"] = function(name, value)
+        return string.format('<int name="%s">%d</int>', Utils.EscapeXML(name), value.Number)
     end,
     
-    ["UDim"] = function(value)
-        return string.format("<UDim><S>%s</S><O>%d</O></UDim>",
-            tostring(value.Scale), value.Offset)
+    ["UDim"] = function(name, value)
+        return string.format('<UDim name="%s"><S>%s</S><O>%d</O></UDim>',
+            Utils.EscapeXML(name), tostring(value.Scale), value.Offset)
     end,
     
-    ["UDim2"] = function(value)
-        return string.format("<UDim2><XS>%s</XS><XO>%d</XO><YS>%s</YS><YO>%d</YO></UDim2>",
-            tostring(value.X.Scale), value.X.Offset,
+    ["UDim2"] = function(name, value)
+        return string.format('<UDim2 name="%s"><XS>%s</XS><XO>%d</XO><YS>%s</YS><YO>%d</YO></UDim2>',
+            Utils.EscapeXML(name), tostring(value.X.Scale), value.X.Offset,
             tostring(value.Y.Scale), value.Y.Offset)
     end,
     
-    ["Rect"] = function(value)
-        return string.format("<Rect><min><X>%s</X><Y>%s</Y></min><max><X>%s</X><Y>%s</Y></max></Rect>",
-            tostring(value.Min.X), tostring(value.Min.Y),
+    ["Rect"] = function(name, value)
+        return string.format('<Rect name="%s"><min><X>%s</X><Y>%s</Y></min><max><X>%s</X><Y>%s</Y></max></Rect>',
+            Utils.EscapeXML(name), tostring(value.Min.X), tostring(value.Min.Y),
             tostring(value.Max.X), tostring(value.Max.Y))
     end,
     
-    ["NumberSequence"] = function(value)
+    ["NumberSequence"] = function(name, value)
         local keypoints = {}
         for _, kp in ipairs(value.Keypoints) do
             table.insert(keypoints, string.format("%s %s %s",
                 tostring(kp.Time), tostring(kp.Value), tostring(kp.Envelope)))
         end
-        return string.format("<NumberSequence>%s</NumberSequence>", table.concat(keypoints, " "))
+        return string.format('<NumberSequence name="%s">%s</NumberSequence>', 
+            Utils.EscapeXML(name), table.concat(keypoints, " "))
     end,
     
-    ["ColorSequence"] = function(value)
+    ["ColorSequence"] = function(name, value)
         local keypoints = {}
         for _, kp in ipairs(value.Keypoints) do
             table.insert(keypoints, string.format("%s %s %s %s",
                 tostring(kp.Time), tostring(kp.Value.R),
                 tostring(kp.Value.G), tostring(kp.Value.B)))
         end
-        return string.format("<ColorSequence>%s</ColorSequence>", table.concat(keypoints, " "))
+        return string.format('<ColorSequence name="%s">%s</ColorSequence>', 
+            Utils.EscapeXML(name), table.concat(keypoints, " "))
     end,
     
-    ["NumberRange"] = function(value)
-        return string.format("<NumberRange>%s %s</NumberRange>",
-            tostring(value.Min), tostring(value.Max))
+    ["NumberRange"] = function(name, value)
+        return string.format('<NumberRange name="%s">%s %s</NumberRange>',
+            Utils.EscapeXML(name), tostring(value.Min), tostring(value.Max))
     end,
     
-    ["Enum"] = function(value)
-        return string.format("<token>%d</token>", value.Value)
+    ["Enum"] = function(name, value)
+        return string.format('<token name="%s">%d</token>', Utils.EscapeXML(name), value.Value)
     end,
     
-    ["EnumItem"] = function(value)
-        return string.format("<token>%d</token>", value.Value)
+    ["EnumItem"] = function(name, value)
+        return string.format('<token name="%s">%d</token>', Utils.EscapeXML(name), value.Value)
     end,
     
-    ["Font"] = function(value)
-        return string.format("<Font><Family>%s</Family><Weight>%d</Weight><Style>%s</Style></Font>",
-            Utils.EscapeXML(value.Family), value.Weight.Value, value.Style.Name)
+    ["Font"] = function(name, value)
+        return string.format('<Font name="%s"><Family>%s</Family><Weight>%d</Weight><Style>%s</Style></Font>',
+            Utils.EscapeXML(name), Utils.EscapeXML(value.Family), value.Weight.Value, value.Style.Name)
     end,
     
-    ["Faces"] = function(value)
+    ["Faces"] = function(name, value)
         local faces = 0
         if value.Top then faces = faces + 1 end
         if value.Bottom then faces = faces + 2 end
@@ -267,31 +281,31 @@ PropertySerializer.TypeHandlers = {
         if value.Right then faces = faces + 8 end
         if value.Back then faces = faces + 16 end
         if value.Front then faces = faces + 32 end
-        return string.format("<Faces>%d</Faces>", faces)
+        return string.format('<Faces name="%s">%d</Faces>', Utils.EscapeXML(name), faces)
     end,
     
-    ["Axes"] = function(value)
+    ["Axes"] = function(name, value)
         local axes = 0
         if value.X then axes = axes + 1 end
         if value.Y then axes = axes + 2 end
         if value.Z then axes = axes + 4 end
-        return string.format("<Axes>%d</Axes>", axes)
+        return string.format('<Axes name="%s">%d</Axes>', Utils.EscapeXML(name), axes)
     end,
     
-    ["PhysicalProperties"] = function(value)
+    ["PhysicalProperties"] = function(name, value)
         if value then
-            return string.format("<PhysicalProperties><CustomPhysics>true</CustomPhysics><Density>%s</Density><Friction>%s</Friction><Elasticity>%s</Elasticity><FrictionWeight>%s</FrictionWeight><ElasticityWeight>%s</ElasticityWeight></PhysicalProperties>",
-                tostring(value.Density), tostring(value.Friction),
+            return string.format('<PhysicalProperties name="%s"><CustomPhysics>true</CustomPhysics><Density>%s</Density><Friction>%s</Friction><Elasticity>%s</Elasticity><FrictionWeight>%s</FrictionWeight><ElasticityWeight>%s</ElasticityWeight></PhysicalProperties>',
+                Utils.EscapeXML(name), tostring(value.Density), tostring(value.Friction),
                 tostring(value.Elasticity), tostring(value.FrictionWeight),
                 tostring(value.ElasticityWeight))
         else
-            return "<PhysicalProperties><CustomPhysics>false</CustomPhysics></PhysicalProperties>"
+            return string.format('<PhysicalProperties name="%s"><CustomPhysics>false</CustomPhysics></PhysicalProperties>', Utils.EscapeXML(name))
         end
     end,
     
-    ["Ray"] = function(value)
-        return string.format("<Ray><origin><X>%s</X><Y>%s</Y><Z>%s</Z></origin><direction><X>%s</X><Y>%s</Y><Z>%s</Z></direction></Ray>",
-            tostring(value.Origin.X), tostring(value.Origin.Y), tostring(value.Origin.Z),
+    ["Ray"] = function(name, value)
+        return string.format('<Ray name="%s"><origin><X>%s</X><Y>%s</Y><Z>%s</Z></origin><direction><X>%s</X><Y>%s</Y><Z>%s</Z></direction></Ray>',
+            Utils.EscapeXML(name), tostring(value.Origin.X), tostring(value.Origin.Y), tostring(value.Origin.Z),
             tostring(value.Direction.X), tostring(value.Direction.Y), tostring(value.Direction.Z))
     end,
 }
@@ -323,7 +337,6 @@ PropertySerializer.SkipClasses = {
     ["PlayerGui"] = true,
     ["Backpack"] = true,
     ["CoreGui"] = true,
-    ["StarterPlayerScripts"] = true,
 }
 
 --- Serialize a property value to XML
@@ -337,17 +350,15 @@ function PropertySerializer.SerializeProperty(name, value)
     local handler = PropertySerializer.TypeHandlers[valueType]
     
     if handler then
-        local success, result = Utils.SafeCall(handler, value)
+        local success, result = Utils.SafeCall(handler, name, value)
         if success and result then
-            return string.format('<Property name="%s">%s</Property>', 
-                Utils.EscapeXML(name), result)
+            return result
         end
     end
     
-    -- Handle Instance references
+    -- Handle Instance references (Mapping)
     if valueType == "Instance" then
-        return string.format('<Property name="%s"><Ref>%s</Ref></Property>',
-            Utils.EscapeXML(name), "null") -- References are complex, simplified here
+        return string.format('<Ref name="%s">%s</Ref>', Utils.EscapeXML(name), Utils.GetRefId(value))
     end
     
     return nil
@@ -531,12 +542,28 @@ function PropertySerializer.GetKnownProperties(instance)
     local properties = {}
     local className = instance.ClassName
     
-    -- Get properties from class hierarchy
-    local classesToCheck = {className}
+    -- Classes to check for properties (from base to specific)
+    local classesToCheck = {"Instance"}
     
-    -- Add parent classes for BasePart derivatives
-    if instance:IsA("BasePart") then
-        table.insert(classesToCheck, 1, "BasePart")
+    -- Hierarchy detection
+    local bases = {
+        "BasePart", "GuiObject", "LuaSourceContainer", "PostProcessEffect", 
+        "BaseLight", "DataModelMesh", "JointInstance", "ValueBase", "GuiBase2d"
+    }
+    
+    for _, base in ipairs(bases) do
+        if instance:IsA(base) then
+            table.insert(classesToCheck, base)
+        end
+    end
+    
+    -- Add the specific class if not already added
+    local isSpecificInList = false
+    for _, c in ipairs(classesToCheck) do
+        if c == className then isSpecificInList = true break end
+    end
+    if not isSpecificInList then
+        table.insert(classesToCheck, className)
     end
     
     for _, class in ipairs(classesToCheck) do
@@ -553,12 +580,6 @@ function PropertySerializer.GetKnownProperties(instance)
                 end
             end
         end
-    end
-    
-    -- Always try to get Name
-    local success, name = Utils.SafeCall(function() return instance.Name end)
-    if success then
-        properties["Name"] = name
     end
     
     return properties
@@ -642,21 +663,14 @@ function TerrainSerializer.Serialize(terrain, callback)
     end)
     
     if success and waterProps then
-        -- Serialize water properties
-        local colorXml = PropertySerializer.TypeHandlers["Color3"](waterProps.WaterColor)
-        table.insert(xmlParts, string.format('<Property name="WaterColor">%s</Property>', colorXml))
-        table.insert(xmlParts, string.format('<Property name="WaterReflectance"><float>%s</float></Property>', 
-            tostring(waterProps.WaterReflectance)))
-        table.insert(xmlParts, string.format('<Property name="WaterTransparency"><float>%s</float></Property>', 
-            tostring(waterProps.WaterTransparency)))
-        table.insert(xmlParts, string.format('<Property name="WaterWaveSize"><float>%s</float></Property>', 
-            tostring(waterProps.WaterWaveSize)))
-        table.insert(xmlParts, string.format('<Property name="WaterWaveSpeed"><float>%s</float></Property>', 
-            tostring(waterProps.WaterWaveSpeed)))
-        table.insert(xmlParts, string.format('<Property name="Decoration"><bool>%s</bool></Property>', 
-            tostring(waterProps.Decoration)))
-        table.insert(xmlParts, string.format('<Property name="GrassLength"><float>%s</float></Property>', 
-            tostring(waterProps.GrassLength)))
+        -- Serialize water properties (using corrected format)
+        table.insert(xmlParts, PropertySerializer.TypeHandlers["Color3"]("WaterColor", waterProps.WaterColor))
+        table.insert(xmlParts, string.format('<float name="WaterReflectance">%s</float>', tostring(waterProps.WaterReflectance)))
+        table.insert(xmlParts, string.format('<float name="WaterTransparency">%s</float>', tostring(waterProps.WaterTransparency)))
+        table.insert(xmlParts, string.format('<float name="WaterWaveSize">%s</float>', tostring(waterProps.WaterWaveSize)))
+        table.insert(xmlParts, string.format('<float name="WaterWaveSpeed">%s</float>', tostring(waterProps.WaterWaveSpeed)))
+        table.insert(xmlParts, string.format('<bool name="Decoration">%s</bool>', tostring(waterProps.Decoration)))
+        table.insert(xmlParts, string.format('<float name="GrassLength">%s</float>', tostring(waterProps.GrassLength)))
     end
     
     callback(10, "Getting terrain size...")
@@ -694,11 +708,11 @@ function TerrainSerializer.Serialize(terrain, callback)
             if success3 and voxelData then
                 callback(50, "Encoding voxel data...")
                 
-                -- Encode voxel data (simplified representation)
+                -- Encode voxel data
                 local voxelString = TerrainSerializer.EncodeVoxels(voxelData, callback)
                 if voxelString and #voxelString > 0 then
-                    table.insert(xmlParts, string.format('<Property name="TerrainData"><BinaryString>%s</BinaryString></Property>',
-                        Utils.EscapeXML(voxelString)))
+                    table.insert(xmlParts, string.format('<BinaryString name="TerrainData"><![CDATA[%s]]></BinaryString>',
+                        voxelString))
                 end
             end
         else
@@ -709,11 +723,9 @@ function TerrainSerializer.Serialize(terrain, callback)
             
             if success3 and smoothGrid then
                 callback(60, "Processing terrain region...")
-                -- Store region info for reference
-                table.insert(xmlParts, string.format('<Property name="RegionMin">%s</Property>',
-                    PropertySerializer.TypeHandlers["Vector3"](terrainData.MinPos)))
-                table.insert(xmlParts, string.format('<Property name="RegionMax">%s</Property>',
-                    PropertySerializer.TypeHandlers["Vector3"](terrainData.MaxPos)))
+                -- Store region info for reference (corrected format)
+                table.insert(xmlParts, PropertySerializer.TypeHandlers["Vector3"]("RegionMin", terrainData.MinPos))
+                table.insert(xmlParts, PropertySerializer.TypeHandlers["Vector3"]("RegionMax", terrainData.MaxPos))
             end
         end
     end
@@ -861,7 +873,7 @@ function InstanceSerializer.Serialize(instance, options, callback, depth)
     end
     
     local xmlParts = {}
-    local refId = Utils.GenerateRefId()
+    local refId = Utils.GetRefId(instance)
     
     -- Start instance element
     table.insert(xmlParts, string.format('<Item class="%s" referent="%s">',
@@ -882,9 +894,9 @@ function InstanceSerializer.Serialize(instance, options, callback, depth)
     if instance:IsA("LuaSourceContainer") and options.IncludeScripts then
         local source = ScriptDecompiler.Decompile(instance)
         if source then
-            -- Use ProtectedString for script source
+            -- Use ProtectedString for script source (corrected format)
             table.insert(xmlParts, string.format(
-                '<Property name="Source"><ProtectedString><![CDATA[%s]]></ProtectedString></Property>',
+                '<ProtectedString name="Source"><![CDATA[%s]]></ProtectedString>',
                 source))
         end
         InstanceSerializer.Stats.Scripts = InstanceSerializer.Stats.Scripts + 1
@@ -1976,6 +1988,11 @@ function App.DecompileFullGame()
                 StarterPlayer,
                 Teams,
                 SoundService,
+                Chat,
+                LocalizationService,
+                TestService,
+                game:GetService("TextChatService"),
+                game:GetService("VoiceChatService"),
             }
             
             for _, service in ipairs(servicesToSave) do
@@ -2029,9 +2046,24 @@ function App.DecompileModels()
     
     task.spawn(function()
         local success, err = Utils.SafeCall(function()
-            App.UpdateStatus("Serializing models...", "info")
+            -- Collect essential services for a functional map
+            local instancesToSave = {}
+            local services = {
+                Workspace,
+                Lighting,
+                ReplicatedStorage,
+                StarterPlayer,
+                Teams,
+                SoundService,
+                Chat,
+                game:GetService("TextChatService"),
+            }
             
-            local xmlContent = InstanceSerializer.SerializeToFile({Workspace}, {
+            for _, service in ipairs(services) do
+                table.insert(instancesToSave, service)
+            end
+            
+            local xmlContent = InstanceSerializer.SerializeToFile(instancesToSave, {
                 IncludeScripts = App.Settings.IncludeScripts,
                 IncludeTerrain = false, -- Exclude terrain for models only
             }, function(percent, status)
