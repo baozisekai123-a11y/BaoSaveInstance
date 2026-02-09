@@ -14,19 +14,37 @@ do -- Encapsulate the script to prevent environment leakage
 -- BaoSaveInstance v1.1 - Maximum Fidelity & Stealth
 --=============================================================================
 
---=============================================================================
--- SERVICES
---=============================================================================
 local getService = game.GetService
 local function GetService(name)
     local cloneref = (getfenv().cloneref or getfenv().cloneref_old or function(i) return i end)
     return cloneref(getService(game, name))
 end
 
+-- Namecall-Safe Method Caching
+local isA = game.IsA
+local getChildren = game.GetChildren
+local getDescendants = game.GetDescendants
+local findFirstChild = game.FindFirstChild
+local waitForChild = game.WaitForChild
+local destroy = game.Destroy
+local clone = game.Clone
+local getFullName = game.GetFullName
+local readVoxels = game.ReadVoxels
+local getMinExtents = game.GetMinExtents -- Standard Terrain methods
+local getMaxExtents = game.GetMaxExtents
+local expandToGrid = Region3.new().ExpandToGrid
+local connect = game.ChildAdded.Connect
+local wait = game.ChildAdded.Wait
+local getComponents = CFrame.new().GetComponents
+
 local Players = GetService("Players")
 local Workspace = GetService("Workspace")
 local CoreGui = GetService("CoreGui")
 local TweenService = GetService("TweenService")
+
+local createTween = TweenService.Create
+local play = Instance.new("Sound").Play -- Generic Play method
+
 local HttpService = GetService("HttpService")
 local Debris = GetService("Debris")
 local Lighting = GetService("Lighting")
@@ -478,7 +496,7 @@ function PropertySerializer.GetProperties(instance)
     end
     
     -- 3. DEEP FETCH: Handle non-standard or hidden objects explicitly
-    if instance:IsA("UnionOperation") then
+    if isA(instance, "UnionOperation") then
         local getHidden = Utils.GetFunction("gethiddenproperty") or Utils.GetFunction("get_hidden_property")
         if getHidden then
             for _, prop in ipairs({"ChildData", "MeshData", "HasAnisotropicTangentSpace"}) do
@@ -831,13 +849,13 @@ function TerrainSerializer.Serialize(terrain, callback)
     
     -- Get terrain region and voxel data
     local success2, terrainData = Utils.SafeCall(function()
-        local regionSize = terrain:GetMaxExtents() - terrain:GetMinExtents()
-        local minPos = terrain:GetMinExtents()
-        local maxPos = terrain:GetMaxExtents()
+        local minPos = getMinExtents(terrain)
+        local maxPos = getMaxExtents(terrain)
+        local regionSize = maxPos - minPos
         
         -- Create region from min to max
         local region = Region3.new(minPos, maxPos)
-        region = region:ExpandToGrid(4) -- Terrain grid resolution
+        region = expandToGrid(region, 4) -- Terrain grid resolution
         
         return {
             Size = regionSize,
@@ -851,14 +869,11 @@ function TerrainSerializer.Serialize(terrain, callback)
         callback(30, "Reading voxel data...")
         task.wait() -- Yield for performance
         
-        -- Read terrain voxels using executor's terrain functions if available
-        local readVoxels = Utils.GetFunction("readterrainvoxels") or Utils.GetFunction("ReadVoxels")
-        
-        if readVoxels then
-            local success3, voxelData = Utils.SafeCall(function()
-                local materials, occupancy = terrain:ReadVoxels(terrainData.Region, 4)
-                return {Materials = materials, Occupancy = occupancy}
-            end)
+        -- Read terrain voxels
+        local success3, voxelData = Utils.SafeCall(function()
+            local materials, occupancy = readVoxels(terrain, terrainData.Region, 4)
+            return {Materials = materials, Occupancy = occupancy}
+        end)
             
             if success3 and voxelData then
                 callback(50, "Encoding voxel data...")
@@ -985,7 +1000,7 @@ end
 function InstanceSerializer.CountDescendants(instance)
     local count = 0
     local success, descendants = Utils.SafeCall(function()
-        return instance:GetDescendants()
+        return getDescendants(instance)
     end)
     
     if success and descendants then
@@ -1014,14 +1029,14 @@ function InstanceSerializer.Serialize(instance, options, callback, depth)
     
     -- Skip scripts if option is disabled
     if not options.IncludeScripts then
-        if instance:IsA("LuaSourceContainer") then
+        if isA(instance, "LuaSourceContainer") then
             InstanceSerializer.Stats.SkippedInstances = InstanceSerializer.Stats.SkippedInstances + 1
             return ""
         end
     end
     
     -- Handle Terrain specially (nested in Workspace)
-    if instance:IsA("Terrain") then
+    if isA(instance, "Terrain") then
         if options.IncludeTerrain then
             return TerrainSerializer.Serialize(instance, callback)
         else
@@ -1049,7 +1064,7 @@ function InstanceSerializer.Serialize(instance, options, callback, depth)
     end
     
     -- Handle scripts specially - include source
-    if instance:IsA("LuaSourceContainer") and options.IncludeScripts then
+    if isA(instance, "LuaSourceContainer") and options.IncludeScripts then
         local source = ScriptDecompiler.Decompile(instance)
         if source then
             -- Use ProtectedString for script source (corrected format)
@@ -1058,9 +1073,9 @@ function InstanceSerializer.Serialize(instance, options, callback, depth)
                 source))
         end
         InstanceSerializer.Stats.Scripts = InstanceSerializer.Stats.Scripts + 1
-    elseif instance:IsA("Model") then
+    elseif isA(instance, "Model") then
         InstanceSerializer.Stats.Models = InstanceSerializer.Stats.Models + 1
-    elseif instance:IsA("BasePart") then
+    elseif isA(instance, "BasePart") then
         InstanceSerializer.Stats.Parts = InstanceSerializer.Stats.Parts + 1
     else
         InstanceSerializer.Stats.Other = InstanceSerializer.Stats.Other + 1
@@ -1070,7 +1085,7 @@ function InstanceSerializer.Serialize(instance, options, callback, depth)
     
     -- Process children
     local success, children = Utils.SafeCall(function()
-        return instance:GetChildren()
+        return getChildren(instance)
     end)
     
     if success and children and #children > 0 then
@@ -1081,7 +1096,7 @@ function InstanceSerializer.Serialize(instance, options, callback, depth)
             if InstanceSerializer.Stats.ProcessedInstances % Config.ProgressUpdateInterval == 0 then
                 local percent = math.floor((InstanceSerializer.Stats.ProcessedInstances / 
                     math.max(1, InstanceSerializer.Stats.TotalInstances)) * 100)
-                callback(percent, string.format("Processing: %s", child:GetFullName():sub(1, 50)))
+                callback(percent, string.format("Processing: %s", getFullName(child):sub(1, 50)))
             end
             
             -- Yield periodically to prevent script timeout
@@ -1135,7 +1150,7 @@ function InstanceSerializer.SerializeToFile(instances, options, callback)
     -- Progress calculation helper
     local totalInstances = 0
     for _, inst in ipairs(instances) do
-        totalInstances = totalInstances + #inst:GetDescendants() + 1
+        totalInstances = totalInstances + #getDescendants(inst) + 1
     end
     
     local instancesProcessed = 0
@@ -1159,7 +1174,7 @@ function InstanceSerializer.SerializeToFile(instances, options, callback)
         if instanceXml and #instanceXml > 0 then
             table.insert(xmlParts, instanceXml)
             xmlLengthCounter = xmlLengthCounter + #instanceXml
-            instancesProcessed = instancesProcessed + #instance:GetDescendants() + 1
+            instancesProcessed = instancesProcessed + #getDescendants(instance) + 1
         end
         
         -- Prevent Memory Spike (Yield after every 500KB of XML)
@@ -1403,7 +1418,7 @@ function UI.Toggle(props)
     button.Text = ""
     button.Parent = container
     
-    local conn = button.MouseButton1Click:Connect(toggle)
+    local conn = connect(button.MouseButton1Click, toggle)
     table.insert(UI.Connections, conn)
     
     if props.Parent then
@@ -1459,7 +1474,7 @@ function UI.Input(props)
     textBox.Parent = inputFrame
     
     if props.Callback then
-        local conn = textBox.FocusLost:Connect(function()
+        local conn = connect(textBox.FocusLost, function()
             props.Callback(textBox.Text)
         end)
         table.insert(UI.Connections, conn)
@@ -1640,16 +1655,15 @@ function App.Init()
         repeat task.wait() until Players.LocalPlayer
     end
     
-    -- Clean up existing GUIs using the random name tracking if possible
-    -- Or scan for common names for safety
-    local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
+    -- Clean up existing GUIs safely
+    local playerGui = waitForChild(Players.LocalPlayer, "PlayerGui")
     local getHui = Utils.GetFunction("gethui")
     
     local function SafeCleanup(container)
         if not container then return end
-        for _, gui in ipairs(container:GetChildren()) do
-            if gui:IsA("ScreenGui") and (gui.Name == "BaoSaveInstance" or gui:FindFirstChild("MainFrame")) then
-                gui:Destroy()
+        for _, gui in ipairs(getChildren(container)) do
+            if isA(gui, "ScreenGui") and (gui.Name == "BaoSaveInstance" or findFirstChild(gui, "MainFrame")) then
+                destroy(gui)
             end
         end
     end
@@ -1669,7 +1683,7 @@ function App.Init()
     -- Hide GUI from some basic detection methods
     pcall(function()
         App.GUI.IgnoreGuiInset = true
-        -- Set DisplayOrder safely without using non-standard methods
+        -- Set DisplayOrder safely
         App.GUI.DisplayOrder = 999999
     end)
     
@@ -2340,10 +2354,11 @@ end
 function App.Destroy()
     -- Animate out
     if App.MainFrame then
-        TweenService:Create(App.MainFrame, TweenInfo.new(0.2, Enum.EasingStyle.Back, Enum.EasingDirection.In), {
+        local tween = createTween(TweenService, App.MainFrame, TweenInfo.new(0.2, Enum.EasingStyle.Back, Enum.EasingDirection.In), {
             Position = UDim2.new(0.5, -190, 0.5, -200),
             BackgroundTransparency = 1
-        }):Play()
+        })
+        play(tween)
         
         task.delay(0.2, function()
             UI.Cleanup()
