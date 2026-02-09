@@ -1,2922 +1,2089 @@
 --[[
-    ╔══════════════════════════════════════════════════════════════════════════════╗
-    ║                         BaoSaveInstance Ultimate v2.0                        ║
-    ║              Advanced Game Decompiler & Exporter with Modern UI              ║
-    ╠══════════════════════════════════════════════════════════════════════════════╣
-    ║  Features:                                                                    ║
-    ║    • Full Game Export with Scripts & Terrain                                 ║
-    ║    • Model-Only Export                                                       ║
-    ║    • Terrain-Only Export                                                     ║
-    ║    • Custom Service Selection                                                ║
-    ║    • Blacklist/Whitelist System                                              ║
-    ║    • Real-time Progress Tracking                                             ║
-    ║    • Beautiful Modern UI with Animations                                     ║
-    ╚══════════════════════════════════════════════════════════════════════════════╝
+    ╔══════════════════════════════════════════════════════════════════════════╗
+    ║                          BaoSaveInstance v1.0                            ║
+    ║                  Professional Roblox Instance Saver                       ║
+    ║                                                                          ║
+    ║  A comprehensive tool for decompiling and saving Roblox game assets      ║
+    ║  Compatible with most modern executors (Synapse, Fluxus, etc.)          ║
+    ╚══════════════════════════════════════════════════════════════════════════╝
 ]]
 
---------------------------------------------------------------------------------
+--=============================================================================
 -- SERVICES
---------------------------------------------------------------------------------
-
+--=============================================================================
 local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local Lighting = game:GetService("Lighting")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ReplicatedFirst = game:GetService("ReplicatedFirst")
+local StarterGui = game:GetService("StarterGui")
+local StarterPack = game:GetService("StarterPack")
+local StarterPlayer = game:GetService("StarterPlayer")
+local Teams = game:GetService("Teams")
+local SoundService = game:GetService("SoundService")
+local Chat = game:GetService("Chat")
+local LocalizationService = game:GetService("LocalizationService")
+local TestService = game:GetService("TestService")
+local HttpService = game:GetService("HttpService")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
-local HttpService = game:GetService("HttpService")
-local MarketplaceService = game:GetService("MarketplaceService")
-local CoreGui = game:GetService("CoreGui")
-local TextService = game:GetService("TextService")
 
-local LocalPlayer = Players.LocalPlayer
-local Mouse = LocalPlayer:GetMouse()
-
---------------------------------------------------------------------------------
+--=============================================================================
 -- CONFIGURATION
---------------------------------------------------------------------------------
-
+--=============================================================================
 local Config = {
-    -- UI Settings
-    UI = {
-        Title = "BaoSaveInstance",
-        Version = "2.0 Ultimate",
-        Author = "Bao",
-        
-        -- Colors
-        Colors = {
-            Primary = Color3.fromRGB(99, 102, 241),      -- Indigo
-            PrimaryDark = Color3.fromRGB(79, 70, 229),   -- Darker Indigo
-            PrimaryLight = Color3.fromRGB(129, 140, 248), -- Lighter Indigo
-            
-            Secondary = Color3.fromRGB(236, 72, 153),    -- Pink
-            SecondaryDark = Color3.fromRGB(219, 39, 119),
-            
-            Accent = Color3.fromRGB(34, 211, 238),       -- Cyan
-            AccentDark = Color3.fromRGB(6, 182, 212),
-            
-            Success = Color3.fromRGB(34, 197, 94),       -- Green
-            Warning = Color3.fromRGB(250, 204, 21),      -- Yellow
-            Error = Color3.fromRGB(239, 68, 68),         -- Red
-            Info = Color3.fromRGB(59, 130, 246),         -- Blue
-            
-            Background = Color3.fromRGB(15, 15, 25),     -- Very Dark
-            BackgroundSecondary = Color3.fromRGB(22, 22, 35),
-            BackgroundTertiary = Color3.fromRGB(30, 30, 45),
-            
-            Surface = Color3.fromRGB(35, 35, 55),
-            SurfaceHover = Color3.fromRGB(45, 45, 70),
-            SurfaceActive = Color3.fromRGB(55, 55, 85),
-            
-            Border = Color3.fromRGB(55, 55, 80),
-            BorderHover = Color3.fromRGB(99, 102, 241),
-            
-            Text = Color3.fromRGB(255, 255, 255),
-            TextSecondary = Color3.fromRGB(156, 163, 175),
-            TextMuted = Color3.fromRGB(107, 114, 128),
-            
-            Shadow = Color3.fromRGB(0, 0, 0),
-        },
-        
-        -- Fonts
-        Fonts = {
-            Title = Enum.Font.GothamBold,
-            Heading = Enum.Font.GothamSemibold,
-            Body = Enum.Font.GothamMedium,
-            Code = Enum.Font.Code,
-        },
-        
-        -- Sizing
-        WindowSize = UDim2.new(0, 700, 0, 550),
-        CornerRadius = UDim.new(0, 12),
-        Padding = 16,
-        
-        -- Animation
-        TweenSpeed = 0.25,
-        TweenStyle = Enum.EasingStyle.Quint,
-        TweenDirection = Enum.EasingDirection.Out,
-    },
+    -- Default Settings
+    IncludeScripts = true,
+    IncludeTerrain = true,
+    DecompileScripts = true,
+    PreserveHierarchy = true,
     
     -- Export Settings
-    Export = {
-        OutputFormat = "rbxlx",
-        OutputFolder = "BaoSaveInstance",
-        DecompileScripts = true,
-        DecompileTimeout = 10,
-        IncludeTerrain = true,
-        IncludeCamera = false,
-        PreserveDisabled = true,
-        MaxRetries = 3,
-        YieldInterval = 50,
-        
-        ServicesToExport = {
-            { Name = "Workspace", Enabled = true, Icon = "🌍" },
-            { Name = "Lighting", Enabled = true, Icon = "💡" },
-            { Name = "ReplicatedFirst", Enabled = true, Icon = "📦" },
-            { Name = "ReplicatedStorage", Enabled = true, Icon = "📁" },
-            { Name = "ServerScriptService", Enabled = true, Icon = "📜" },
-            { Name = "ServerStorage", Enabled = true, Icon = "🗄️" },
-            { Name = "StarterGui", Enabled = true, Icon = "🖼️" },
-            { Name = "StarterPack", Enabled = true, Icon = "🎒" },
-            { Name = "StarterPlayer", Enabled = true, Icon = "👤" },
-            { Name = "SoundService", Enabled = true, Icon = "🔊" },
-            { Name = "Chat", Enabled = false, Icon = "💬" },
-            { Name = "Teams", Enabled = false, Icon = "👥" },
-            { Name = "MaterialService", Enabled = true, Icon = "🎨" },
-        },
-        
-        Blacklist = {
-            ClassNames = {"Player", "PlayerGui", "PlayerScripts", "Backpack"},
-            InstanceNames = {},
-        },
+    FileName = "SavedGame",
+    ExportFormat = ".rbxlx", -- .rbxlx (XML) or .rbxl (Binary - limited support)
+    
+    -- UI Colors (Dark Theme)
+    Colors = {
+        Background = Color3.fromRGB(25, 25, 30),
+        Secondary = Color3.fromRGB(35, 35, 45),
+        Accent = Color3.fromRGB(75, 130, 195),
+        AccentHover = Color3.fromRGB(95, 150, 215),
+        Text = Color3.fromRGB(235, 235, 240),
+        TextDim = Color3.fromRGB(155, 155, 165),
+        Success = Color3.fromRGB(85, 185, 105),
+        Error = Color3.fromRGB(215, 85, 85),
+        Warning = Color3.fromRGB(215, 175, 85),
+        Border = Color3.fromRGB(55, 55, 65),
     },
+    
+    -- UI Settings
+    WindowSize = UDim2.new(0, 380, 0, 480),
+    CornerRadius = UDim.new(0, 8),
+    
+    -- Performance
+    YieldInterval = 100, -- Yield every N instances
+    ProgressUpdateInterval = 50,
 }
 
---------------------------------------------------------------------------------
--- STATE MANAGEMENT
---------------------------------------------------------------------------------
-
-local State = {
-    -- UI State
-    IsOpen = true,
-    IsDragging = false,
-    DragStart = nil,
-    StartPos = nil,
-    CurrentTab = "Home",
-    IsMinimized = false,
-    
-    -- Export State
-    IsExporting = false,
-    ExportMode = nil,
-    Progress = 0,
-    CurrentOperation = "",
-    TotalInstances = 0,
-    ProcessedInstances = 0,
-    StartTime = 0,
-    
-    -- Logs
-    Logs = {},
-    MaxLogs = 100,
-    
-    -- Stats
-    Stats = {
-        TotalExports = 0,
-        SuccessfulExports = 0,
-        FailedExports = 0,
-        TotalInstances = 0,
-    }
-}
-
---------------------------------------------------------------------------------
+--=============================================================================
 -- UTILITY FUNCTIONS
---------------------------------------------------------------------------------
+--=============================================================================
+local Utils = {}
 
-local Utility = {}
-
-function Utility.Create(className, properties)
-    local instance = Instance.new(className)
-    for prop, value in pairs(properties or {}) do
-        if prop ~= "Parent" then
-            instance[prop] = value
-        end
-    end
-    if properties and properties.Parent then
-        instance.Parent = properties.Parent
-    end
-    return instance
+--- Safely call a function with error handling
+---@param func function The function to call
+---@param ... any Arguments to pass
+---@return boolean success, any result
+function Utils.SafeCall(func, ...)
+    return pcall(func, ...)
 end
 
-function Utility.Tween(object, properties, duration, style, direction)
-    duration = duration or Config.UI.TweenSpeed
-    style = style or Config.UI.TweenStyle
-    direction = direction or Config.UI.TweenDirection
-    
-    local tween = TweenService:Create(object, TweenInfo.new(duration, style, direction), properties)
-    tween:Play()
-    return tween
+--- Check if a function exists (executor compatibility)
+---@param name string Function name
+---@return boolean exists
+function Utils.FunctionExists(name)
+    return type(getfenv()[name]) == "function" or type(_G[name]) == "function"
 end
 
-function Utility.AddCorner(parent, radius)
-    return Utility.Create("UICorner", {
-        CornerRadius = radius or Config.UI.CornerRadius,
-        Parent = parent
-    })
+--- Get a global function safely
+---@param name string Function name
+---@return function|nil
+function Utils.GetFunction(name)
+    return getfenv()[name] or _G[name] or nil
 end
 
-function Utility.AddStroke(parent, color, thickness, transparency)
-    return Utility.Create("UIStroke", {
-        Color = color or Config.UI.Colors.Border,
-        Thickness = thickness or 1,
-        Transparency = transparency or 0,
-        Parent = parent
-    })
-end
-
-function Utility.AddPadding(parent, padding)
-    padding = padding or Config.UI.Padding
-    return Utility.Create("UIPadding", {
-        PaddingTop = UDim.new(0, padding),
-        PaddingBottom = UDim.new(0, padding),
-        PaddingLeft = UDim.new(0, padding),
-        PaddingRight = UDim.new(0, padding),
-        Parent = parent
-    })
-end
-
-function Utility.AddGradient(parent, colors, rotation)
-    local colorSequence = {}
-    for i, color in ipairs(colors) do
-        table.insert(colorSequence, ColorSequenceKeypoint.new((i-1)/(#colors-1), color))
-    end
-    
-    return Utility.Create("UIGradient", {
-        Color = ColorSequence.new(colorSequence),
-        Rotation = rotation or 45,
-        Parent = parent
-    })
-end
-
-function Utility.AddShadow(parent, size, transparency)
-    local shadow = Utility.Create("ImageLabel", {
-        Name = "Shadow",
-        BackgroundTransparency = 1,
-        Image = "rbxassetid://5554236805",
-        ImageColor3 = Config.UI.Colors.Shadow,
-        ImageTransparency = transparency or 0.6,
-        ScaleType = Enum.ScaleType.Slice,
-        SliceCenter = Rect.new(23, 23, 277, 277),
-        Size = UDim2.new(1, size or 30, 1, size or 30),
-        Position = UDim2.new(0, -(size or 30)/2, 0, -(size or 30)/2),
-        ZIndex = parent.ZIndex - 1,
-        Parent = parent
-    })
-    return shadow
-end
-
-function Utility.Ripple(button, x, y)
-    local ripple = Utility.Create("Frame", {
-        Name = "Ripple",
-        BackgroundColor3 = Color3.new(1, 1, 1),
-        BackgroundTransparency = 0.7,
-        BorderSizePixel = 0,
-        Position = UDim2.new(0, x - button.AbsolutePosition.X, 0, y - button.AbsolutePosition.Y),
-        Size = UDim2.new(0, 0, 0, 0),
-        AnchorPoint = Vector2.new(0.5, 0.5),
-        ZIndex = button.ZIndex + 1,
-        Parent = button
-    })
-    
-    Utility.AddCorner(ripple, UDim.new(1, 0))
-    
-    local size = math.max(button.AbsoluteSize.X, button.AbsoluteSize.Y) * 2
-    
-    Utility.Tween(ripple, {
-        Size = UDim2.new(0, size, 0, size),
-        BackgroundTransparency = 1
-    }, 0.5)
-    
-    task.delay(0.5, function()
-        ripple:Destroy()
-    end)
-end
-
-function Utility.FormatTime(seconds)
-    if seconds < 60 then
-        return string.format("%.1fs", seconds)
-    elseif seconds < 3600 then
-        return string.format("%dm %ds", math.floor(seconds/60), seconds % 60)
-    else
-        return string.format("%dh %dm", math.floor(seconds/3600), math.floor((seconds%3600)/60))
-    end
-end
-
-function Utility.FormatNumber(num)
-    if num >= 1000000 then
-        return string.format("%.1fM", num/1000000)
-    elseif num >= 1000 then
-        return string.format("%.1fK", num/1000)
-    else
-        return tostring(num)
-    end
-end
-
-function Utility.GetGameName()
-    local success, result = pcall(function()
-        return MarketplaceService:GetProductInfo(game.PlaceId).Name
-    end)
-    
-    if success and result then
-        result = string.gsub(result, "[^%w%s%-_]", "")
-        result = string.gsub(result, "%s+", "_")
-        return result
-    end
-    
-    return "Unknown_Game"
-end
-
---------------------------------------------------------------------------------
--- LOGGING SYSTEM
---------------------------------------------------------------------------------
-
-local Logger = {}
-
-function Logger.Add(level, message, icon)
-    local log = {
-        Time = os.date("%H:%M:%S"),
-        Level = level,
-        Message = message,
-        Icon = icon or "📝",
-        Color = ({
-            INFO = Config.UI.Colors.Info,
-            SUCCESS = Config.UI.Colors.Success,
-            WARNING = Config.UI.Colors.Warning,
-            ERROR = Config.UI.Colors.Error,
-            DEBUG = Config.UI.Colors.TextMuted,
-            PROGRESS = Config.UI.Colors.Accent,
-        })[level] or Config.UI.Colors.Text
-    }
-    
-    table.insert(State.Logs, 1, log)
-    
-    if #State.Logs > State.MaxLogs then
-        table.remove(State.Logs)
-    end
-    
-    -- Update console if exists
-    if Logger.OnLog then
-        Logger.OnLog(log)
-    end
-end
-
-function Logger.Info(message) Logger.Add("INFO", message, "ℹ️") end
-function Logger.Success(message) Logger.Add("SUCCESS", message, "✅") end
-function Logger.Warning(message) Logger.Add("WARNING", message, "⚠️") end
-function Logger.Error(message) Logger.Add("ERROR", message, "❌") end
-function Logger.Debug(message) Logger.Add("DEBUG", message, "🔧") end
-function Logger.Progress(message) Logger.Add("PROGRESS", message, "⏳") end
-
-function Logger.Clear()
-    State.Logs = {}
-    if Logger.OnClear then
-        Logger.OnClear()
-    end
-end
-
---------------------------------------------------------------------------------
--- XML SERIALIZATION ENGINE
---------------------------------------------------------------------------------
-
-local XMLSerializer = {}
-
-local function EscapeXML(str)
-    if type(str) ~= "string" then str = tostring(str) end
-    str = string.gsub(str, "&", "&amp;")
-    str = string.gsub(str, "<", "&lt;")
-    str = string.gsub(str, ">", "&gt;")
-    str = string.gsub(str, '"', "&quot;")
-    str = string.gsub(str, "'", "&apos;")
-    str = string.gsub(str, "[\x00-\x08\x0B\x0C\x0E-\x1F]", "")
+--- Escape XML special characters
+---@param str string Input string
+---@return string Escaped string
+function Utils.EscapeXML(str)
+    if type(str) ~= "string" then return tostring(str) end
     return str
+        :gsub("&", "&amp;")
+        :gsub("<", "&lt;")
+        :gsub(">", "&gt;")
+        :gsub('"', "&quot;")
+        :gsub("'", "&apos;")
 end
 
-local function EncodeBase64(data)
-    local b = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
-    return ((data:gsub('.', function(x) 
-        local r, b = '', x:byte()
-        for i = 8, 1, -1 do r = r .. (b % 2 ^ i - b % 2 ^ (i - 1) > 0 and '1' or '0') end
-        return r
-    end) .. '0000'):gsub('%d%d%d?%d?%d?%d?', function(x)
-        if #x < 6 then return '' end
-        local c = 0
-        for i = 1, 6 do c = c + (x:sub(i, i) == '1' and 2 ^ (6 - i) or 0) end
-        return b:sub(c + 1, c + 1)
-    end) .. ({ '', '==', '=' })[#data % 3 + 1])
-end
-
-local PropertySerializers = {}
-
-PropertySerializers["string"] = function(value)
-    return string.format("<string>%s</string>", EscapeXML(value))
-end
-
-PropertySerializers["number"] = function(value)
-    if value == math.huge then return "<float>INF</float>"
-    elseif value == -math.huge then return "<float>-INF</float>"
-    elseif value ~= value then return "<float>NAN</float>"
-    else return string.format("<float>%s</float>", tostring(value)) end
-end
-
-PropertySerializers["boolean"] = function(value)
-    return string.format("<bool>%s</bool>", value and "true" or "false")
-end
-
-PropertySerializers["Vector3"] = function(value)
-    return string.format("<Vector3><X>%s</X><Y>%s</Y><Z>%s</Z></Vector3>", value.X, value.Y, value.Z)
-end
-
-PropertySerializers["Vector2"] = function(value)
-    return string.format("<Vector2><X>%s</X><Y>%s</Y></Vector2>", value.X, value.Y)
-end
-
-PropertySerializers["CFrame"] = function(value)
-    local c = {value:GetComponents()}
-    return string.format("<CoordinateFrame><X>%s</X><Y>%s</Y><Z>%s</Z><R00>%s</R00><R01>%s</R01><R02>%s</R02><R10>%s</R10><R11>%s</R11><R12>%s</R12><R20>%s</R20><R21>%s</R21><R22>%s</R22></CoordinateFrame>", unpack(c))
-end
-
-PropertySerializers["Color3"] = function(value)
-    return string.format("<Color3><R>%s</R><G>%s</G><B>%s</B></Color3>", value.R, value.G, value.B)
-end
-
-PropertySerializers["BrickColor"] = function(value)
-    return string.format("<int>%d</int>", value.Number)
-end
-
-PropertySerializers["UDim"] = function(value)
-    return string.format("<UDim><S>%s</S><O>%d</O></UDim>", value.Scale, value.Offset)
-end
-
-PropertySerializers["UDim2"] = function(value)
-    return string.format("<UDim2><XS>%s</XS><XO>%d</XO><YS>%s</YS><YO>%d</YO></UDim2>", value.X.Scale, value.X.Offset, value.Y.Scale, value.Y.Offset)
-end
-
-PropertySerializers["Rect"] = function(value)
-    return string.format("<Rect2D><min><X>%s</X><Y>%s</Y></min><max><X>%s</X><Y>%s</Y></max></Rect2D>", value.Min.X, value.Min.Y, value.Max.X, value.Max.Y)
-end
-
-PropertySerializers["NumberSequence"] = function(value)
-    local kps = {}
-    for _, kp in ipairs(value.Keypoints) do
-        table.insert(kps, string.format("%s %s %s", kp.Time, kp.Value, kp.Envelope))
+--- Format a number with commas
+---@param num number Input number
+---@return string Formatted number
+function Utils.FormatNumber(num)
+    local formatted = tostring(math.floor(num))
+    local k
+    while true do
+        formatted, k = formatted:gsub("^(-?%d+)(%d%d%d)", "%1,%2")
+        if k == 0 then break end
     end
-    return string.format("<NumberSequence>%s</NumberSequence>", table.concat(kps, " "))
+    return formatted
 end
 
-PropertySerializers["ColorSequence"] = function(value)
-    local kps = {}
-    for _, kp in ipairs(value.Keypoints) do
-        table.insert(kps, string.format("%s %s %s %s 0", kp.Time, kp.Value.R, kp.Value.G, kp.Value.B))
-    end
-    return string.format("<ColorSequence>%s</ColorSequence>", table.concat(kps, " "))
-end
-
-PropertySerializers["NumberRange"] = function(value)
-    return string.format("<NumberRange>%s %s</NumberRange>", value.Min, value.Max)
-end
-
-PropertySerializers["EnumItem"] = function(value)
-    return string.format("<token>%d</token>", value.Value)
-end
-
-PropertySerializers["Instance"] = function(value, refMap)
-    if value and refMap and refMap[value] then
-        return string.format("<Ref>%s</Ref>", refMap[value])
-    end
-    return "<Ref>null</Ref>"
-end
-
-PropertySerializers["Content"] = function(value)
-    return string.format("<Content><url>%s</url></Content>", EscapeXML(tostring(value)))
-end
-
-PropertySerializers["PhysicalProperties"] = function(value)
-    if value then
-        return string.format("<PhysicalProperties><CustomPhysics>true</CustomPhysics><Density>%s</Density><Friction>%s</Friction><Elasticity>%s</Elasticity><FrictionWeight>%s</FrictionWeight><ElasticityWeight>%s</ElasticityWeight></PhysicalProperties>", 
-            value.Density, value.Friction, value.Elasticity, value.FrictionWeight, value.ElasticityWeight)
-    end
-    return "<PhysicalProperties><CustomPhysics>false</CustomPhysics></PhysicalProperties>"
-end
-
-function XMLSerializer.SerializeProperty(name, value, refMap)
-    if value == nil then return nil end
-    local valueType = typeof(value)
-    local serializer = PropertySerializers[valueType]
-    if serializer then
-        if valueType == "Instance" then
-            return string.format('<Item name="%s">%s</Item>', name, serializer(value, refMap))
+--- Deep clone a table
+---@param tbl table Table to clone
+---@return table Cloned table
+function Utils.DeepClone(tbl)
+    local copy = {}
+    for k, v in pairs(tbl) do
+        if type(v) == "table" then
+            copy[k] = Utils.DeepClone(v)
         else
-            return string.format('<Item name="%s">%s</Item>', name, serializer(value))
+            copy[k] = v
         end
-    elseif valueType ~= "table" and valueType ~= "function" then
-        return string.format('<Item name="%s"><string>%s</string></Item>', name, EscapeXML(tostring(value)))
     end
+    return copy
+end
+
+--- Generate a unique reference ID
+local refCounter = 0
+function Utils.GenerateRefId()
+    refCounter = refCounter + 1
+    return "RBX" .. tostring(refCounter)
+end
+
+--- Reset reference counter
+function Utils.ResetRefCounter()
+    refCounter = 0
+end
+
+--=============================================================================
+-- PROPERTY SERIALIZER
+--=============================================================================
+local PropertySerializer = {}
+
+-- Property type handlers for XML serialization
+PropertySerializer.TypeHandlers = {
+    ["string"] = function(value)
+        return string.format("<string>%s</string>", Utils.EscapeXML(value))
+    end,
+    
+    ["number"] = function(value)
+        if value == math.floor(value) then
+            return string.format("<int>%d</int>", value)
+        else
+            return string.format("<float>%s</float>", tostring(value))
+        end
+    end,
+    
+    ["boolean"] = function(value)
+        return string.format("<bool>%s</bool>", tostring(value))
+    end,
+    
+    ["Vector3"] = function(value)
+        return string.format("<Vector3><X>%s</X><Y>%s</Y><Z>%s</Z></Vector3>",
+            tostring(value.X), tostring(value.Y), tostring(value.Z))
+    end,
+    
+    ["Vector2"] = function(value)
+        return string.format("<Vector2><X>%s</X><Y>%s</Y></Vector2>",
+            tostring(value.X), tostring(value.Y))
+    end,
+    
+    ["CFrame"] = function(value)
+        local components = {value:GetComponents()}
+        return string.format("<CoordinateFrame>%s</CoordinateFrame>",
+            table.concat({"<X>" .. components[1] .. "</X>",
+                "<Y>" .. components[2] .. "</Y>",
+                "<Z>" .. components[3] .. "</Z>",
+                "<R00>" .. components[4] .. "</R00>",
+                "<R01>" .. components[5] .. "</R01>",
+                "<R02>" .. components[6] .. "</R02>",
+                "<R10>" .. components[7] .. "</R10>",
+                "<R11>" .. components[8] .. "</R11>",
+                "<R12>" .. components[9] .. "</R12>",
+                "<R20>" .. components[10] .. "</R20>",
+                "<R21>" .. components[11] .. "</R21>",
+                "<R22>" .. components[12] .. "</R22>"}, ""))
+    end,
+    
+    ["Color3"] = function(value)
+        return string.format("<Color3><R>%s</R><G>%s</G><B>%s</B></Color3>",
+            tostring(value.R), tostring(value.G), tostring(value.B))
+    end,
+    
+    ["BrickColor"] = function(value)
+        return string.format("<int name=\"BrickColor\">%d</int>", value.Number)
+    end,
+    
+    ["UDim"] = function(value)
+        return string.format("<UDim><S>%s</S><O>%d</O></UDim>",
+            tostring(value.Scale), value.Offset)
+    end,
+    
+    ["UDim2"] = function(value)
+        return string.format("<UDim2><XS>%s</XS><XO>%d</XO><YS>%s</YS><YO>%d</YO></UDim2>",
+            tostring(value.X.Scale), value.X.Offset,
+            tostring(value.Y.Scale), value.Y.Offset)
+    end,
+    
+    ["Rect"] = function(value)
+        return string.format("<Rect><min><X>%s</X><Y>%s</Y></min><max><X>%s</X><Y>%s</Y></max></Rect>",
+            tostring(value.Min.X), tostring(value.Min.Y),
+            tostring(value.Max.X), tostring(value.Max.Y))
+    end,
+    
+    ["NumberSequence"] = function(value)
+        local keypoints = {}
+        for _, kp in ipairs(value.Keypoints) do
+            table.insert(keypoints, string.format("%s %s %s",
+                tostring(kp.Time), tostring(kp.Value), tostring(kp.Envelope)))
+        end
+        return string.format("<NumberSequence>%s</NumberSequence>", table.concat(keypoints, " "))
+    end,
+    
+    ["ColorSequence"] = function(value)
+        local keypoints = {}
+        for _, kp in ipairs(value.Keypoints) do
+            table.insert(keypoints, string.format("%s %s %s %s",
+                tostring(kp.Time), tostring(kp.Value.R),
+                tostring(kp.Value.G), tostring(kp.Value.B)))
+        end
+        return string.format("<ColorSequence>%s</ColorSequence>", table.concat(keypoints, " "))
+    end,
+    
+    ["NumberRange"] = function(value)
+        return string.format("<NumberRange>%s %s</NumberRange>",
+            tostring(value.Min), tostring(value.Max))
+    end,
+    
+    ["Enum"] = function(value)
+        return string.format("<token>%d</token>", value.Value)
+    end,
+    
+    ["EnumItem"] = function(value)
+        return string.format("<token>%d</token>", value.Value)
+    end,
+    
+    ["Font"] = function(value)
+        return string.format("<Font><Family>%s</Family><Weight>%d</Weight><Style>%s</Style></Font>",
+            Utils.EscapeXML(value.Family), value.Weight.Value, value.Style.Name)
+    end,
+    
+    ["Faces"] = function(value)
+        local faces = 0
+        if value.Top then faces = faces + 1 end
+        if value.Bottom then faces = faces + 2 end
+        if value.Left then faces = faces + 4 end
+        if value.Right then faces = faces + 8 end
+        if value.Back then faces = faces + 16 end
+        if value.Front then faces = faces + 32 end
+        return string.format("<Faces>%d</Faces>", faces)
+    end,
+    
+    ["Axes"] = function(value)
+        local axes = 0
+        if value.X then axes = axes + 1 end
+        if value.Y then axes = axes + 2 end
+        if value.Z then axes = axes + 4 end
+        return string.format("<Axes>%d</Axes>", axes)
+    end,
+    
+    ["PhysicalProperties"] = function(value)
+        if value then
+            return string.format("<PhysicalProperties><CustomPhysics>true</CustomPhysics><Density>%s</Density><Friction>%s</Friction><Elasticity>%s</Elasticity><FrictionWeight>%s</FrictionWeight><ElasticityWeight>%s</ElasticityWeight></PhysicalProperties>",
+                tostring(value.Density), tostring(value.Friction),
+                tostring(value.Elasticity), tostring(value.FrictionWeight),
+                tostring(value.ElasticityWeight))
+        else
+            return "<PhysicalProperties><CustomPhysics>false</CustomPhysics></PhysicalProperties>"
+        end
+    end,
+    
+    ["Ray"] = function(value)
+        return string.format("<Ray><origin><X>%s</X><Y>%s</Y><Z>%s</Z></origin><direction><X>%s</X><Y>%s</Y><Z>%s</Z></direction></Ray>",
+            tostring(value.Origin.X), tostring(value.Origin.Y), tostring(value.Origin.Z),
+            tostring(value.Direction.X), tostring(value.Direction.Y), tostring(value.Direction.Z))
+    end,
+}
+
+-- Properties to skip (read-only, deprecated, or problematic)
+PropertySerializer.SkipProperties = {
+    ["Parent"] = true,
+    ["ClassName"] = true,
+    ["DataCost"] = true,
+    ["RobloxLocked"] = true,
+    ["Archivable"] = false, -- We want this one
+    ["DebugId"] = true,
+    ["SourceAssetId"] = true,
+    ["UniqueId"] = true,
+    ["HistoryId"] = true,
+    ["Capabilities"] = true,
+    ["Sandboxed"] = true,
+    ["PlayerToHideFrom"] = true,
+    ["SimulationRadius"] = true,
+    ["MaxPlayers"] = true,
+    ["PreferredPlayers"] = true,
+    ["LocalPlayer"] = true,
+}
+
+-- Classes to skip entirely
+PropertySerializer.SkipClasses = {
+    ["Player"] = true,
+    ["PlayerScripts"] = true,
+    ["PlayerGui"] = true,
+    ["Backpack"] = true,
+    ["CoreGui"] = true,
+    ["StarterPlayerScripts"] = true,
+}
+
+--- Serialize a property value to XML
+---@param name string Property name
+---@param value any Property value
+---@return string|nil XML string or nil if unsupported
+function PropertySerializer.SerializeProperty(name, value)
+    if value == nil then return nil end
+    
+    local valueType = typeof(value)
+    local handler = PropertySerializer.TypeHandlers[valueType]
+    
+    if handler then
+        local success, result = Utils.SafeCall(handler, value)
+        if success and result then
+            return string.format('<Property name="%s">%s</Property>', 
+                Utils.EscapeXML(name), result)
+        end
+    end
+    
+    -- Handle Instance references
+    if valueType == "Instance" then
+        return string.format('<Property name="%s"><Ref>%s</Ref></Property>',
+            Utils.EscapeXML(name), "null") -- References are complex, simplified here
+    end
+    
     return nil
 end
 
---------------------------------------------------------------------------------
--- INSTANCE SERIALIZATION
---------------------------------------------------------------------------------
-
-local InstanceSerializer = {}
-
-local PropertiesToIgnore = {
-    "Parent", "DataCost", "RobloxLocked", "Archivable", "ClassName", "className", "archivable"
-}
-
-local PropertiesToIgnoreSet = {}
-for _, prop in ipairs(PropertiesToIgnore) do PropertiesToIgnoreSet[prop] = true end
-
-local function GetInstanceProperties(instance)
+--- Get all properties of an instance
+---@param instance Instance The instance to get properties from
+---@return table Properties table {name = value}
+function PropertySerializer.GetProperties(instance)
     local properties = {}
     
-    local success, props = pcall(function()
-        if getproperties then return getproperties(instance)
-        elseif gethiddenproperties then
-            local visible = getproperties and getproperties(instance) or {}
-            local hidden = gethiddenproperties(instance)
-            for k, v in pairs(hidden) do visible[k] = v end
-            return visible
+    -- Try to get properties using various methods
+    local success, props = Utils.SafeCall(function()
+        -- Method 1: Use getproperties if available (executor function)
+        local getProps = Utils.GetFunction("getproperties")
+        if getProps then
+            return getProps(instance)
         end
-        return nil
+        
+        -- Method 2: Use known property lists based on class
+        return PropertySerializer.GetKnownProperties(instance)
     end)
     
     if success and props then
-        for propName, propValue in pairs(props) do
-            if not PropertiesToIgnoreSet[propName] then
-                properties[propName] = propValue
-            end
-        end
-    else
-        local commonProps = {
-            "Name", "Position", "Size", "CFrame", "Color", "BrickColor", "Material",
-            "Transparency", "Reflectance", "Anchored", "CanCollide", "Shape",
-            "TopSurface", "BottomSurface", "Velocity", "Locked", "Massless",
-            "Text", "TextColor3", "TextSize", "Font", "TextScaled", "TextWrapped",
-            "BackgroundColor3", "BackgroundTransparency", "BorderColor3",
-            "Image", "ImageColor3", "ImageTransparency", "ScaleType",
-            "SoundId", "Volume", "PlaybackSpeed", "Looped", "Playing",
-            "MeshId", "TextureId", "Scale", "Offset", "VertexColor",
-            "Brightness", "Range", "Shadows", "Enabled", "Face",
-            "Source", "LinkedSource", "Disabled", "Value", "MaxValue", "MinValue",
-            "C0", "C1", "Part0", "Part1", "Attachment0", "Attachment1"
-        }
-        
-        for _, propName in ipairs(commonProps) do
-            local propSuccess, propValue = pcall(function() return instance[propName] end)
-            if propSuccess and propValue ~= nil then properties[propName] = propValue end
-        end
+        properties = props
     end
     
     return properties
 end
 
-local function CreateRefId()
-    return "RBX" .. HttpService:GenerateGUID(false):gsub("-", "")
-end
+-- Known properties for common classes
+PropertySerializer.KnownClassProperties = {
+    ["BasePart"] = {
+        "Name", "Anchored", "CanCollide", "CanTouch", "CanQuery", "CastShadow",
+        "Color", "Material", "MaterialVariant", "Reflectance", "Transparency",
+        "Size", "CFrame", "Position", "Orientation", "Locked", "Massless",
+        "RootPriority", "CustomPhysicalProperties", "CollisionGroup"
+    },
+    ["Part"] = {"Shape"},
+    ["MeshPart"] = {"MeshId", "TextureID", "CollisionFidelity", "RenderFidelity"},
+    ["UnionOperation"] = {"UsePartColor", "CollisionFidelity", "RenderFidelity"},
+    ["WedgePart"] = {},
+    ["CornerWedgePart"] = {},
+    ["TrussPart"] = {},
+    ["SpawnLocation"] = {"Duration", "Enabled", "Neutral", "TeamColor", "AllowTeamChangeOnTouch"},
+    ["Seat"] = {"Disabled"},
+    ["VehicleSeat"] = {"Disabled", "HeadsUpDisplay", "MaxSpeed", "Steer", "SteerFloat", "Throttle", "ThrottleFloat", "Torque", "TurnSpeed"},
+    ["SkateboardPlatform"] = {"Steer", "StickyWheels", "Throttle"},
+    
+    ["Model"] = {"Name", "PrimaryPart", "WorldPivot", "ModelStreamingMode", "LevelOfDetail"},
+    ["Accessory"] = {"AccessoryType", "AttachmentPoint"},
+    ["Humanoid"] = {
+        "Name", "DisplayName", "Health", "MaxHealth", "WalkSpeed", "JumpPower", "JumpHeight",
+        "HipHeight", "AutoRotate", "AutoJumpEnabled", "UseJumpPower", "NameDisplayDistance",
+        "HealthDisplayDistance", "NameOcclusion", "HealthDisplayType", "DisplayDistanceType",
+        "RigType", "RequiresNeck", "BreakJointsOnDeath", "EvaluateStateMachine"
+    },
+    
+    ["Script"] = {"Name", "Disabled", "RunContext"},
+    ["LocalScript"] = {"Name", "Disabled", "RunContext"},
+    ["ModuleScript"] = {"Name"},
+    
+    ["Decal"] = {"Name", "Texture", "Color3", "Transparency", "ZIndex", "Face"},
+    ["Texture"] = {"Name", "Texture", "Color3", "Transparency", "ZIndex", "Face", "StudsPerTileU", "StudsPerTileV", "OffsetStudsU", "OffsetStudsV"},
+    ["SurfaceAppearance"] = {"ColorMap", "MetalnessMap", "NormalMap", "RoughnessMap", "AlphaMode"},
+    
+    ["PointLight"] = {"Name", "Brightness", "Color", "Enabled", "Range", "Shadows"},
+    ["SpotLight"] = {"Name", "Brightness", "Color", "Enabled", "Range", "Shadows", "Angle", "Face"},
+    ["SurfaceLight"] = {"Name", "Brightness", "Color", "Enabled", "Range", "Shadows", "Angle", "Face"},
+    
+    ["Sound"] = {"Name", "SoundId", "Volume", "Pitch", "PlaybackSpeed", "Looped", "Playing", "PlayOnRemove", "RollOffMode", "RollOffMinDistance", "RollOffMaxDistance"},
+    ["SoundGroup"] = {"Name", "Volume"},
+    
+    ["ParticleEmitter"] = {
+        "Name", "Enabled", "Texture", "Color", "Size", "Transparency", "LightEmission",
+        "LightInfluence", "ZOffset", "Lifetime", "Rate", "Speed", "SpreadAngle",
+        "Rotation", "RotSpeed", "Acceleration", "Drag", "VelocityInheritance",
+        "EmissionDirection", "Shape", "ShapeInOut", "ShapeStyle", "LockedToPart",
+        "Orientation", "TimeScale", "Squash"
+    },
+    
+    ["Attachment"] = {"Name", "Visible", "CFrame", "Position", "Orientation", "WorldPosition", "WorldCFrame"},
+    
+    ["Weld"] = {"Name", "Part0", "Part1", "C0", "C1", "Enabled"},
+    ["WeldConstraint"] = {"Name", "Part0", "Part1", "Enabled"},
+    ["Motor6D"] = {"Name", "Part0", "Part1", "C0", "C1", "CurrentAngle", "DesiredAngle", "MaxVelocity", "Enabled"},
+    
+    ["Folder"] = {"Name"},
+    ["Configuration"] = {"Name"},
+    ["Tool"] = {"Name", "CanBeDropped", "Enabled", "Grip", "GripForward", "GripPos", "GripRight", "GripUp", "ManualActivationOnly", "RequiresHandle", "ToolTip"},
+    
+    ["ScreenGui"] = {"Name", "DisplayOrder", "Enabled", "IgnoreGuiInset", "ResetOnSpawn", "ZIndexBehavior", "AutoLocalize", "ClipToDeviceSafeArea", "SafeAreaCompatibility", "ScreenInsets"},
+    ["BillboardGui"] = {"Name", "Enabled", "Active", "Adornee", "Size", "SizeOffset", "StudsOffset", "StudsOffsetWorldSpace", "ExtentsOffset", "ExtentsOffsetWorldSpace", "LightInfluence", "MaxDistance", "AlwaysOnTop", "ClipsDescendants", "ZIndexBehavior", "DistanceLowerLimit", "DistanceUpperLimit", "DistanceStep"},
+    ["SurfaceGui"] = {"Name", "Enabled", "Active", "Adornee", "Face", "CanvasSize", "LightInfluence", "AlwaysOnTop", "ClipsDescendants", "ZIndexBehavior", "PixelsPerStud", "SizingMode", "ToolPunchThroughDistance", "ZOffset", "Brightness", "MaxDistance"},
+    
+    ["Frame"] = {"Name", "Active", "Visible", "BackgroundColor3", "BackgroundTransparency", "BorderColor3", "BorderSizePixel", "BorderMode", "ClipsDescendants", "Position", "Size", "AnchorPoint", "Rotation", "ZIndex", "LayoutOrder", "AutomaticSize", "SizeConstraint", "Interactable"},
+    ["TextLabel"] = {"Name", "Active", "Visible", "BackgroundColor3", "BackgroundTransparency", "BorderColor3", "BorderSizePixel", "BorderMode", "ClipsDescendants", "Position", "Size", "AnchorPoint", "Rotation", "ZIndex", "LayoutOrder", "AutomaticSize", "SizeConstraint", "Text", "TextColor3", "TextTransparency", "TextStrokeColor3", "TextStrokeTransparency", "Font", "FontFace", "TextSize", "TextScaled", "TextWrapped", "TextXAlignment", "TextYAlignment", "TextTruncate", "RichText", "MaxVisibleGraphemes", "LineHeight"},
+    ["TextButton"] = {"Name", "Active", "Visible", "BackgroundColor3", "BackgroundTransparency", "BorderColor3", "BorderSizePixel", "BorderMode", "ClipsDescendants", "Position", "Size", "AnchorPoint", "Rotation", "ZIndex", "LayoutOrder", "AutomaticSize", "SizeConstraint", "Text", "TextColor3", "TextTransparency", "TextStrokeColor3", "TextStrokeTransparency", "Font", "FontFace", "TextSize", "TextScaled", "TextWrapped", "TextXAlignment", "TextYAlignment", "TextTruncate", "RichText", "MaxVisibleGraphemes", "LineHeight", "AutoButtonColor", "Modal", "Selected", "Interactable"},
+    ["TextBox"] = {"Name", "Active", "Visible", "BackgroundColor3", "BackgroundTransparency", "BorderColor3", "BorderSizePixel", "BorderMode", "ClipsDescendants", "Position", "Size", "AnchorPoint", "Rotation", "ZIndex", "LayoutOrder", "AutomaticSize", "SizeConstraint", "Text", "PlaceholderText", "PlaceholderColor3", "TextColor3", "TextTransparency", "TextStrokeColor3", "TextStrokeTransparency", "Font", "FontFace", "TextSize", "TextScaled", "TextWrapped", "TextXAlignment", "TextYAlignment", "TextTruncate", "RichText", "MaxVisibleGraphemes", "LineHeight", "ClearTextOnFocus", "MultiLine", "TextEditable", "CursorPosition", "SelectionStart", "ShowNativeInput"},
+    ["ImageLabel"] = {"Name", "Active", "Visible", "BackgroundColor3", "BackgroundTransparency", "BorderColor3", "BorderSizePixel", "BorderMode", "ClipsDescendants", "Position", "Size", "AnchorPoint", "Rotation", "ZIndex", "LayoutOrder", "AutomaticSize", "SizeConstraint", "Image", "ImageColor3", "ImageTransparency", "ImageRectOffset", "ImageRectSize", "ScaleType", "SliceCenter", "SliceScale", "TileSize", "ResampleMode"},
+    ["ImageButton"] = {"Name", "Active", "Visible", "BackgroundColor3", "BackgroundTransparency", "BorderColor3", "BorderSizePixel", "BorderMode", "ClipsDescendants", "Position", "Size", "AnchorPoint", "Rotation", "ZIndex", "LayoutOrder", "AutomaticSize", "SizeConstraint", "Image", "ImageColor3", "ImageTransparency", "ImageRectOffset", "ImageRectSize", "ScaleType", "SliceCenter", "SliceScale", "TileSize", "ResampleMode", "HoverImage", "PressedImage", "AutoButtonColor", "Modal", "Selected", "Interactable"},
+    ["ScrollingFrame"] = {"Name", "Active", "Visible", "BackgroundColor3", "BackgroundTransparency", "BorderColor3", "BorderSizePixel", "BorderMode", "ClipsDescendants", "Position", "Size", "AnchorPoint", "Rotation", "ZIndex", "LayoutOrder", "AutomaticSize", "SizeConstraint", "CanvasPosition", "CanvasSize", "AutomaticCanvasSize", "ScrollBarImageColor3", "ScrollBarImageTransparency", "ScrollBarThickness", "ScrollingDirection", "ScrollingEnabled", "TopImage", "MidImage", "BottomImage", "HorizontalScrollBarInset", "VerticalScrollBarInset", "VerticalScrollBarPosition", "ElasticBehavior", "Interactable"},
+    ["ViewportFrame"] = {"Name", "Active", "Visible", "BackgroundColor3", "BackgroundTransparency", "BorderColor3", "BorderSizePixel", "BorderMode", "ClipsDescendants", "Position", "Size", "AnchorPoint", "Rotation", "ZIndex", "LayoutOrder", "AutomaticSize", "SizeConstraint", "Ambient", "CurrentCamera", "ImageColor3", "ImageTransparency", "LightColor", "LightDirection"},
+    ["CanvasGroup"] = {"Name", "Active", "Visible", "BackgroundColor3", "BackgroundTransparency", "BorderColor3", "BorderSizePixel", "BorderMode", "ClipsDescendants", "Position", "Size", "AnchorPoint", "Rotation", "ZIndex", "LayoutOrder", "AutomaticSize", "SizeConstraint", "GroupColor3", "GroupTransparency"},
+    
+    ["UICorner"] = {"Name", "CornerRadius"},
+    ["UIGradient"] = {"Name", "Color", "Enabled", "Offset", "Rotation", "Transparency"},
+    ["UIStroke"] = {"Name", "ApplyStrokeMode", "Color", "Enabled", "LineJoinMode", "Thickness", "Transparency"},
+    ["UIPadding"] = {"Name", "PaddingBottom", "PaddingLeft", "PaddingRight", "PaddingTop"},
+    ["UIListLayout"] = {"Name", "FillDirection", "HorizontalAlignment", "HorizontalFlex", "ItemLineAlignment", "Padding", "SortOrder", "VerticalAlignment", "VerticalFlex", "Wraps"},
+    ["UIGridLayout"] = {"Name", "CellPadding", "CellSize", "FillDirection", "FillDirectionMaxCells", "HorizontalAlignment", "SortOrder", "StartCorner", "VerticalAlignment"},
+    ["UITableLayout"] = {"Name", "FillDirection", "FillEmptySpaceColumns", "FillEmptySpaceRows", "HorizontalAlignment", "MajorAxis", "Padding", "SortOrder", "VerticalAlignment"},
+    ["UIPageLayout"] = {"Name", "Animated", "Circular", "EasingDirection", "EasingStyle", "FillDirection", "GamepadInputEnabled", "HorizontalAlignment", "Padding", "ScrollWheelInputEnabled", "SortOrder", "TouchInputEnabled", "TweenTime", "VerticalAlignment"},
+    ["UIScale"] = {"Name", "Scale"},
+    ["UISizeConstraint"] = {"Name", "MaxSize", "MinSize"},
+    ["UITextSizeConstraint"] = {"Name", "MaxTextSize", "MinTextSize"},
+    ["UIAspectRatioConstraint"] = {"Name", "AspectRatio", "AspectType", "DominantAxis"},
+    ["UIFlexItem"] = {"Name", "FlexMode", "GrowRatio", "ItemLineAlignment", "ShrinkRatio"},
+    
+    ["Camera"] = {"Name", "CFrame", "FieldOfView", "FieldOfViewMode", "Focus", "HeadLocked", "HeadScale", "NearPlaneZ", "CameraType", "DiagonalFieldOfView", "MaxAxisFieldOfView", "VRTiltAndRollEnabled"},
+    
+    ["Beam"] = {"Name", "Enabled", "Attachment0", "Attachment1", "Color", "CurveSize0", "CurveSize1", "FaceCamera", "LightEmission", "LightInfluence", "Segments", "Texture", "TextureLength", "TextureMode", "TextureSpeed", "Transparency", "Width0", "Width1", "ZOffset", "Brightness"},
+    ["Trail"] = {"Name", "Enabled", "Attachment0", "Attachment1", "Color", "FaceCamera", "LightEmission", "LightInfluence", "Lifetime", "MaxLength", "MinLength", "Texture", "TextureLength", "TextureMode", "Transparency", "WidthScale", "Brightness"},
+    
+    ["Atmosphere"] = {"Name", "Color", "Decay", "Density", "Glare", "Haze", "Offset"},
+    ["Sky"] = {"Name", "CelestialBodiesShown", "MoonAngularSize", "MoonTextureId", "SkyboxBk", "SkyboxDn", "SkyboxFt", "SkyboxLf", "SkyboxRt", "SkyboxUp", "StarCount", "SunAngularSize", "SunTextureId"},
+    ["Clouds"] = {"Name", "Color", "Cover", "Density", "Enabled"},
+    ["BloomEffect"] = {"Name", "Enabled", "Intensity", "Size", "Threshold"},
+    ["BlurEffect"] = {"Name", "Enabled", "Size"},
+    ["ColorCorrectionEffect"] = {"Name", "Enabled", "Brightness", "Contrast", "Saturation", "TintColor"},
+    ["DepthOfFieldEffect"] = {"Name", "Enabled", "FarIntensity", "FocusDistance", "InFocusRadius", "NearIntensity"},
+    ["SunRaysEffect"] = {"Name", "Enabled", "Intensity", "Spread"},
+    
+    ["StringValue"] = {"Name", "Value"},
+    ["IntValue"] = {"Name", "Value"},
+    ["NumberValue"] = {"Name", "Value"},
+    ["BoolValue"] = {"Name", "Value"},
+    ["BrickColorValue"] = {"Name", "Value"},
+    ["Color3Value"] = {"Name", "Value"},
+    ["Vector3Value"] = {"Name", "Value"},
+    ["CFrameValue"] = {"Name", "Value"},
+    ["ObjectValue"] = {"Name", "Value"},
+    ["RayValue"] = {"Name", "Value"},
+}
 
-function InstanceSerializer.BuildRefMap(instances)
-    local refMap = {}
-    for _, instance in ipairs(instances) do
-        refMap[instance] = CreateRefId()
-    end
-    return refMap
-end
-
-function InstanceSerializer.Serialize(instance, refMap, depth)
-    depth = depth or 0
-    local indent = string.rep("  ", depth)
+--- Get known properties for an instance based on its class
+---@param instance Instance The instance
+---@return table Properties {name = value}
+function PropertySerializer.GetKnownProperties(instance)
+    local properties = {}
     local className = instance.ClassName
-    local refId = refMap[instance] or CreateRefId()
     
-    local lines = {}
-    table.insert(lines, string.format('%s<Item class="%s" referent="%s">', indent, className, refId))
-    table.insert(lines, string.format('%s  <Properties>', indent))
-    table.insert(lines, string.format('%s    <string name="Name">%s</string>', indent, EscapeXML(instance.Name)))
+    -- Get properties from class hierarchy
+    local classesToCheck = {className}
     
-    local properties = GetInstanceProperties(instance)
-    for propName, propValue in pairs(properties) do
-        if propName ~= "Name" then
-            local serialized = XMLSerializer.SerializeProperty(propName, propValue, refMap)
-            if serialized then
-                table.insert(lines, string.format('%s    %s', indent, serialized))
+    -- Add parent classes for BasePart derivatives
+    if instance:IsA("BasePart") then
+        table.insert(classesToCheck, 1, "BasePart")
+    end
+    
+    for _, class in ipairs(classesToCheck) do
+        local classProps = PropertySerializer.KnownClassProperties[class]
+        if classProps then
+            for _, propName in ipairs(classProps) do
+                if not PropertySerializer.SkipProperties[propName] then
+                    local success, value = Utils.SafeCall(function()
+                        return instance[propName]
+                    end)
+                    if success and value ~= nil then
+                        properties[propName] = value
+                    end
+                end
             end
         end
     end
     
-    table.insert(lines, string.format('%s  </Properties>', indent))
-    
-    local children = instance:GetChildren()
-    for i, child in ipairs(children) do
-        local childXml = InstanceSerializer.Serialize(child, refMap, depth + 1)
-        if childXml then table.insert(lines, childXml) end
-        if i % Config.Export.YieldInterval == 0 then RunService.Heartbeat:Wait() end
+    -- Always try to get Name
+    local success, name = Utils.SafeCall(function() return instance.Name end)
+    if success then
+        properties["Name"] = name
     end
     
-    table.insert(lines, string.format('%s</Item>', indent))
-    return table.concat(lines, "\n")
+    return properties
 end
 
---------------------------------------------------------------------------------
--- TERRAIN SERIALIZATION
---------------------------------------------------------------------------------
+--=============================================================================
+-- SCRIPT DECOMPILER
+--=============================================================================
+local ScriptDecompiler = {}
 
-local TerrainSerializer = {}
-
-function TerrainSerializer.Serialize()
-    local terrain = workspace:FindFirstChildOfClass("Terrain")
-    if not terrain then return nil end
+--- Attempt to decompile a script
+---@param script LuaSourceContainer The script to decompile
+---@return string|nil source The decompiled source or nil
+function ScriptDecompiler.Decompile(script)
+    if not Config.DecompileScripts then
+        return "-- Decompilation disabled"
+    end
     
-    Logger.Progress("Serializing terrain data...")
+    -- Try various decompile methods
+    local decompileFuncs = {
+        "decompile",
+        "Decompile",
+        "getscriptbytecode",
+        "decompilefunc",
+    }
     
-    local success, terrainData = pcall(function()
-        local data = {}
-        data.WaterWaveSize = terrain.WaterWaveSize
-        data.WaterWaveSpeed = terrain.WaterWaveSpeed
-        data.WaterReflectance = terrain.WaterReflectance
-        data.WaterTransparency = terrain.WaterTransparency
-        data.WaterColor = {R = terrain.WaterColor.R, G = terrain.WaterColor.G, B = terrain.WaterColor.B}
-        return data
+    for _, funcName in ipairs(decompileFuncs) do
+        local func = Utils.GetFunction(funcName)
+        if func then
+            local success, source = Utils.SafeCall(func, script)
+            if success and source and type(source) == "string" and #source > 0 then
+                return source
+            end
+        end
+    end
+    
+    -- Fallback: Try to get Source property (usually protected)
+    local success, source = Utils.SafeCall(function()
+        return script.Source
     end)
     
+    if success and source and #source > 0 then
+        return source
+    end
+    
+    -- Return placeholder
+    return string.format("-- Failed to decompile %s\n-- Script: %s", 
+        script.ClassName, script:GetFullName())
+end
+
+--=============================================================================
+-- TERRAIN SERIALIZER
+--=============================================================================
+local TerrainSerializer = {}
+
+--- Serialize terrain data
+---@param terrain Terrain The terrain instance
+---@param callback function Progress callback (percent, status)
+---@return string XML representation of terrain
+function TerrainSerializer.Serialize(terrain, callback)
+    if not terrain then return "" end
+    
+    callback = callback or function() end
+    
+    local xmlParts = {}
+    table.insert(xmlParts, '<Item class="Terrain" referent="' .. Utils.GenerateRefId() .. '">')
+    table.insert(xmlParts, '<Properties>')
+    table.insert(xmlParts, '<Property name="Name"><string>Terrain</string></Property>')
+    
+    -- Get terrain properties
+    local success, waterProps = Utils.SafeCall(function()
+        return {
+            WaterColor = terrain.WaterColor,
+            WaterReflectance = terrain.WaterReflectance,
+            WaterTransparency = terrain.WaterTransparency,
+            WaterWaveSize = terrain.WaterWaveSize,
+            WaterWaveSpeed = terrain.WaterWaveSpeed,
+            Decoration = terrain.Decoration,
+            GrassLength = terrain.GrassLength,
+        }
+    end)
+    
+    if success and waterProps then
+        -- Serialize water properties
+        local colorXml = PropertySerializer.TypeHandlers["Color3"](waterProps.WaterColor)
+        table.insert(xmlParts, string.format('<Property name="WaterColor">%s</Property>', colorXml))
+        table.insert(xmlParts, string.format('<Property name="WaterReflectance"><float>%s</float></Property>', 
+            tostring(waterProps.WaterReflectance)))
+        table.insert(xmlParts, string.format('<Property name="WaterTransparency"><float>%s</float></Property>', 
+            tostring(waterProps.WaterTransparency)))
+        table.insert(xmlParts, string.format('<Property name="WaterWaveSize"><float>%s</float></Property>', 
+            tostring(waterProps.WaterWaveSize)))
+        table.insert(xmlParts, string.format('<Property name="WaterWaveSpeed"><float>%s</float></Property>', 
+            tostring(waterProps.WaterWaveSpeed)))
+        table.insert(xmlParts, string.format('<Property name="Decoration"><bool>%s</bool></Property>', 
+            tostring(waterProps.Decoration)))
+        table.insert(xmlParts, string.format('<Property name="GrassLength"><float>%s</float></Property>', 
+            tostring(waterProps.GrassLength)))
+    end
+    
+    callback(10, "Getting terrain size...")
+    
+    -- Get terrain region and voxel data
+    local success2, terrainData = Utils.SafeCall(function()
+        local regionSize = terrain:GetMaxExtents() - terrain:GetMinExtents()
+        local minPos = terrain:GetMinExtents()
+        local maxPos = terrain:GetMaxExtents()
+        
+        -- Create region from min to max
+        local region = Region3.new(minPos, maxPos)
+        region = region:ExpandToGrid(4) -- Terrain grid resolution
+        
+        return {
+            Size = regionSize,
+            Region = region,
+            MinPos = minPos,
+            MaxPos = maxPos
+        }
+    end)
+    
+    if success2 and terrainData then
+        callback(30, "Reading voxel data...")
+        
+        -- Read terrain voxels using executor's terrain functions if available
+        local readVoxels = Utils.GetFunction("readterrainvoxels") or Utils.GetFunction("ReadVoxels")
+        
+        if readVoxels then
+            local success3, voxelData = Utils.SafeCall(function()
+                local materials, occupancy = terrain:ReadVoxels(terrainData.Region, 4)
+                return {Materials = materials, Occupancy = occupancy}
+            end)
+            
+            if success3 and voxelData then
+                callback(50, "Encoding voxel data...")
+                
+                -- Encode voxel data (simplified representation)
+                local voxelString = TerrainSerializer.EncodeVoxels(voxelData, callback)
+                if voxelString and #voxelString > 0 then
+                    table.insert(xmlParts, string.format('<Property name="TerrainData"><BinaryString>%s</BinaryString></Property>',
+                        Utils.EscapeXML(voxelString)))
+                end
+            end
+        else
+            -- Alternative: Save SmoothGrid if available
+            local success3, smoothGrid = Utils.SafeCall(function()
+                return terrain:CopyRegion(terrainData.Region)
+            end)
+            
+            if success3 and smoothGrid then
+                callback(60, "Processing terrain region...")
+                -- Store region info for reference
+                table.insert(xmlParts, string.format('<Property name="RegionMin">%s</Property>',
+                    PropertySerializer.TypeHandlers["Vector3"](terrainData.MinPos)))
+                table.insert(xmlParts, string.format('<Property name="RegionMax">%s</Property>',
+                    PropertySerializer.TypeHandlers["Vector3"](terrainData.MaxPos)))
+            end
+        end
+    end
+    
+    callback(90, "Finalizing terrain...")
+    
+    table.insert(xmlParts, '</Properties>')
+    table.insert(xmlParts, '</Item>')
+    
+    callback(100, "Terrain serialized")
+    
+    return table.concat(xmlParts, "\n")
+end
+
+--- Encode voxel data to a string format
+---@param voxelData table {Materials = 3D array, Occupancy = 3D array}
+---@param callback function Progress callback
+---@return string Encoded voxel data
+function TerrainSerializer.EncodeVoxels(voxelData, callback)
+    -- Simplified voxel encoding - full implementation would be complex
+    -- This stores basic material and occupancy data
+    
+    local encoded = {}
+    local materials = voxelData.Materials
+    local occupancy = voxelData.Occupancy
+    
+    if not materials or not occupancy then
+        return ""
+    end
+    
+    local size = materials.Size
+    if not size then return "" end
+    
+    local totalVoxels = size.X * size.Y * size.Z
+    local processed = 0
+    
+    for x = 1, size.X do
+        for y = 1, size.Y do
+            for z = 1, size.Z do
+                local success, data = Utils.SafeCall(function()
+                    local mat = materials[x][y][z]
+                    local occ = occupancy[x][y][z]
+                    
+                    -- Only encode non-air voxels
+                    if mat ~= Enum.Material.Air and occ > 0 then
+                        return string.format("%d,%d,%d,%d,%.2f", x, y, z, mat.Value, occ)
+                    end
+                    return nil
+                end)
+                
+                if success and data then
+                    table.insert(encoded, data)
+                end
+                
+                processed = processed + 1
+                if processed % 10000 == 0 then
+                    callback(50 + (processed / totalVoxels) * 40, "Encoding voxels...")
+                    task.wait()
+                end
+            end
+        end
+    end
+    
+    return table.concat(encoded, ";")
+end
+
+--=============================================================================
+-- INSTANCE SERIALIZER
+--=============================================================================
+local InstanceSerializer = {}
+
+-- Statistics tracking
+InstanceSerializer.Stats = {
+    TotalInstances = 0,
+    ProcessedInstances = 0,
+    SkippedInstances = 0,
+    Scripts = 0,
+    Models = 0,
+    Parts = 0,
+    Other = 0,
+}
+
+--- Reset statistics
+function InstanceSerializer.ResetStats()
+    InstanceSerializer.Stats = {
+        TotalInstances = 0,
+        ProcessedInstances = 0,
+        SkippedInstances = 0,
+        Scripts = 0,
+        Models = 0,
+        Parts = 0,
+        Other = 0,
+    }
+end
+
+--- Count all descendants of an instance
+---@param instance Instance Root instance
+---@return number Total descendant count
+function InstanceSerializer.CountDescendants(instance)
+    local count = 0
+    local success, descendants = Utils.SafeCall(function()
+        return instance:GetDescendants()
+    end)
+    
+    if success and descendants then
+        count = #descendants
+    end
+    
+    return count
+end
+
+--- Serialize an instance and its descendants to XML
+---@param instance Instance The instance to serialize
+---@param options table Serialization options
+---@param callback function Progress callback (percent, status)
+---@param depth number Current recursion depth
+---@return string XML representation
+function InstanceSerializer.Serialize(instance, options, callback, depth)
+    options = options or {}
+    callback = callback or function() end
+    depth = depth or 0
+    
+    -- Check if we should skip this instance
+    if PropertySerializer.SkipClasses[instance.ClassName] then
+        InstanceSerializer.Stats.SkippedInstances = InstanceSerializer.Stats.SkippedInstances + 1
+        return ""
+    end
+    
+    -- Skip scripts if option is disabled
+    if not options.IncludeScripts then
+        if instance:IsA("LuaSourceContainer") then
+            InstanceSerializer.Stats.SkippedInstances = InstanceSerializer.Stats.SkippedInstances + 1
+            return ""
+        end
+    end
+    
+    -- Skip terrain if option is disabled (terrain handled separately)
+    if not options.IncludeTerrain and instance:IsA("Terrain") then
+        InstanceSerializer.Stats.SkippedInstances = InstanceSerializer.Stats.SkippedInstances + 1
+        return ""
+    end
+    
+    local xmlParts = {}
+    local refId = Utils.GenerateRefId()
+    
+    -- Start instance element
+    table.insert(xmlParts, string.format('<Item class="%s" referent="%s">',
+        Utils.EscapeXML(instance.ClassName), refId))
+    table.insert(xmlParts, '<Properties>')
+    
+    -- Get and serialize properties
+    local properties = PropertySerializer.GetProperties(instance)
+    
+    for name, value in pairs(properties) do
+        local propXml = PropertySerializer.SerializeProperty(name, value)
+        if propXml then
+            table.insert(xmlParts, propXml)
+        end
+    end
+    
+    -- Handle scripts specially - include source
+    if instance:IsA("LuaSourceContainer") and options.IncludeScripts then
+        local source = ScriptDecompiler.Decompile(instance)
+        if source then
+            -- Use ProtectedString for script source
+            table.insert(xmlParts, string.format(
+                '<Property name="Source"><ProtectedString><![CDATA[%s]]></ProtectedString></Property>',
+                source))
+        end
+        InstanceSerializer.Stats.Scripts = InstanceSerializer.Stats.Scripts + 1
+    elseif instance:IsA("Model") then
+        InstanceSerializer.Stats.Models = InstanceSerializer.Stats.Models + 1
+    elseif instance:IsA("BasePart") then
+        InstanceSerializer.Stats.Parts = InstanceSerializer.Stats.Parts + 1
+    else
+        InstanceSerializer.Stats.Other = InstanceSerializer.Stats.Other + 1
+    end
+    
+    table.insert(xmlParts, '</Properties>')
+    
+    -- Process children
+    local success, children = Utils.SafeCall(function()
+        return instance:GetChildren()
+    end)
+    
+    if success and children and #children > 0 then
+        for i, child in ipairs(children) do
+            -- Update progress
+            InstanceSerializer.Stats.ProcessedInstances = InstanceSerializer.Stats.ProcessedInstances + 1
+            
+            if InstanceSerializer.Stats.ProcessedInstances % Config.ProgressUpdateInterval == 0 then
+                local percent = math.floor((InstanceSerializer.Stats.ProcessedInstances / 
+                    math.max(1, InstanceSerializer.Stats.TotalInstances)) * 100)
+                callback(percent, string.format("Processing: %s", child:GetFullName():sub(1, 50)))
+            end
+            
+            -- Yield periodically to prevent script timeout
+            if InstanceSerializer.Stats.ProcessedInstances % Config.YieldInterval == 0 then
+                task.wait()
+            end
+            
+            local childXml = InstanceSerializer.Serialize(child, options, callback, depth + 1)
+            if childXml and #childXml > 0 then
+                table.insert(xmlParts, childXml)
+            end
+        end
+    end
+    
+    table.insert(xmlParts, '</Item>')
+    
+    return table.concat(xmlParts, "\n")
+end
+
+--- Serialize multiple root instances
+---@param instances table Array of instances to serialize
+---@param options table Serialization options
+---@param callback function Progress callback
+---@return string Complete RBXLX file content
+function InstanceSerializer.SerializeToFile(instances, options, callback)
+    options = options or {}
+    callback = callback or function() end
+    
+    -- Reset state
+    Utils.ResetRefCounter()
+    InstanceSerializer.ResetStats()
+    
+    -- Count total instances for progress
+    callback(0, "Counting instances...")
+    for _, inst in ipairs(instances) do
+        InstanceSerializer.Stats.TotalInstances = InstanceSerializer.Stats.TotalInstances + 
+            InstanceSerializer.CountDescendants(inst) + 1
+    end
+    
+    callback(5, string.format("Found %s instances", 
+        Utils.FormatNumber(InstanceSerializer.Stats.TotalInstances)))
+    
+    -- Build XML document
+    local xmlParts = {}
+    
+    -- XML header and root element
+    table.insert(xmlParts, '<?xml version="1.0" encoding="UTF-8"?>')
+    table.insert(xmlParts, '<roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4">')
+    table.insert(xmlParts, '<Meta name="ExplicitAutoJoints">true</Meta>')
+    
+    -- Serialize each root instance
+    for i, instance in ipairs(instances) do
+        callback(5 + (i / #instances * 5), string.format("Starting: %s", instance.Name))
+        
+        local instanceXml = InstanceSerializer.Serialize(instance, options, callback)
+        if instanceXml and #instanceXml > 0 then
+            table.insert(xmlParts, instanceXml)
+        end
+    end
+    
+    -- Handle terrain separately if included
+    if options.IncludeTerrain then
+        callback(90, "Processing terrain...")
+        local terrainXml = TerrainSerializer.Serialize(Workspace.Terrain, function(p, s)
+            callback(90 + (p / 100 * 8), s)
+        end)
+        if terrainXml and #terrainXml > 0 then
+            table.insert(xmlParts, terrainXml)
+        end
+    end
+    
+    -- Close root element
+    table.insert(xmlParts, '</roblox>')
+    
+    callback(100, "Serialization complete!")
+    
+    return table.concat(xmlParts, "\n")
+end
+
+--=============================================================================
+-- UI LIBRARY
+--=============================================================================
+local UI = {}
+UI.Connections = {}
+
+--- Clean up all UI connections
+function UI.Cleanup()
+    for _, conn in ipairs(UI.Connections) do
+        if conn and conn.Disconnect then
+            conn:Disconnect()
+        end
+    end
+    UI.Connections = {}
+end
+
+--- Create a rounded corner
+---@param radius number Corner radius
+---@return UICorner
+function UI.Corner(radius)
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, radius or 8)
+    return corner
+end
+
+--- Create a shadow effect
+---@param parent GuiObject Parent object
+---@param transparency number Shadow transparency
+function UI.AddShadow(parent, transparency)
+    local shadow = Instance.new("ImageLabel")
+    shadow.Name = "Shadow"
+    shadow.BackgroundTransparency = 1
+    shadow.Image = "rbxassetid://5554236805"
+    shadow.ImageColor3 = Color3.fromRGB(0, 0, 0)
+    shadow.ImageTransparency = transparency or 0.6
+    shadow.Position = UDim2.new(0, -15, 0, -15)
+    shadow.Size = UDim2.new(1, 30, 1, 30)
+    shadow.ZIndex = parent.ZIndex - 1
+    shadow.ScaleType = Enum.ScaleType.Slice
+    shadow.SliceCenter = Rect.new(23, 23, 277, 277)
+    shadow.Parent = parent
+    return shadow
+end
+
+--- Create a stroke effect
+---@param parent GuiObject Parent object
+---@param color Color3 Stroke color
+---@param thickness number Stroke thickness
+---@return UIStroke
+function UI.Stroke(parent, color, thickness)
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = color or Config.Colors.Border
+    stroke.Thickness = thickness or 1
+    stroke.Transparency = 0.5
+    stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    stroke.Parent = parent
+    return stroke
+end
+
+--- Make a GUI draggable
+---@param frame GuiObject The frame to make draggable
+---@param handle GuiObject The handle to drag from
+function UI.MakeDraggable(frame, handle)
+    local dragging = false
+    local dragStart, startPos
+    
+    local function updateDrag(input)
+        local delta = input.Position - dragStart
+        frame.Position = UDim2.new(
+            startPos.X.Scale, startPos.X.Offset + delta.X,
+            startPos.Y.Scale, startPos.Y.Offset + delta.Y
+        )
+    end
+    
+    local conn1 = handle.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or
+           input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = frame.Position
+        end
+    end)
+    
+    local conn2 = handle.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or
+           input.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+        end
+    end)
+    
+    local conn3 = UserInputService.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or
+                         input.UserInputType == Enum.UserInputType.Touch) then
+            updateDrag(input)
+        end
+    end)
+    
+    table.insert(UI.Connections, conn1)
+    table.insert(UI.Connections, conn2)
+    table.insert(UI.Connections, conn3)
+end
+
+--- Create a styled button
+---@param props table Button properties
+---@return TextButton
+function UI.Button(props)
+    local button = Instance.new("TextButton")
+    button.Name = props.Name or "Button"
+    button.Size = props.Size or UDim2.new(1, 0, 0, 36)
+    button.Position = props.Position or UDim2.new(0, 0, 0, 0)
+    button.BackgroundColor3 = props.Color or Config.Colors.Secondary
+    button.TextColor3 = props.TextColor or Config.Colors.Text
+    button.Text = props.Text or "Button"
+    button.Font = Enum.Font.GothamMedium
+    button.TextSize = 14
+    button.AutoButtonColor = false
+    button.BorderSizePixel = 0
+    
+    UI.Corner(6).Parent = button
+    UI.Stroke(button)
+    
+    -- Hover effects
+    local defaultColor = button.BackgroundColor3
+    local hoverColor = props.HoverColor or Config.Colors.Accent
+    
+    local conn1 = button.MouseEnter:Connect(function()
+        TweenService:Create(button, TweenInfo.new(0.2), {
+            BackgroundColor3 = hoverColor
+        }):Play()
+    end)
+    
+    local conn2 = button.MouseLeave:Connect(function()
+        TweenService:Create(button, TweenInfo.new(0.2), {
+            BackgroundColor3 = defaultColor
+        }):Play()
+    end)
+    
+    table.insert(UI.Connections, conn1)
+    table.insert(UI.Connections, conn2)
+    
+    if props.Callback then
+        local conn3 = button.MouseButton1Click:Connect(props.Callback)
+        table.insert(UI.Connections, conn3)
+    end
+    
+    if props.Parent then
+        button.Parent = props.Parent
+    end
+    
+    return button
+end
+
+--- Create a toggle switch
+---@param props table Toggle properties
+---@return Frame, BoolValue
+function UI.Toggle(props)
+    local container = Instance.new("Frame")
+    container.Name = props.Name or "Toggle"
+    container.Size = props.Size or UDim2.new(1, 0, 0, 30)
+    container.Position = props.Position or UDim2.new(0, 0, 0, 0)
+    container.BackgroundTransparency = 1
+    
+    -- Label
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(1, -50, 1, 0)
+    label.Position = UDim2.new(0, 0, 0, 0)
+    label.BackgroundTransparency = 1
+    label.TextColor3 = Config.Colors.Text
+    label.Text = props.Text or "Toggle"
+    label.Font = Enum.Font.Gotham
+    label.TextSize = 13
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Parent = container
+    
+    -- Toggle background
+    local toggleBg = Instance.new("Frame")
+    toggleBg.Size = UDim2.new(0, 44, 0, 22)
+    toggleBg.Position = UDim2.new(1, -44, 0.5, -11)
+    toggleBg.BackgroundColor3 = Config.Colors.Secondary
+    toggleBg.Parent = container
+    UI.Corner(11).Parent = toggleBg
+    UI.Stroke(toggleBg)
+    
+    -- Toggle indicator
+    local indicator = Instance.new("Frame")
+    indicator.Size = UDim2.new(0, 16, 0, 16)
+    indicator.Position = props.Default and UDim2.new(1, -19, 0.5, -8) or UDim2.new(0, 3, 0.5, -8)
+    indicator.BackgroundColor3 = props.Default and Config.Colors.Accent or Config.Colors.TextDim
+    indicator.Parent = toggleBg
+    UI.Corner(8).Parent = indicator
+    
+    -- State value
+    local state = Instance.new("BoolValue")
+    state.Name = "State"
+    state.Value = props.Default or false
+    state.Parent = container
+    
+    -- Toggle function
+    local function toggle()
+        state.Value = not state.Value
+        
+        TweenService:Create(indicator, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {
+            Position = state.Value and UDim2.new(1, -19, 0.5, -8) or UDim2.new(0, 3, 0.5, -8),
+            BackgroundColor3 = state.Value and Config.Colors.Accent or Config.Colors.TextDim
+        }):Play()
+        
+        TweenService:Create(toggleBg, TweenInfo.new(0.2), {
+            BackgroundColor3 = state.Value and Color3.fromRGB(45, 65, 85) or Config.Colors.Secondary
+        }):Play()
+        
+        if props.Callback then
+            props.Callback(state.Value)
+        end
+    end
+    
+    -- Make clickable
+    local button = Instance.new("TextButton")
+    button.Size = UDim2.new(1, 0, 1, 0)
+    button.BackgroundTransparency = 1
+    button.Text = ""
+    button.Parent = container
+    
+    local conn = button.MouseButton1Click:Connect(toggle)
+    table.insert(UI.Connections, conn)
+    
+    if props.Parent then
+        container.Parent = props.Parent
+    end
+    
+    return container, state
+end
+
+--- Create a text input field
+---@param props table Input properties
+---@return Frame, TextBox
+function UI.Input(props)
+    local container = Instance.new("Frame")
+    container.Name = props.Name or "Input"
+    container.Size = props.Size or UDim2.new(1, 0, 0, 50)
+    container.Position = props.Position or UDim2.new(0, 0, 0, 0)
+    container.BackgroundTransparency = 1
+    
+    -- Label
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(1, 0, 0, 18)
+    label.Position = UDim2.new(0, 0, 0, 0)
+    label.BackgroundTransparency = 1
+    label.TextColor3 = Config.Colors.TextDim
+    label.Text = props.Label or "Input"
+    label.Font = Enum.Font.Gotham
+    label.TextSize = 12
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Parent = container
+    
+    -- Input field
+    local inputFrame = Instance.new("Frame")
+    inputFrame.Size = UDim2.new(1, 0, 0, 28)
+    inputFrame.Position = UDim2.new(0, 0, 0, 20)
+    inputFrame.BackgroundColor3 = Config.Colors.Secondary
+    inputFrame.Parent = container
+    UI.Corner(6).Parent = inputFrame
+    UI.Stroke(inputFrame)
+    
+    local textBox = Instance.new("TextBox")
+    textBox.Size = UDim2.new(1, -16, 1, 0)
+    textBox.Position = UDim2.new(0, 8, 0, 0)
+    textBox.BackgroundTransparency = 1
+    textBox.TextColor3 = Config.Colors.Text
+    textBox.PlaceholderColor3 = Config.Colors.TextDim
+    textBox.Text = props.Default or ""
+    textBox.PlaceholderText = props.Placeholder or "Enter text..."
+    textBox.Font = Enum.Font.Gotham
+    textBox.TextSize = 13
+    textBox.TextXAlignment = Enum.TextXAlignment.Left
+    textBox.ClearTextOnFocus = false
+    textBox.Parent = inputFrame
+    
+    if props.Callback then
+        local conn = textBox.FocusLost:Connect(function()
+            props.Callback(textBox.Text)
+        end)
+        table.insert(UI.Connections, conn)
+    end
+    
+    if props.Parent then
+        container.Parent = props.Parent
+    end
+    
+    return container, textBox
+end
+
+--- Create a dropdown selector
+---@param props table Dropdown properties
+---@return Frame, StringValue
+function UI.Dropdown(props)
+    local container = Instance.new("Frame")
+    container.Name = props.Name or "Dropdown"
+    container.Size = props.Size or UDim2.new(1, 0, 0, 50)
+    container.Position = props.Position or UDim2.new(0, 0, 0, 0)
+    container.BackgroundTransparency = 1
+    container.ClipsDescendants = false
+    
+    -- Label
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(1, 0, 0, 18)
+    label.BackgroundTransparency = 1
+    label.TextColor3 = Config.Colors.TextDim
+    label.Text = props.Label or "Select"
+    label.Font = Enum.Font.Gotham
+    label.TextSize = 12
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Parent = container
+    
+    -- Selected value holder
+    local selectedValue = Instance.new("StringValue")
+    selectedValue.Name = "Selected"
+    selectedValue.Value = props.Default or props.Options[1] or ""
+    selectedValue.Parent = container
+    
+    -- Main button
+    local mainButton = Instance.new("TextButton")
+    mainButton.Size = UDim2.new(1, 0, 0, 28)
+    mainButton.Position = UDim2.new(0, 0, 0, 20)
+    mainButton.BackgroundColor3 = Config.Colors.Secondary
+    mainButton.TextColor3 = Config.Colors.Text
+    mainButton.Text = "  " .. selectedValue.Value
+    mainButton.Font = Enum.Font.Gotham
+    mainButton.TextSize = 13
+    mainButton.TextXAlignment = Enum.TextXAlignment.Left
+    mainButton.AutoButtonColor = false
+    mainButton.Parent = container
+    UI.Corner(6).Parent = mainButton
+    UI.Stroke(mainButton)
+    
+    -- Arrow indicator
+    local arrow = Instance.new("TextLabel")
+    arrow.Size = UDim2.new(0, 20, 1, 0)
+    arrow.Position = UDim2.new(1, -24, 0, 0)
+    arrow.BackgroundTransparency = 1
+    arrow.TextColor3 = Config.Colors.TextDim
+    arrow.Text = "▼"
+    arrow.Font = Enum.Font.Gotham
+    arrow.TextSize = 10
+    arrow.Parent = mainButton
+    
+    -- Dropdown list
+    local dropFrame = Instance.new("Frame")
+    dropFrame.Size = UDim2.new(1, 0, 0, 0)
+    dropFrame.Position = UDim2.new(0, 0, 0, 50)
+    dropFrame.BackgroundColor3 = Config.Colors.Secondary
+    dropFrame.ClipsDescendants = true
+    dropFrame.Visible = false
+    dropFrame.ZIndex = 10
+    dropFrame.Parent = container
+    UI.Corner(6).Parent = dropFrame
+    UI.Stroke(dropFrame)
+    
+    local listLayout = Instance.new("UIListLayout")
+    listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    listLayout.Parent = dropFrame
+    
+    local isOpen = false
+    
+    -- Create option buttons
+    for i, option in ipairs(props.Options or {}) do
+        local optBtn = Instance.new("TextButton")
+        optBtn.Size = UDim2.new(1, 0, 0, 26)
+        optBtn.BackgroundTransparency = 1
+        optBtn.TextColor3 = Config.Colors.Text
+        optBtn.Text = "  " .. option
+        optBtn.Font = Enum.Font.Gotham
+        optBtn.TextSize = 13
+        optBtn.TextXAlignment = Enum.TextXAlignment.Left
+        optBtn.AutoButtonColor = false
+        optBtn.LayoutOrder = i
+        optBtn.ZIndex = 10
+        optBtn.Parent = dropFrame
+        
+        local conn = optBtn.MouseButton1Click:Connect(function()
+            selectedValue.Value = option
+            mainButton.Text = "  " .. option
+            
+            -- Close dropdown
+            isOpen = false
+            TweenService:Create(dropFrame, TweenInfo.new(0.2), {
+                Size = UDim2.new(1, 0, 0, 0)
+            }):Play()
+            task.delay(0.2, function()
+                dropFrame.Visible = false
+            end)
+            TweenService:Create(arrow, TweenInfo.new(0.2), {
+                Rotation = 0
+            }):Play()
+            
+            if props.Callback then
+                props.Callback(option)
+            end
+        end)
+        table.insert(UI.Connections, conn)
+    end
+    
+    -- Toggle dropdown
+    local conn = mainButton.MouseButton1Click:Connect(function()
+        isOpen = not isOpen
+        
+        if isOpen then
+            dropFrame.Visible = true
+            TweenService:Create(dropFrame, TweenInfo.new(0.2), {
+                Size = UDim2.new(1, 0, 0, math.min(#(props.Options or {}) * 26, 130))
+            }):Play()
+            TweenService:Create(arrow, TweenInfo.new(0.2), {
+                Rotation = 180
+            }):Play()
+        else
+            TweenService:Create(dropFrame, TweenInfo.new(0.2), {
+                Size = UDim2.new(1, 0, 0, 0)
+            }):Play()
+            task.delay(0.2, function()
+                dropFrame.Visible = false
+            end)
+            TweenService:Create(arrow, TweenInfo.new(0.2), {
+                Rotation = 0
+            }):Play()
+        end
+    end)
+    table.insert(UI.Connections, conn)
+    
+    if props.Parent then
+        container.Parent = props.Parent
+    end
+    
+    return container, selectedValue
+end
+
+--=============================================================================
+-- MAIN APPLICATION
+--=============================================================================
+local App = {}
+App.GUI = nil
+App.MainFrame = nil
+App.StatusLabel = nil
+App.ProgressBar = nil
+App.IsProcessing = false
+
+-- Settings state
+App.Settings = {
+    IncludeScripts = Config.IncludeScripts,
+    IncludeTerrain = Config.IncludeTerrain,
+    FileName = Config.FileName,
+    ExportFormat = Config.ExportFormat,
+}
+
+--- Initialize the application
+function App.Init()
+    -- Clean up existing GUI if present
+    local existingGui = Players.LocalPlayer.PlayerGui:FindFirstChild("BaoSaveInstance")
+    if existingGui then
+        existingGui:Destroy()
+    end
+    
+    UI.Cleanup()
+    
+    -- Create main ScreenGui
+    App.GUI = Instance.new("ScreenGui")
+    App.GUI.Name = "BaoSaveInstance"
+    App.GUI.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    App.GUI.ResetOnSpawn = false
+    
+    -- Check for gethui (exploit protection)
+    local getHui = Utils.GetFunction("gethui")
+    if getHui then
+        App.GUI.Parent = getHui()
+    else
+        App.GUI.Parent = Players.LocalPlayer.PlayerGui
+    end
+    
+    App.CreateMainWindow()
+end
+
+--- Create the main window
+function App.CreateMainWindow()
+    -- Main container
+    App.MainFrame = Instance.new("Frame")
+    App.MainFrame.Name = "MainWindow"
+    App.MainFrame.Size = Config.WindowSize
+    App.MainFrame.Position = UDim2.new(0.5, -190, 0.5, -240)
+    App.MainFrame.BackgroundColor3 = Config.Colors.Background
+    App.MainFrame.BorderSizePixel = 0
+    App.MainFrame.Parent = App.GUI
+    
+    UI.Corner(10).Parent = App.MainFrame
+    UI.AddShadow(App.MainFrame, 0.5)
+    UI.Stroke(App.MainFrame, Config.Colors.Border, 1)
+    
+    -- Title bar
+    local titleBar = Instance.new("Frame")
+    titleBar.Name = "TitleBar"
+    titleBar.Size = UDim2.new(1, 0, 0, 40)
+    titleBar.BackgroundColor3 = Config.Colors.Secondary
+    titleBar.BorderSizePixel = 0
+    titleBar.Parent = App.MainFrame
+    
+    local titleCorner = UI.Corner(10)
+    titleCorner.Parent = titleBar
+    
+    -- Fix corner on bottom
+    local titleFix = Instance.new("Frame")
+    titleFix.Size = UDim2.new(1, 0, 0, 10)
+    titleFix.Position = UDim2.new(0, 0, 1, -10)
+    titleFix.BackgroundColor3 = Config.Colors.Secondary
+    titleFix.BorderSizePixel = 0
+    titleFix.Parent = titleBar
+    
+    -- Title text
+    local titleText = Instance.new("TextLabel")
+    titleText.Size = UDim2.new(1, -80, 1, 0)
+    titleText.Position = UDim2.new(0, 15, 0, 0)
+    titleText.BackgroundTransparency = 1
+    titleText.TextColor3 = Config.Colors.Text
+    titleText.Text = "🔧 BaoSaveInstance"
+    titleText.Font = Enum.Font.GothamBold
+    titleText.TextSize = 16
+    titleText.TextXAlignment = Enum.TextXAlignment.Left
+    titleText.Parent = titleBar
+    
+    -- Version badge
+    local versionBadge = Instance.new("TextLabel")
+    versionBadge.Size = UDim2.new(0, 40, 0, 18)
+    versionBadge.Position = UDim2.new(0, 175, 0.5, -9)
+    versionBadge.BackgroundColor3 = Config.Colors.Accent
+    versionBadge.TextColor3 = Config.Colors.Text
+    versionBadge.Text = "v1.0"
+    versionBadge.Font = Enum.Font.GothamBold
+    versionBadge.TextSize = 10
+    versionBadge.Parent = titleBar
+    UI.Corner(4).Parent = versionBadge
+    
+    -- Close button
+    local closeBtn = Instance.new("TextButton")
+    closeBtn.Size = UDim2.new(0, 30, 0, 30)
+    closeBtn.Position = UDim2.new(1, -35, 0, 5)
+    closeBtn.BackgroundColor3 = Config.Colors.Error
+    closeBtn.BackgroundTransparency = 0.8
+    closeBtn.TextColor3 = Config.Colors.Error
+    closeBtn.Text = "✕"
+    closeBtn.Font = Enum.Font.GothamBold
+    closeBtn.TextSize = 14
+    closeBtn.AutoButtonColor = false
+    closeBtn.Parent = titleBar
+    UI.Corner(6).Parent = closeBtn
+    
+    local conn = closeBtn.MouseButton1Click:Connect(function()
+        App.Destroy()
+    end)
+    table.insert(UI.Connections, conn)
+    
+    -- Make draggable
+    UI.MakeDraggable(App.MainFrame, titleBar)
+    
+    -- Content area
+    local content = Instance.new("Frame")
+    content.Name = "Content"
+    content.Size = UDim2.new(1, -30, 1, -55)
+    content.Position = UDim2.new(0, 15, 0, 48)
+    content.BackgroundTransparency = 1
+    content.Parent = App.MainFrame
+    
+    -- Status area
+    local statusFrame = Instance.new("Frame")
+    statusFrame.Name = "StatusFrame"
+    statusFrame.Size = UDim2.new(1, 0, 0, 50)
+    statusFrame.BackgroundColor3 = Config.Colors.Secondary
+    statusFrame.Parent = content
+    UI.Corner(8).Parent = statusFrame
+    
+    App.StatusLabel = Instance.new("TextLabel")
+    App.StatusLabel.Name = "StatusLabel"
+    App.StatusLabel.Size = UDim2.new(1, -20, 0, 20)
+    App.StatusLabel.Position = UDim2.new(0, 10, 0, 8)
+    App.StatusLabel.BackgroundTransparency = 1
+    App.StatusLabel.TextColor3 = Config.Colors.TextDim
+    App.StatusLabel.Text = "Status: Idle"
+    App.StatusLabel.Font = Enum.Font.Gotham
+    App.StatusLabel.TextSize = 12
+    App.StatusLabel.TextXAlignment = Enum.TextXAlignment.Left
+    App.StatusLabel.Parent = statusFrame
+    
+    -- Progress bar background
+    local progressBg = Instance.new("Frame")
+    progressBg.Size = UDim2.new(1, -20, 0, 8)
+    progressBg.Position = UDim2.new(0, 10, 0, 32)
+    progressBg.BackgroundColor3 = Config.Colors.Background
+    progressBg.Parent = statusFrame
+    UI.Corner(4).Parent = progressBg
+    
+    -- Progress bar fill
+    App.ProgressBar = Instance.new("Frame")
+    App.ProgressBar.Size = UDim2.new(0, 0, 1, 0)
+    App.ProgressBar.BackgroundColor3 = Config.Colors.Accent
+    App.ProgressBar.Parent = progressBg
+    UI.Corner(4).Parent = App.ProgressBar
+    
+    -- Buttons section
+    local buttonSection = Instance.new("Frame")
+    buttonSection.Name = "ButtonSection"
+    buttonSection.Size = UDim2.new(1, 0, 0, 180)
+    buttonSection.Position = UDim2.new(0, 0, 0, 60)
+    buttonSection.BackgroundTransparency = 1
+    buttonSection.Parent = content
+    
+    local buttonLayout = Instance.new("UIListLayout")
+    buttonLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    buttonLayout.Padding = UDim.new(0, 8)
+    buttonLayout.Parent = buttonSection
+    
+    -- Main action buttons
+    UI.Button({
+        Name = "DecompileFullGame",
+        Text = "📦 Decompile Full Game",
+        Color = Config.Colors.Accent,
+        HoverColor = Config.Colors.AccentHover,
+        LayoutOrder = 1,
+        Parent = buttonSection,
+        Callback = function()
+            App.DecompileFullGame()
+        end
+    })
+    
+    UI.Button({
+        Name = "DecompileModels",
+        Text = "🏗️ Decompile Full Model",
+        LayoutOrder = 2,
+        Parent = buttonSection,
+        Callback = function()
+            App.DecompileModels()
+        end
+    })
+    
+    UI.Button({
+        Name = "DecompileTerrain",
+        Text = "🌍 Decompile Terrain",
+        LayoutOrder = 3,
+        Parent = buttonSection,
+        Callback = function()
+            App.DecompileTerrain()
+        end
+    })
+    
+    UI.Button({
+        Name = "Settings",
+        Text = "⚙️ Settings",
+        LayoutOrder = 4,
+        Parent = buttonSection,
+        Callback = function()
+            App.ShowSettings()
+        end
+    })
+    
+    -- Quick settings
+    local quickSettings = Instance.new("Frame")
+    quickSettings.Name = "QuickSettings"
+    quickSettings.Size = UDim2.new(1, 0, 0, 100)
+    quickSettings.Position = UDim2.new(0, 0, 0, 250)
+    quickSettings.BackgroundColor3 = Config.Colors.Secondary
+    quickSettings.Parent = content
+    UI.Corner(8).Parent = quickSettings
+    
+    local settingsLabel = Instance.new("TextLabel")
+    settingsLabel.Size = UDim2.new(1, -20, 0, 25)
+    settingsLabel.Position = UDim2.new(0, 10, 0, 5)
+    settingsLabel.BackgroundTransparency = 1
+    settingsLabel.TextColor3 = Config.Colors.TextDim
+    settingsLabel.Text = "Quick Settings"
+    settingsLabel.Font = Enum.Font.GothamBold
+    settingsLabel.TextSize = 11
+    settingsLabel.TextXAlignment = Enum.TextXAlignment.Left
+    settingsLabel.Parent = quickSettings
+    
+    local toggleContainer = Instance.new("Frame")
+    toggleContainer.Size = UDim2.new(1, -20, 0, 65)
+    toggleContainer.Position = UDim2.new(0, 10, 0, 28)
+    toggleContainer.BackgroundTransparency = 1
+    toggleContainer.Parent = quickSettings
+    
+    local _, scriptsToggle = UI.Toggle({
+        Name = "IncludeScripts",
+        Text = "Include Scripts",
+        Default = App.Settings.IncludeScripts,
+        Position = UDim2.new(0, 0, 0, 0),
+        Parent = toggleContainer,
+        Callback = function(value)
+            App.Settings.IncludeScripts = value
+        end
+    })
+    
+    local _, terrainToggle = UI.Toggle({
+        Name = "IncludeTerrain",
+        Text = "Include Terrain",
+        Default = App.Settings.IncludeTerrain,
+        Position = UDim2.new(0, 0, 0, 35),
+        Parent = toggleContainer,
+        Callback = function(value)
+            App.Settings.IncludeTerrain = value
+        end
+    })
+    
+    -- Info section
+    local infoFrame = Instance.new("Frame")
+    infoFrame.Name = "Info"
+    infoFrame.Size = UDim2.new(1, 0, 0, 55)
+    infoFrame.Position = UDim2.new(0, 0, 0, 360)
+    infoFrame.BackgroundColor3 = Config.Colors.Secondary
+    infoFrame.Parent = content
+    UI.Corner(8).Parent = infoFrame
+    
+    local gameInfo = Instance.new("TextLabel")
+    gameInfo.Size = UDim2.new(1, -20, 1, -10)
+    gameInfo.Position = UDim2.new(0, 10, 0, 5)
+    gameInfo.BackgroundTransparency = 1
+    gameInfo.TextColor3 = Config.Colors.TextDim
+    gameInfo.Text = string.format("Game: %s\nPlaceId: %s | GameId: %s",
+        game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId).Name or "Unknown",
+        tostring(game.PlaceId),
+        tostring(game.GameId))
+    gameInfo.Font = Enum.Font.Gotham
+    gameInfo.TextSize = 11
+    gameInfo.TextXAlignment = Enum.TextXAlignment.Left
+    gameInfo.TextYAlignment = Enum.TextYAlignment.Top
+    gameInfo.TextWrapped = true
+    gameInfo.Parent = infoFrame
+    
+    -- Animate window in
+    App.MainFrame.Position = UDim2.new(0.5, -190, 0.5, -200)
+    App.MainFrame.BackgroundTransparency = 1
+    
+    TweenService:Create(App.MainFrame, TweenInfo.new(0.3, Enum.EasingStyle.Back), {
+        Position = UDim2.new(0.5, -190, 0.5, -240),
+        BackgroundTransparency = 0
+    }):Play()
+end
+
+--- Show settings panel
+function App.ShowSettings()
+    -- Create settings overlay
+    local overlay = Instance.new("Frame")
+    overlay.Name = "SettingsOverlay"
+    overlay.Size = UDim2.new(1, 0, 1, 0)
+    overlay.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    overlay.BackgroundTransparency = 0.5
+    overlay.ZIndex = 50
+    overlay.Parent = App.GUI
+    
+    local settingsPanel = Instance.new("Frame")
+    settingsPanel.Name = "SettingsPanel"
+    settingsPanel.Size = UDim2.new(0, 320, 0, 280)
+    settingsPanel.Position = UDim2.new(0.5, -160, 0.5, -140)
+    settingsPanel.BackgroundColor3 = Config.Colors.Background
+    settingsPanel.ZIndex = 51
+    settingsPanel.Parent = overlay
+    UI.Corner(10).Parent = settingsPanel
+    UI.AddShadow(settingsPanel, 0.4)
+    UI.Stroke(settingsPanel, Config.Colors.Border, 1)
+    
+    -- Settings title
+    local settingsTitle = Instance.new("TextLabel")
+    settingsTitle.Size = UDim2.new(1, -20, 0, 35)
+    settingsTitle.Position = UDim2.new(0, 10, 0, 5)
+    settingsTitle.BackgroundTransparency = 1
+    settingsTitle.TextColor3 = Config.Colors.Text
+    settingsTitle.Text = "⚙️ Settings"
+    settingsTitle.Font = Enum.Font.GothamBold
+    settingsTitle.TextSize = 16
+    settingsTitle.TextXAlignment = Enum.TextXAlignment.Left
+    settingsTitle.ZIndex = 52
+    settingsTitle.Parent = settingsPanel
+    
+    -- Settings content
+    local settingsContent = Instance.new("Frame")
+    settingsContent.Size = UDim2.new(1, -20, 0, 180)
+    settingsContent.Position = UDim2.new(0, 10, 0, 45)
+    settingsContent.BackgroundTransparency = 1
+    settingsContent.ZIndex = 52
+    settingsContent.Parent = settingsPanel
+    
+    -- File name input
+    local _, fileNameInput = UI.Input({
+        Name = "FileName",
+        Label = "Export File Name",
+        Default = App.Settings.FileName,
+        Placeholder = "SavedGame",
+        Position = UDim2.new(0, 0, 0, 0),
+        Parent = settingsContent,
+        Callback = function(value)
+            App.Settings.FileName = value ~= "" and value or "SavedGame"
+        end
+    })
+    fileNameInput.Parent.ZIndex = 52
+    
+    -- Format dropdown
+    local _, formatDropdown = UI.Dropdown({
+        Name = "ExportFormat",
+        Label = "Export Format",
+        Options = {".rbxlx", ".rbxl"},
+        Default = App.Settings.ExportFormat,
+        Position = UDim2.new(0, 0, 0, 55),
+        Parent = settingsContent,
+        Callback = function(value)
+            App.Settings.ExportFormat = value
+        end
+    })
+    formatDropdown.Parent.ZIndex = 52
+    
+    -- Additional toggles
+    local togglesFrame = Instance.new("Frame")
+    togglesFrame.Size = UDim2.new(1, 0, 0, 70)
+    togglesFrame.Position = UDim2.new(0, 0, 0, 110)
+    togglesFrame.BackgroundTransparency = 1
+    togglesFrame.ZIndex = 52
+    togglesFrame.Parent = settingsContent
+    
+    UI.Toggle({
+        Name = "DecompileScripts",
+        Text = "Decompile Scripts",
+        Default = Config.DecompileScripts,
+        Position = UDim2.new(0, 0, 0, 0),
+        Parent = togglesFrame,
+        Callback = function(value)
+            Config.DecompileScripts = value
+        end
+    }).ZIndex = 52
+    
+    UI.Toggle({
+        Name = "PreserveHierarchy",
+        Text = "Preserve Hierarchy",
+        Default = Config.PreserveHierarchy,
+        Position = UDim2.new(0, 0, 0, 35),
+        Parent = togglesFrame,
+        Callback = function(value)
+            Config.PreserveHierarchy = value
+        end
+    }).ZIndex = 52
+    
+    -- Close button
+    UI.Button({
+        Name = "CloseSettings",
+        Text = "Close",
+        Size = UDim2.new(1, -20, 0, 32),
+        Position = UDim2.new(0, 10, 1, -42),
+        Color = Config.Colors.Accent,
+        Parent = settingsPanel,
+        Callback = function()
+            -- Animate out
+            TweenService:Create(overlay, TweenInfo.new(0.2), {
+                BackgroundTransparency = 1
+            }):Play()
+            TweenService:Create(settingsPanel, TweenInfo.new(0.2), {
+                Position = UDim2.new(0.5, -160, 0.5, -120),
+                BackgroundTransparency = 1
+            }):Play()
+            
+            task.delay(0.2, function()
+                overlay:Destroy()
+            end)
+        end
+    }).ZIndex = 52
+    
+    -- Animate in
+    overlay.BackgroundTransparency = 1
+    settingsPanel.BackgroundTransparency = 1
+    settingsPanel.Position = UDim2.new(0.5, -160, 0.5, -100)
+    
+    TweenService:Create(overlay, TweenInfo.new(0.2), {
+        BackgroundTransparency = 0.5
+    }):Play()
+    TweenService:Create(settingsPanel, TweenInfo.new(0.2, Enum.EasingStyle.Back), {
+        Position = UDim2.new(0.5, -160, 0.5, -140),
+        BackgroundTransparency = 0
+    }):Play()
+end
+
+--- Update status display
+---@param status string Status text
+---@param statusType string Status type (info/success/error/warning)
+function App.UpdateStatus(status, statusType)
+    if App.StatusLabel then
+        App.StatusLabel.Text = "Status: " .. status
+        
+        local colors = {
+            info = Config.Colors.TextDim,
+            success = Config.Colors.Success,
+            error = Config.Colors.Error,
+            warning = Config.Colors.Warning,
+        }
+        
+        App.StatusLabel.TextColor3 = colors[statusType] or colors.info
+    end
+end
+
+--- Update progress bar
+---@param percent number Progress percentage (0-100)
+function App.UpdateProgress(percent)
+    if App.ProgressBar then
+        TweenService:Create(App.ProgressBar, TweenInfo.new(0.1), {
+            Size = UDim2.new(math.clamp(percent / 100, 0, 1), 0, 1, 0)
+        }):Play()
+    end
+end
+
+--- Save content to file
+---@param content string File content
+---@param fileName string File name
+---@return boolean success
+function App.SaveToFile(content, fileName)
+    local writeFile = Utils.GetFunction("writefile")
+    
+    if not writeFile then
+        App.UpdateStatus("writefile not available!", "error")
+        return false
+    end
+    
+    local success, err = Utils.SafeCall(writeFile, fileName, content)
+    
     if not success then
-        Logger.Error("Failed to read terrain: " .. tostring(terrainData))
-        return nil
-    end
-    
-    return terrainData
-end
-
-function TerrainSerializer.CreateXML(terrainData)
-    if not terrainData then return "" end
-    
-    return string.format([[<Item class="Terrain" referent="RBXTerrain">
-  <Properties>
-    <string name="Name">Terrain</string>
-    <float name="WaterWaveSize">%s</float>
-    <float name="WaterWaveSpeed">%s</float>
-    <float name="WaterReflectance">%s</float>
-    <float name="WaterTransparency">%s</float>
-    <Color3 name="WaterColor"><R>%s</R><G>%s</G><B>%s</B></Color3>
-  </Properties>
-</Item>]], 
-        terrainData.WaterWaveSize or 0.15,
-        terrainData.WaterWaveSpeed or 10,
-        terrainData.WaterReflectance or 1,
-        terrainData.WaterTransparency or 0.3,
-        terrainData.WaterColor and terrainData.WaterColor.R or 0.35,
-        terrainData.WaterColor and terrainData.WaterColor.G or 0.45,
-        terrainData.WaterColor and terrainData.WaterColor.B or 0.55)
-end
-
---------------------------------------------------------------------------------
--- EXPORT ENGINE
---------------------------------------------------------------------------------
-
-local Exporter = {}
-
-function Exporter.GenerateFileName(mode)
-    local gameName = Utility.GetGameName()
-    local timestamp = os.date("%Y%m%d_%H%M%S")
-    local prefix = ({
-        FullGame = "FullGame",
-        FullModel = "Models",
-        Terrain = "Terrain"
-    })[mode] or "Export"
-    
-    return string.format("%s/BaoSaveInstance_%s_%s_%s.%s", 
-        Config.Export.OutputFolder, prefix, gameName, timestamp, Config.Export.OutputFormat)
-end
-
-function Exporter.ShouldInclude(instance, mode)
-    -- Check blacklist
-    for _, className in ipairs(Config.Export.Blacklist.ClassNames) do
-        if instance:IsA(className) then return false end
-    end
-    
-    for _, name in ipairs(Config.Export.Blacklist.InstanceNames) do
-        if instance.Name == name then return false end
-    end
-    
-    -- Mode specific
-    if mode == "FullModel" then
-        if instance:IsA("LuaSourceContainer") or instance:IsA("Terrain") then return false end
-    elseif mode == "Terrain" then
-        if not instance:IsA("Terrain") and instance ~= workspace then return false end
+        App.UpdateStatus("Failed to save: " .. tostring(err), "error")
+        return false
     end
     
     return true
 end
 
-function Exporter.CollectInstances(roots, mode)
-    local instances = {}
-    local counter = 0
-    
-    local function collect(instance)
-        counter = counter + 1
-        if counter % Config.Export.YieldInterval == 0 then RunService.Heartbeat:Wait() end
-        if not Exporter.ShouldInclude(instance, mode) then return end
-        table.insert(instances, instance)
-        for _, child in ipairs(instance:GetChildren()) do collect(child) end
+--- Decompile full game
+function App.DecompileFullGame()
+    if App.IsProcessing then
+        App.UpdateStatus("Already processing...", "warning")
+        return
     end
     
-    for _, root in ipairs(roots) do
-        Logger.Info("Collecting from: " .. root:GetFullName())
-        collect(root)
-    end
+    App.IsProcessing = true
+    App.UpdateStatus("Starting full game decompile...", "info")
+    App.UpdateProgress(0)
     
-    return instances
-end
-
-function Exporter.GenerateXML(content)
-    return [[<?xml version="1.0" encoding="utf-8"?>
-<roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4">
-    <Meta name="ExplicitAutoJoints">true</Meta>
-]] .. content .. [[
-</roblox>]]
-end
-
-function Exporter.WriteFile(content, fileName)
-    local success, err = pcall(function()
-        if makefolder and not isfolder(Config.Export.OutputFolder) then
-            makefolder(Config.Export.OutputFolder)
-        end
-    end)
-    
-    local writeSuccess, writeErr = pcall(function()
-        if writefile then
-            writefile(fileName, content)
-        else
-            error("writefile not available")
-        end
-    end)
-    
-    return writeSuccess, writeErr
-end
-
-function Exporter.TryNativeSaveInstance(options)
-    if not saveinstance then return false, "saveinstance not available" end
-    
-    local success, result = pcall(function()
-        saveinstance(options)
-    end)
-    
-    return success, result
-end
-
-function Exporter.Export(mode, progressCallback)
-    State.IsExporting = true
-    State.ExportMode = mode
-    State.Progress = 0
-    State.StartTime = tick()
-    State.ProcessedInstances = 0
-    
-    local fileName = Exporter.GenerateFileName(mode)
-    
-    Logger.Info("Starting " .. mode .. " export...")
-    Logger.Info("Output: " .. fileName)
-    
-    if progressCallback then progressCallback(0, "Initializing...") end
-    
-    -- Try native saveinstance first
-    local nativeOptions = {
-        FileName = fileName,
-        DecompileMode = Config.Export.DecompileScripts and "decompile" or "ignore",
-        DecompileTimeout = Config.Export.DecompileTimeout,
-        NilInstances = false,
-        RemovePlayerCharacters = true,
-    }
-    
-    if mode == "FullModel" then
-        nativeOptions.DecompileMode = "ignore"
-    end
-    
-    local nativeSuccess, nativeResult = Exporter.TryNativeSaveInstance(nativeOptions)
-    
-    if nativeSuccess then
-        Logger.Success("Export completed using native saveinstance!")
-        State.IsExporting = false
-        State.Stats.TotalExports = State.Stats.TotalExports + 1
-        State.Stats.SuccessfulExports = State.Stats.SuccessfulExports + 1
-        if progressCallback then progressCallback(100, "Complete!") end
-        return true, fileName
-    end
-    
-    Logger.Info("Using custom serialization...")
-    if progressCallback then progressCallback(5, "Collecting instances...") end
-    
-    -- Custom serialization
-    local xmlContent = {}
-    local allInstances = {}
-    
-    if mode == "FullGame" then
-        for _, serviceData in ipairs(Config.Export.ServicesToExport) do
-            if serviceData.Enabled then
-                local success, service = pcall(function()
-                    return game:GetService(serviceData.Name)
+    task.spawn(function()
+        local success, err = Utils.SafeCall(function()
+            -- Collect all services to save
+            local instancesToSave = {}
+            
+            local servicesToSave = {
+                Workspace,
+                Lighting,
+                ReplicatedStorage,
+                ReplicatedFirst,
+                StarterGui,
+                StarterPack,
+                StarterPlayer,
+                Teams,
+                SoundService,
+            }
+            
+            for _, service in ipairs(servicesToSave) do
+                local success, _ = Utils.SafeCall(function()
+                    table.insert(instancesToSave, service)
                 end)
-                
-                if success and service then
-                    local instances = Exporter.CollectInstances({service}, mode)
-                    for _, inst in ipairs(instances) do
-                        table.insert(allInstances, inst)
-                    end
-                end
             end
-        end
-    elseif mode == "FullModel" then
-        allInstances = Exporter.CollectInstances({workspace}, mode)
-    elseif mode == "Terrain" then
-        local terrain = workspace:FindFirstChildOfClass("Terrain")
-        if terrain then table.insert(allInstances, terrain) end
-    end
-    
-    State.TotalInstances = #allInstances
-    Logger.Info("Collected " .. State.TotalInstances .. " instances")
-    
-    if progressCallback then progressCallback(20, "Building references...") end
-    local refMap = InstanceSerializer.BuildRefMap(allInstances)
-    
-    if progressCallback then progressCallback(30, "Serializing...") end
-    
-    -- Serialize
-    if mode == "FullGame" then
-        for i, serviceData in ipairs(Config.Export.ServicesToExport) do
-            if serviceData.Enabled then
-                local success, service = pcall(function()
-                    return game:GetService(serviceData.Name)
-                end)
-                
-                if success and service then
-                    Logger.Progress("Serializing " .. serviceData.Name .. "...")
-                    
-                    local serviceXml = {}
-                    table.insert(serviceXml, string.format('<Item class="%s" referent="%s">', service.ClassName, CreateRefId()))
-                    table.insert(serviceXml, '  <Properties>')
-                    table.insert(serviceXml, string.format('    <string name="Name">%s</string>', service.ClassName))
-                    table.insert(serviceXml, '  </Properties>')
-                    
-                    for _, child in ipairs(service:GetChildren()) do
-                        if Exporter.ShouldInclude(child, mode) then
-                            local childXml = InstanceSerializer.Serialize(child, refMap, 1)
-                            if childXml then table.insert(serviceXml, childXml) end
-                        end
-                    end
-                    
-                    table.insert(serviceXml, '</Item>')
-                    table.insert(xmlContent, table.concat(serviceXml, "\n"))
-                end
-                
-                local progress = 30 + (i / #Config.Export.ServicesToExport) * 50
-                if progressCallback then progressCallback(progress, "Serializing " .. serviceData.Name .. "...") end
-            end
-        end
-        
-    elseif mode == "FullModel" then
-        table.insert(xmlContent, '<Item class="Workspace" referent="RBXWorkspace">')
-        table.insert(xmlContent, '  <Properties><string name="Name">Workspace</string></Properties>')
-        
-        for i, instance in ipairs(allInstances) do
-            if instance.Parent == workspace then
-                local instanceXml = InstanceSerializer.Serialize(instance, refMap, 1)
-                if instanceXml then table.insert(xmlContent, instanceXml) end
-            end
-            State.ProcessedInstances = i
-            if i % 50 == 0 then
-                local progress = 30 + (i / #allInstances) * 50
-                if progressCallback then progressCallback(progress, "Serializing models...") end
-            end
-        end
-        
-        table.insert(xmlContent, '</Item>')
-        
-    elseif mode == "Terrain" then
-        local terrainData = TerrainSerializer.Serialize()
-        if terrainData then
-            table.insert(xmlContent, '<Item class="Workspace" referent="RBXWorkspace">')
-            table.insert(xmlContent, '  <Properties><string name="Name">Workspace</string></Properties>')
-            table.insert(xmlContent, TerrainSerializer.CreateXML(terrainData))
-            table.insert(xmlContent, '</Item>')
-        end
-    end
-    
-    if progressCallback then progressCallback(85, "Generating file...") end
-    
-    local finalXml = Exporter.GenerateXML(table.concat(xmlContent, "\n"))
-    
-    if progressCallback then progressCallback(90, "Writing file...") end
-    
-    local writeSuccess, writeErr = Exporter.WriteFile(finalXml, fileName)
-    
-    local elapsed = tick() - State.StartTime
-    State.IsExporting = false
-    State.Stats.TotalExports = State.Stats.TotalExports + 1
-    
-    if writeSuccess then
-        State.Stats.SuccessfulExports = State.Stats.SuccessfulExports + 1
-        State.Stats.TotalInstances = State.Stats.TotalInstances + State.TotalInstances
-        Logger.Success(string.format("Export completed in %s!", Utility.FormatTime(elapsed)))
-        if progressCallback then progressCallback(100, "Complete!") end
-        return true, fileName
-    else
-        State.Stats.FailedExports = State.Stats.FailedExports + 1
-        Logger.Error("Export failed: " .. tostring(writeErr))
-        if progressCallback then progressCallback(100, "Failed!") end
-        return false, writeErr
-    end
-end
-
---------------------------------------------------------------------------------
--- UI COMPONENTS
---------------------------------------------------------------------------------
-
-local Components = {}
-
-function Components.CreateButton(props)
-    local button = Utility.Create("TextButton", {
-        Name = props.Name or "Button",
-        Size = props.Size or UDim2.new(0, 120, 0, 40),
-        Position = props.Position or UDim2.new(0, 0, 0, 0),
-        BackgroundColor3 = props.Color or Config.UI.Colors.Primary,
-        BorderSizePixel = 0,
-        Text = props.Text or "Button",
-        TextColor3 = props.TextColor or Config.UI.Colors.Text,
-        Font = props.Font or Config.UI.Fonts.Body,
-        TextSize = props.TextSize or 14,
-        AutoButtonColor = false,
-        ClipsDescendants = true,
-        Parent = props.Parent
-    })
-    
-    Utility.AddCorner(button, props.CornerRadius)
-    
-    if props.Gradient then
-        Utility.AddGradient(button, {props.Color or Config.UI.Colors.Primary, props.GradientEnd or Config.UI.Colors.PrimaryDark}, props.GradientRotation or 45)
-    end
-    
-    if props.Stroke then
-        Utility.AddStroke(button, props.StrokeColor or Config.UI.Colors.Border)
-    end
-    
-    -- Hover effect
-    button.MouseEnter:Connect(function()
-        Utility.Tween(button, {BackgroundColor3 = props.HoverColor or Config.UI.Colors.PrimaryLight}, 0.15)
-    end)
-    
-    button.MouseLeave:Connect(function()
-        Utility.Tween(button, {BackgroundColor3 = props.Color or Config.UI.Colors.Primary}, 0.15)
-    end)
-    
-    -- Click effect
-    button.MouseButton1Down:Connect(function()
-        Utility.Tween(button, {Size = props.Size and UDim2.new(props.Size.X.Scale * 0.95, props.Size.X.Offset * 0.95, props.Size.Y.Scale * 0.95, props.Size.Y.Offset * 0.95) or UDim2.new(0, 114, 0, 38)}, 0.1)
-    end)
-    
-    button.MouseButton1Up:Connect(function()
-        Utility.Tween(button, {Size = props.Size or UDim2.new(0, 120, 0, 40)}, 0.1)
-    end)
-    
-    button.MouseButton1Click:Connect(function()
-        Utility.Ripple(button, Mouse.X, Mouse.Y)
-        if props.Callback then props.Callback() end
-    end)
-    
-    return button
-end
-
-function Components.CreateToggle(props)
-    local container = Utility.Create("Frame", {
-        Name = props.Name or "Toggle",
-        Size = props.Size or UDim2.new(1, 0, 0, 40),
-        BackgroundColor3 = Config.UI.Colors.Surface,
-        BorderSizePixel = 0,
-        Parent = props.Parent
-    })
-    
-    Utility.AddCorner(container, UDim.new(0, 8))
-    
-    local label = Utility.Create("TextLabel", {
-        Name = "Label",
-        Size = UDim2.new(1, -60, 1, 0),
-        Position = UDim2.new(0, 12, 0, 0),
-        BackgroundTransparency = 1,
-        Text = props.Text or "Toggle",
-        TextColor3 = Config.UI.Colors.Text,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        Font = Config.UI.Fonts.Body,
-        TextSize = 14,
-        Parent = container
-    })
-    
-    local toggleBtn = Utility.Create("Frame", {
-        Name = "ToggleButton",
-        Size = UDim2.new(0, 44, 0, 24),
-        Position = UDim2.new(1, -56, 0.5, -12),
-        BackgroundColor3 = props.Value and Config.UI.Colors.Primary or Config.UI.Colors.BackgroundTertiary,
-        BorderSizePixel = 0,
-        Parent = container
-    })
-    
-    Utility.AddCorner(toggleBtn, UDim.new(1, 0))
-    
-    local knob = Utility.Create("Frame", {
-        Name = "Knob",
-        Size = UDim2.new(0, 20, 0, 20),
-        Position = props.Value and UDim2.new(1, -22, 0.5, -10) or UDim2.new(0, 2, 0.5, -10),
-        BackgroundColor3 = Color3.new(1, 1, 1),
-        BorderSizePixel = 0,
-        Parent = toggleBtn
-    })
-    
-    Utility.AddCorner(knob, UDim.new(1, 0))
-    
-    local value = props.Value or false
-    
-    local function updateToggle()
-        value = not value
-        Utility.Tween(toggleBtn, {BackgroundColor3 = value and Config.UI.Colors.Primary or Config.UI.Colors.BackgroundTertiary}, 0.2)
-        Utility.Tween(knob, {Position = value and UDim2.new(1, -22, 0.5, -10) or UDim2.new(0, 2, 0.5, -10)}, 0.2)
-        if props.Callback then props.Callback(value) end
-    end
-    
-    local button = Utility.Create("TextButton", {
-        Name = "ClickArea",
-        Size = UDim2.new(1, 0, 1, 0),
-        BackgroundTransparency = 1,
-        Text = "",
-        Parent = container
-    })
-    
-    button.MouseButton1Click:Connect(updateToggle)
-    
-    container.Value = value
-    container.SetValue = function(v)
-        if v ~= value then updateToggle() end
-    end
-    
-    return container
-end
-
-function Components.CreateDropdown(props)
-    local container = Utility.Create("Frame", {
-        Name = props.Name or "Dropdown",
-        Size = props.Size or UDim2.new(1, 0, 0, 40),
-        BackgroundColor3 = Config.UI.Colors.Surface,
-        BorderSizePixel = 0,
-        ClipsDescendants = false,
-        Parent = props.Parent
-    })
-    
-    Utility.AddCorner(container, UDim.new(0, 8))
-    Utility.AddStroke(container, Config.UI.Colors.Border)
-    
-    local selected = Utility.Create("TextButton", {
-        Name = "Selected",
-        Size = UDim2.new(1, 0, 0, 40),
-        BackgroundTransparency = 1,
-        Text = "",
-        Parent = container
-    })
-    
-    local selectedLabel = Utility.Create("TextLabel", {
-        Name = "Label",
-        Size = UDim2.new(1, -40, 1, 0),
-        Position = UDim2.new(0, 12, 0, 0),
-        BackgroundTransparency = 1,
-        Text = props.Default or props.Options[1] or "Select...",
-        TextColor3 = Config.UI.Colors.Text,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        Font = Config.UI.Fonts.Body,
-        TextSize = 14,
-        Parent = selected
-    })
-    
-    local arrow = Utility.Create("TextLabel", {
-        Name = "Arrow",
-        Size = UDim2.new(0, 20, 1, 0),
-        Position = UDim2.new(1, -30, 0, 0),
-        BackgroundTransparency = 1,
-        Text = "▼",
-        TextColor3 = Config.UI.Colors.TextSecondary,
-        Font = Config.UI.Fonts.Body,
-        TextSize = 12,
-        Parent = selected
-    })
-    
-    local optionsFrame = Utility.Create("Frame", {
-        Name = "Options",
-        Size = UDim2.new(1, 0, 0, 0),
-        Position = UDim2.new(0, 0, 1, 4),
-        BackgroundColor3 = Config.UI.Colors.Surface,
-        BorderSizePixel = 0,
-        ClipsDescendants = true,
-        ZIndex = 100,
-        Visible = false,
-        Parent = container
-    })
-    
-    Utility.AddCorner(optionsFrame, UDim.new(0, 8))
-    Utility.AddStroke(optionsFrame, Config.UI.Colors.Border)
-    
-    local optionsList = Utility.Create("UIListLayout", {
-        SortOrder = Enum.SortOrder.LayoutOrder,
-        Padding = UDim.new(0, 2),
-        Parent = optionsFrame
-    })
-    
-    Utility.Create("UIPadding", {
-        PaddingTop = UDim.new(0, 4),
-        PaddingBottom = UDim.new(0, 4),
-        PaddingLeft = UDim.new(0, 4),
-        PaddingRight = UDim.new(0, 4),
-        Parent = optionsFrame
-    })
-    
-    local isOpen = false
-    local currentValue = props.Default or props.Options[1]
-    
-    for i, option in ipairs(props.Options) do
-        local optBtn = Utility.Create("TextButton", {
-            Name = option,
-            Size = UDim2.new(1, 0, 0, 32),
-            BackgroundColor3 = Config.UI.Colors.SurfaceHover,
-            BackgroundTransparency = 1,
-            Text = option,
-            TextColor3 = Config.UI.Colors.Text,
-            Font = Config.UI.Fonts.Body,
-            TextSize = 13,
-            ZIndex = 101,
-            LayoutOrder = i,
-            Parent = optionsFrame
-        })
-        
-        Utility.AddCorner(optBtn, UDim.new(0, 6))
-        
-        optBtn.MouseEnter:Connect(function()
-            Utility.Tween(optBtn, {BackgroundTransparency = 0}, 0.1)
-        end)
-        
-        optBtn.MouseLeave:Connect(function()
-            Utility.Tween(optBtn, {BackgroundTransparency = 1}, 0.1)
-        end)
-        
-        optBtn.MouseButton1Click:Connect(function()
-            currentValue = option
-            selectedLabel.Text = option
-            isOpen = false
-            Utility.Tween(optionsFrame, {Size = UDim2.new(1, 0, 0, 0)}, 0.2)
-            Utility.Tween(arrow, {Rotation = 0}, 0.2)
-            task.delay(0.2, function() optionsFrame.Visible = false end)
-            if props.Callback then props.Callback(option) end
-        end)
-    end
-    
-    selected.MouseButton1Click:Connect(function()
-        isOpen = not isOpen
-        if isOpen then
-            optionsFrame.Visible = true
-            local height = math.min(#props.Options * 34 + 8, 200)
-            Utility.Tween(optionsFrame, {Size = UDim2.new(1, 0, 0, height)}, 0.2)
-            Utility.Tween(arrow, {Rotation = 180}, 0.2)
-        else
-            Utility.Tween(optionsFrame, {Size = UDim2.new(1, 0, 0, 0)}, 0.2)
-            Utility.Tween(arrow, {Rotation = 0}, 0.2)
-            task.delay(0.2, function() optionsFrame.Visible = false end)
-        end
-    end)
-    
-    container.GetValue = function() return currentValue end
-    
-    return container
-end
-
-function Components.CreateProgressBar(props)
-    local container = Utility.Create("Frame", {
-        Name = props.Name or "ProgressBar",
-        Size = props.Size or UDim2.new(1, 0, 0, 8),
-        BackgroundColor3 = Config.UI.Colors.BackgroundTertiary,
-        BorderSizePixel = 0,
-        Parent = props.Parent
-    })
-    
-    Utility.AddCorner(container, UDim.new(1, 0))
-    
-    local fill = Utility.Create("Frame", {
-        Name = "Fill",
-        Size = UDim2.new(0, 0, 1, 0),
-        BackgroundColor3 = props.Color or Config.UI.Colors.Primary,
-        BorderSizePixel = 0,
-        Parent = container
-    })
-    
-    Utility.AddCorner(fill, UDim.new(1, 0))
-    
-    if props.Gradient then
-        Utility.AddGradient(fill, {props.Color or Config.UI.Colors.Primary, props.GradientEnd or Config.UI.Colors.Accent}, 0)
-    end
-    
-    container.SetProgress = function(value)
-        value = math.clamp(value, 0, 100)
-        Utility.Tween(fill, {Size = UDim2.new(value/100, 0, 1, 0)}, 0.3)
-    end
-    
-    container.SetProgress(props.Value or 0)
-    
-    return container
-end
-
-function Components.CreateCard(props)
-    local card = Utility.Create("Frame", {
-        Name = props.Name or "Card",
-        Size = props.Size or UDim2.new(1, 0, 0, 100),
-        BackgroundColor3 = props.Color or Config.UI.Colors.Surface,
-        BorderSizePixel = 0,
-        Parent = props.Parent
-    })
-    
-    Utility.AddCorner(card, props.CornerRadius or UDim.new(0, 12))
-    
-    if props.Stroke then
-        Utility.AddStroke(card, props.StrokeColor or Config.UI.Colors.Border)
-    end
-    
-    if props.Shadow then
-        Utility.AddShadow(card, 20, 0.7)
-    end
-    
-    return card
-end
-
-function Components.CreateInput(props)
-    local container = Utility.Create("Frame", {
-        Name = props.Name or "Input",
-        Size = props.Size or UDim2.new(1, 0, 0, 40),
-        BackgroundColor3 = Config.UI.Colors.BackgroundTertiary,
-        BorderSizePixel = 0,
-        Parent = props.Parent
-    })
-    
-    Utility.AddCorner(container, UDim.new(0, 8))
-    
-    local stroke = Utility.AddStroke(container, Config.UI.Colors.Border)
-    
-    local input = Utility.Create("TextBox", {
-        Name = "TextBox",
-        Size = UDim2.new(1, -24, 1, 0),
-        Position = UDim2.new(0, 12, 0, 0),
-        BackgroundTransparency = 1,
-        Text = props.Default or "",
-        PlaceholderText = props.Placeholder or "Enter text...",
-        PlaceholderColor3 = Config.UI.Colors.TextMuted,
-        TextColor3 = Config.UI.Colors.Text,
-        Font = Config.UI.Fonts.Body,
-        TextSize = 14,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        ClearTextOnFocus = false,
-        Parent = container
-    })
-    
-    input.Focused:Connect(function()
-        Utility.Tween(stroke, {Color = Config.UI.Colors.Primary}, 0.2)
-    end)
-    
-    input.FocusLost:Connect(function()
-        Utility.Tween(stroke, {Color = Config.UI.Colors.Border}, 0.2)
-        if props.Callback then props.Callback(input.Text) end
-    end)
-    
-    container.GetValue = function() return input.Text end
-    container.SetValue = function(v) input.Text = v end
-    
-    return container
-end
-
-function Components.CreateNotification(props)
-    local colors = {
-        success = Config.UI.Colors.Success,
-        warning = Config.UI.Colors.Warning,
-        error = Config.UI.Colors.Error,
-        info = Config.UI.Colors.Info
-    }
-    
-    local icons = {
-        success = "✅",
-        warning = "⚠️",
-        error = "❌",
-        info = "ℹ️"
-    }
-    
-    local notif = Utility.Create("Frame", {
-        Name = "Notification",
-        Size = UDim2.new(0, 300, 0, 60),
-        Position = UDim2.new(1, 320, 1, -80),
-        BackgroundColor3 = Config.UI.Colors.Surface,
-        BorderSizePixel = 0,
-        Parent = props.Parent
-    })
-    
-    Utility.AddCorner(notif, UDim.new(0, 10))
-    Utility.AddShadow(notif, 25, 0.5)
-    
-    local accent = Utility.Create("Frame", {
-        Name = "Accent",
-        Size = UDim2.new(0, 4, 1, 0),
-        BackgroundColor3 = colors[props.Type] or colors.info,
-        BorderSizePixel = 0,
-        Parent = notif
-    })
-    
-    Utility.Create("UICorner", {
-        CornerRadius = UDim.new(0, 10),
-        Parent = accent
-    })
-    
-    local icon = Utility.Create("TextLabel", {
-        Name = "Icon",
-        Size = UDim2.new(0, 30, 0, 30),
-        Position = UDim2.new(0, 15, 0.5, -15),
-        BackgroundTransparency = 1,
-        Text = icons[props.Type] or icons.info,
-        TextSize = 20,
-        Parent = notif
-    })
-    
-    local title = Utility.Create("TextLabel", {
-        Name = "Title",
-        Size = UDim2.new(1, -60, 0, 20),
-        Position = UDim2.new(0, 50, 0, 10),
-        BackgroundTransparency = 1,
-        Text = props.Title or "Notification",
-        TextColor3 = Config.UI.Colors.Text,
-        Font = Config.UI.Fonts.Heading,
-        TextSize = 14,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        Parent = notif
-    })
-    
-    local message = Utility.Create("TextLabel", {
-        Name = "Message",
-        Size = UDim2.new(1, -60, 0, 20),
-        Position = UDim2.new(0, 50, 0, 32),
-        BackgroundTransparency = 1,
-        Text = props.Message or "",
-        TextColor3 = Config.UI.Colors.TextSecondary,
-        Font = Config.UI.Fonts.Body,
-        TextSize = 12,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        TextTruncate = Enum.TextTruncate.AtEnd,
-        Parent = notif
-    })
-    
-    -- Animate in
-    Utility.Tween(notif, {Position = UDim2.new(1, -320, 1, -80)}, 0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
-    
-    -- Auto dismiss
-    task.delay(props.Duration or 4, function()
-        Utility.Tween(notif, {Position = UDim2.new(1, 320, 1, -80)}, 0.3)
-        task.delay(0.3, function()
-            notif:Destroy()
-        end)
-    end)
-    
-    return notif
-end
-
---------------------------------------------------------------------------------
--- MAIN UI CREATION
---------------------------------------------------------------------------------
-
-local UI = {}
-
-function UI.Create()
-    -- Destroy existing
-    if CoreGui:FindFirstChild("BaoSaveInstanceUI") then
-        CoreGui:FindFirstChild("BaoSaveInstanceUI"):Destroy()
-    end
-    
-    -- Create ScreenGui
-    local screenGui = Utility.Create("ScreenGui", {
-        Name = "BaoSaveInstanceUI",
-        ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
-        ResetOnSpawn = false,
-        Parent = CoreGui
-    })
-    
-    -- Main Window
-    local mainWindow = Utility.Create("Frame", {
-        Name = "MainWindow",
-        Size = Config.UI.WindowSize,
-        Position = UDim2.new(0.5, -350, 0.5, -275),
-        BackgroundColor3 = Config.UI.Colors.Background,
-        BorderSizePixel = 0,
-        Parent = screenGui
-    })
-    
-    Utility.AddCorner(mainWindow, UDim.new(0, 16))
-    Utility.AddShadow(mainWindow, 40, 0.5)
-    
-    -- Border Gradient
-    local borderFrame = Utility.Create("Frame", {
-        Name = "Border",
-        Size = UDim2.new(1, 4, 1, 4),
-        Position = UDim2.new(0, -2, 0, -2),
-        BackgroundColor3 = Color3.new(1, 1, 1),
-        BorderSizePixel = 0,
-        ZIndex = 0,
-        Parent = mainWindow
-    })
-    
-    Utility.AddCorner(borderFrame, UDim.new(0, 18))
-    Utility.AddGradient(borderFrame, {Config.UI.Colors.Primary, Config.UI.Colors.Secondary, Config.UI.Colors.Accent}, 45)
-    
-    -- Inner Background (to cover gradient except border)
-    local innerBg = Utility.Create("Frame", {
-        Name = "InnerBackground",
-        Size = UDim2.new(1, -2, 1, -2),
-        Position = UDim2.new(0, 1, 0, 1),
-        BackgroundColor3 = Config.UI.Colors.Background,
-        BorderSizePixel = 0,
-        Parent = mainWindow
-    })
-    
-    Utility.AddCorner(innerBg, UDim.new(0, 15))
-    
-    -- Title Bar
-    local titleBar = Utility.Create("Frame", {
-        Name = "TitleBar",
-        Size = UDim2.new(1, 0, 0, 50),
-        BackgroundColor3 = Config.UI.Colors.BackgroundSecondary,
-        BorderSizePixel = 0,
-        Parent = innerBg
-    })
-    
-    Utility.Create("UICorner", {
-        CornerRadius = UDim.new(0, 14),
-        Parent = titleBar
-    })
-    
-    -- Fix bottom corners of title bar
-    local titleBarFix = Utility.Create("Frame", {
-        Name = "Fix",
-        Size = UDim2.new(1, 0, 0, 15),
-        Position = UDim2.new(0, 0, 1, -15),
-        BackgroundColor3 = Config.UI.Colors.BackgroundSecondary,
-        BorderSizePixel = 0,
-        Parent = titleBar
-    })
-    
-    -- Logo/Icon
-    local logo = Utility.Create("TextLabel", {
-        Name = "Logo",
-        Size = UDim2.new(0, 40, 0, 40),
-        Position = UDim2.new(0, 12, 0.5, -20),
-        BackgroundColor3 = Config.UI.Colors.Primary,
-        Text = "🚀",
-        TextSize = 20,
-        Parent = titleBar
-    })
-    
-    Utility.AddCorner(logo, UDim.new(0, 10))
-    Utility.AddGradient(logo, {Config.UI.Colors.Primary, Config.UI.Colors.Secondary}, 135)
-    
-    -- Title Text
-    local titleText = Utility.Create("TextLabel", {
-        Name = "Title",
-        Size = UDim2.new(0, 200, 0, 20),
-        Position = UDim2.new(0, 60, 0, 8),
-        BackgroundTransparency = 1,
-        Text = Config.UI.Title,
-        TextColor3 = Config.UI.Colors.Text,
-        Font = Config.UI.Fonts.Title,
-        TextSize = 18,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        Parent = titleBar
-    })
-    
-    -- Version Badge
-    local versionBadge = Utility.Create("TextLabel", {
-        Name = "Version",
-        Size = UDim2.new(0, 80, 0, 16),
-        Position = UDim2.new(0, 60, 0, 30),
-        BackgroundColor3 = Config.UI.Colors.Primary,
-        BackgroundTransparency = 0.8,
-        Text = "v" .. Config.UI.Version,
-        TextColor3 = Config.UI.Colors.Primary,
-        Font = Config.UI.Fonts.Body,
-        TextSize = 11,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        Parent = titleBar
-    })
-    
-    Utility.AddCorner(versionBadge, UDim.new(1, 0))
-    Utility.Create("UIPadding", {
-        PaddingLeft = UDim.new(0, 8),
-        Parent = versionBadge
-    })
-    
-    -- Window Controls
-    local controlsFrame = Utility.Create("Frame", {
-        Name = "Controls",
-        Size = UDim2.new(0, 90, 0, 30),
-        Position = UDim2.new(1, -100, 0.5, -15),
-        BackgroundTransparency = 1,
-        Parent = titleBar
-    })
-    
-    local controlsLayout = Utility.Create("UIListLayout", {
-        FillDirection = Enum.FillDirection.Horizontal,
-        HorizontalAlignment = Enum.HorizontalAlignment.Right,
-        Padding = UDim.new(0, 8),
-        Parent = controlsFrame
-    })
-    
-    -- Minimize Button
-    local minimizeBtn = Utility.Create("TextButton", {
-        Name = "Minimize",
-        Size = UDim2.new(0, 26, 0, 26),
-        BackgroundColor3 = Config.UI.Colors.Warning,
-        Text = "─",
-        TextColor3 = Color3.new(0, 0, 0),
-        Font = Config.UI.Fonts.Body,
-        TextSize = 14,
-        Parent = controlsFrame
-    })
-    
-    Utility.AddCorner(minimizeBtn, UDim.new(0, 8))
-    
-    -- Close Button
-    local closeBtn = Utility.Create("TextButton", {
-        Name = "Close",
-        Size = UDim2.new(0, 26, 0, 26),
-        BackgroundColor3 = Config.UI.Colors.Error,
-        Text = "×",
-        TextColor3 = Color3.new(1, 1, 1),
-        Font = Config.UI.Fonts.Body,
-        TextSize = 18,
-        Parent = controlsFrame
-    })
-    
-    Utility.AddCorner(closeBtn, UDim.new(0, 8))
-    
-    -- Content Area
-    local contentArea = Utility.Create("Frame", {
-        Name = "ContentArea",
-        Size = UDim2.new(1, -20, 1, -60),
-        Position = UDim2.new(0, 10, 0, 55),
-        BackgroundTransparency = 1,
-        Parent = innerBg
-    })
-    
-    -- Navigation Tabs
-    local tabsFrame = Utility.Create("Frame", {
-        Name = "Tabs",
-        Size = UDim2.new(0, 150, 1, 0),
-        BackgroundColor3 = Config.UI.Colors.BackgroundSecondary,
-        BorderSizePixel = 0,
-        Parent = contentArea
-    })
-    
-    Utility.AddCorner(tabsFrame, UDim.new(0, 12))
-    
-    local tabsLayout = Utility.Create("UIListLayout", {
-        SortOrder = Enum.SortOrder.LayoutOrder,
-        Padding = UDim.new(0, 4),
-        Parent = tabsFrame
-    })
-    
-    Utility.Create("UIPadding", {
-        PaddingTop = UDim.new(0, 8),
-        PaddingLeft = UDim.new(0, 8),
-        PaddingRight = UDim.new(0, 8),
-        Parent = tabsFrame
-    })
-    
-    -- Tab Pages Container
-    local pagesContainer = Utility.Create("Frame", {
-        Name = "Pages",
-        Size = UDim2.new(1, -160, 1, 0),
-        Position = UDim2.new(0, 160, 0, 0),
-        BackgroundTransparency = 1,
-        Parent = contentArea
-    })
-    
-    -- Create Tabs
-    local tabs = {
-        { Name = "Home", Icon = "🏠", LayoutOrder = 1 },
-        { Name = "Export", Icon = "📦", LayoutOrder = 2 },
-        { Name = "Services", Icon = "⚙️", LayoutOrder = 3 },
-        { Name = "Settings", Icon = "🔧", LayoutOrder = 4 },
-        { Name = "Console", Icon = "📋", LayoutOrder = 5 },
-        { Name = "About", Icon = "ℹ️", LayoutOrder = 6 },
-    }
-    
-    local tabButtons = {}
-    local tabPages = {}
-    
-    local function switchTab(tabName)
-        State.CurrentTab = tabName
-        
-        for name, btn in pairs(tabButtons) do
-            if name == tabName then
-                Utility.Tween(btn, {BackgroundColor3 = Config.UI.Colors.Primary}, 0.2)
-                Utility.Tween(btn:FindFirstChild("Label"), {TextColor3 = Config.UI.Colors.Text}, 0.2)
-            else
-                Utility.Tween(btn, {BackgroundColor3 = Config.UI.Colors.Surface}, 0.2)
-                Utility.Tween(btn:FindFirstChild("Label"), {TextColor3 = Config.UI.Colors.TextSecondary}, 0.2)
-            end
-        end
-        
-        for name, page in pairs(tabPages) do
-            page.Visible = (name == tabName)
-        end
-    end
-    
-    for _, tabData in ipairs(tabs) do
-        local tabBtn = Utility.Create("TextButton", {
-            Name = tabData.Name,
-            Size = UDim2.new(1, 0, 0, 40),
-            BackgroundColor3 = tabData.Name == "Home" and Config.UI.Colors.Primary or Config.UI.Colors.Surface,
-            BorderSizePixel = 0,
-            Text = "",
-            LayoutOrder = tabData.LayoutOrder,
-            Parent = tabsFrame
-        })
-        
-        Utility.AddCorner(tabBtn, UDim.new(0, 8))
-        
-        local icon = Utility.Create("TextLabel", {
-            Name = "Icon",
-            Size = UDim2.new(0, 24, 1, 0),
-            Position = UDim2.new(0, 10, 0, 0),
-            BackgroundTransparency = 1,
-            Text = tabData.Icon,
-            TextSize = 16,
-            Parent = tabBtn
-        })
-        
-        local label = Utility.Create("TextLabel", {
-            Name = "Label",
-            Size = UDim2.new(1, -44, 1, 0),
-            Position = UDim2.new(0, 38, 0, 0),
-            BackgroundTransparency = 1,
-            Text = tabData.Name,
-            TextColor3 = tabData.Name == "Home" and Config.UI.Colors.Text or Config.UI.Colors.TextSecondary,
-            Font = Config.UI.Fonts.Body,
-            TextSize = 13,
-            TextXAlignment = Enum.TextXAlignment.Left,
-            Parent = tabBtn
-        })
-        
-        tabBtn.MouseEnter:Connect(function()
-            if State.CurrentTab ~= tabData.Name then
-                Utility.Tween(tabBtn, {BackgroundColor3 = Config.UI.Colors.SurfaceHover}, 0.15)
-            end
-        end)
-        
-        tabBtn.MouseLeave:Connect(function()
-            if State.CurrentTab ~= tabData.Name then
-                Utility.Tween(tabBtn, {BackgroundColor3 = Config.UI.Colors.Surface}, 0.15)
-            end
-        end)
-        
-        tabBtn.MouseButton1Click:Connect(function()
-            switchTab(tabData.Name)
-        end)
-        
-        tabButtons[tabData.Name] = tabBtn
-        
-        -- Create Page
-        local page = Utility.Create("ScrollingFrame", {
-            Name = tabData.Name .. "Page",
-            Size = UDim2.new(1, 0, 1, 0),
-            BackgroundTransparency = 1,
-            BorderSizePixel = 0,
-            ScrollBarThickness = 4,
-            ScrollBarImageColor3 = Config.UI.Colors.Primary,
-            CanvasSize = UDim2.new(0, 0, 0, 0),
-            AutomaticCanvasSize = Enum.AutomaticSize.Y,
-            Visible = tabData.Name == "Home",
-            Parent = pagesContainer
-        })
-        
-        local pageLayout = Utility.Create("UIListLayout", {
-            SortOrder = Enum.SortOrder.LayoutOrder,
-            Padding = UDim.new(0, 12),
-            Parent = page
-        })
-        
-        Utility.Create("UIPadding", {
-            PaddingTop = UDim.new(0, 4),
-            PaddingBottom = UDim.new(0, 10),
-            PaddingRight = UDim.new(0, 10),
-            Parent = page
-        })
-        
-        tabPages[tabData.Name] = page
-    end
-    
-    --------------------------------------------------------------------------------
-    -- HOME PAGE
-    --------------------------------------------------------------------------------
-    
-    local homePage = tabPages["Home"]
-    
-    -- Welcome Card
-    local welcomeCard = Components.CreateCard({
-        Name = "WelcomeCard",
-        Size = UDim2.new(1, 0, 0, 120),
-        Color = Config.UI.Colors.Surface,
-        Parent = homePage
-    })
-    
-    local welcomeGradient = Utility.Create("Frame", {
-        Name = "Gradient",
-        Size = UDim2.new(1, 0, 1, 0),
-        BackgroundColor3 = Color3.new(1, 1, 1),
-        BorderSizePixel = 0,
-        Parent = welcomeCard
-    })
-    
-    Utility.AddCorner(welcomeGradient, UDim.new(0, 12))
-    Utility.AddGradient(welcomeGradient, {Config.UI.Colors.Primary, Config.UI.Colors.Secondary}, 135)
-    welcomeGradient.BackgroundTransparency = 0.85
-    
-    local welcomeTitle = Utility.Create("TextLabel", {
-        Name = "Title",
-        Size = UDim2.new(1, -30, 0, 30),
-        Position = UDim2.new(0, 15, 0, 15),
-        BackgroundTransparency = 1,
-        Text = "Welcome to BaoSaveInstance! 👋",
-        TextColor3 = Config.UI.Colors.Text,
-        Font = Config.UI.Fonts.Title,
-        TextSize = 20,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        Parent = welcomeCard
-    })
-    
-    local welcomeDesc = Utility.Create("TextLabel", {
-        Name = "Description",
-        Size = UDim2.new(1, -30, 0, 40),
-        Position = UDim2.new(0, 15, 0, 45),
-        BackgroundTransparency = 1,
-        Text = "The most advanced game decompiler & exporter for Roblox.\nExport games, models, and terrain with ease.",
-        TextColor3 = Config.UI.Colors.TextSecondary,
-        Font = Config.UI.Fonts.Body,
-        TextSize = 13,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        TextYAlignment = Enum.TextYAlignment.Top,
-        Parent = welcomeCard
-    })
-    
-    -- Game Info
-    local gameInfoLabel = Utility.Create("TextLabel", {
-        Name = "GameInfo",
-        Size = UDim2.new(1, -30, 0, 20),
-        Position = UDim2.new(0, 15, 1, -30),
-        BackgroundTransparency = 1,
-        Text = "📍 Current Game: " .. (Utility.GetGameName() or "Unknown"),
-        TextColor3 = Config.UI.Colors.Accent,
-        Font = Config.UI.Fonts.Body,
-        TextSize = 12,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        Parent = welcomeCard
-    })
-    
-    -- Quick Actions Title
-    local quickActionsTitle = Utility.Create("TextLabel", {
-        Name = "QuickActionsTitle",
-        Size = UDim2.new(1, 0, 0, 25),
-        BackgroundTransparency = 1,
-        Text = "⚡ Quick Actions",
-        TextColor3 = Config.UI.Colors.Text,
-        Font = Config.UI.Fonts.Heading,
-        TextSize = 16,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        LayoutOrder = 2,
-        Parent = homePage
-    })
-    
-    -- Quick Actions Grid
-    local quickActionsGrid = Utility.Create("Frame", {
-        Name = "QuickActionsGrid",
-        Size = UDim2.new(1, 0, 0, 140),
-        BackgroundTransparency = 1,
-        LayoutOrder = 3,
-        Parent = homePage
-    })
-    
-    local gridLayout = Utility.Create("UIGridLayout", {
-        CellSize = UDim2.new(0.48, 0, 0, 60),
-        CellPadding = UDim2.new(0.04, 0, 0, 12),
-        SortOrder = Enum.SortOrder.LayoutOrder,
-        Parent = quickActionsGrid
-    })
-    
-    local quickActions = {
-        { Name = "Full Game", Icon = "🎮", Desc = "Export everything", Mode = "FullGame", Color = Config.UI.Colors.Primary },
-        { Name = "Models Only", Icon = "🏗️", Desc = "No scripts/terrain", Mode = "FullModel", Color = Config.UI.Colors.Secondary },
-        { Name = "Terrain Only", Icon = "🏔️", Desc = "Landscape data", Mode = "Terrain", Color = Config.UI.Colors.Accent },
-        { Name = "Custom Export", Icon = "⚙️", Desc = "Advanced options", Tab = "Export", Color = Config.UI.Colors.Success },
-    }
-    
-    for i, action in ipairs(quickActions) do
-        local actionCard = Components.CreateCard({
-            Name = action.Name,
-            Size = UDim2.new(0, 100, 0, 60),
-            Color = Config.UI.Colors.Surface,
-            Stroke = true,
-            Parent = quickActionsGrid
-        })
-        actionCard.LayoutOrder = i
-        
-        local actionBtn = Utility.Create("TextButton", {
-            Name = "Button",
-            Size = UDim2.new(1, 0, 1, 0),
-            BackgroundTransparency = 1,
-            Text = "",
-            Parent = actionCard
-        })
-        
-        local iconBg = Utility.Create("Frame", {
-            Name = "IconBg",
-            Size = UDim2.new(0, 36, 0, 36),
-            Position = UDim2.new(0, 12, 0.5, -18),
-            BackgroundColor3 = action.Color,
-            BackgroundTransparency = 0.85,
-            BorderSizePixel = 0,
-            Parent = actionCard
-        })
-        
-        Utility.AddCorner(iconBg, UDim.new(0, 8))
-        
-        local icon = Utility.Create("TextLabel", {
-            Name = "Icon",
-            Size = UDim2.new(1, 0, 1, 0),
-            BackgroundTransparency = 1,
-            Text = action.Icon,
-            TextSize = 18,
-            Parent = iconBg
-        })
-        
-        local name = Utility.Create("TextLabel", {
-            Name = "Name",
-            Size = UDim2.new(1, -60, 0, 18),
-            Position = UDim2.new(0, 55, 0, 12),
-            BackgroundTransparency = 1,
-            Text = action.Name,
-            TextColor3 = Config.UI.Colors.Text,
-            Font = Config.UI.Fonts.Heading,
-            TextSize = 13,
-            TextXAlignment = Enum.TextXAlignment.Left,
-            Parent = actionCard
-        })
-        
-        local desc = Utility.Create("TextLabel", {
-            Name = "Desc",
-            Size = UDim2.new(1, -60, 0, 14),
-            Position = UDim2.new(0, 55, 0, 32),
-            BackgroundTransparency = 1,
-            Text = action.Desc,
-            TextColor3 = Config.UI.Colors.TextMuted,
-            Font = Config.UI.Fonts.Body,
-            TextSize = 11,
-            TextXAlignment = Enum.TextXAlignment.Left,
-            Parent = actionCard
-        })
-        
-        actionBtn.MouseEnter:Connect(function()
-            Utility.Tween(actionCard, {BackgroundColor3 = Config.UI.Colors.SurfaceHover}, 0.15)
-        end)
-        
-        actionBtn.MouseLeave:Connect(function()
-            Utility.Tween(actionCard, {BackgroundColor3 = Config.UI.Colors.Surface}, 0.15)
-        end)
-        
-        actionBtn.MouseButton1Click:Connect(function()
-            if action.Mode then
-                switchTab("Export")
-                -- Trigger export
-                task.spawn(function()
-                    UI.StartExport(action.Mode)
-                end)
-            elseif action.Tab then
-                switchTab(action.Tab)
-            end
-        end)
-    end
-    
-    -- Stats Title
-    local statsTitle = Utility.Create("TextLabel", {
-        Name = "StatsTitle",
-        Size = UDim2.new(1, 0, 0, 25),
-        BackgroundTransparency = 1,
-        Text = "📊 Statistics",
-        TextColor3 = Config.UI.Colors.Text,
-        Font = Config.UI.Fonts.Heading,
-        TextSize = 16,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        LayoutOrder = 4,
-        Parent = homePage
-    })
-    
-    -- Stats Grid
-    local statsGrid = Utility.Create("Frame", {
-        Name = "StatsGrid",
-        Size = UDim2.new(1, 0, 0, 80),
-        BackgroundTransparency = 1,
-        LayoutOrder = 5,
-        Parent = homePage
-    })
-    
-    local statsLayout = Utility.Create("UIGridLayout", {
-        CellSize = UDim2.new(0.32, 0, 0, 70),
-        CellPadding = UDim2.new(0.02, 0, 0, 0),
-        SortOrder = Enum.SortOrder.LayoutOrder,
-        Parent = statsGrid
-    })
-    
-    local statsData = {
-        { Name = "Total Exports", Value = "0", Icon = "📦", Color = Config.UI.Colors.Primary, Key = "TotalExports" },
-        { Name = "Success Rate", Value = "100%", Icon = "✅", Color = Config.UI.Colors.Success, Key = "SuccessRate" },
-        { Name = "Instances", Value = "0", Icon = "🔢", Color = Config.UI.Colors.Accent, Key = "TotalInstances" },
-    }
-    
-    local statLabels = {}
-    
-    for i, stat in ipairs(statsData) do
-        local statCard = Components.CreateCard({
-            Name = stat.Name,
-            Size = UDim2.new(0, 100, 0, 70),
-            Color = Config.UI.Colors.Surface,
-            Parent = statsGrid
-        })
-        statCard.LayoutOrder = i
-        
-        local icon = Utility.Create("TextLabel", {
-            Name = "Icon",
-            Size = UDim2.new(0, 30, 0, 30),
-            Position = UDim2.new(0, 12, 0, 10),
-            BackgroundColor3 = stat.Color,
-            BackgroundTransparency = 0.85,
-            Text = stat.Icon,
-            TextSize = 14,
-            Parent = statCard
-        })
-        
-        Utility.AddCorner(icon, UDim.new(0, 6))
-        
-        local value = Utility.Create("TextLabel", {
-            Name = "Value",
-            Size = UDim2.new(1, -50, 0, 22),
-            Position = UDim2.new(0, 48, 0, 10),
-            BackgroundTransparency = 1,
-            Text = stat.Value,
-            TextColor3 = Config.UI.Colors.Text,
-            Font = Config.UI.Fonts.Title,
-            TextSize = 18,
-            TextXAlignment = Enum.TextXAlignment.Left,
-            Parent = statCard
-        })
-        
-        statLabels[stat.Key] = value
-        
-        local name = Utility.Create("TextLabel", {
-            Name = "Name",
-            Size = UDim2.new(1, -20, 0, 16),
-            Position = UDim2.new(0, 12, 0, 45),
-            BackgroundTransparency = 1,
-            Text = stat.Name,
-            TextColor3 = Config.UI.Colors.TextMuted,
-            Font = Config.UI.Fonts.Body,
-            TextSize = 11,
-            TextXAlignment = Enum.TextXAlignment.Left,
-            Parent = statCard
-        })
-    end
-    
-    -- Update stats function
-    local function updateStats()
-        if statLabels.TotalExports then
-            statLabels.TotalExports.Text = tostring(State.Stats.TotalExports)
-        end
-        if statLabels.SuccessRate then
-            local rate = State.Stats.TotalExports > 0 and math.floor((State.Stats.SuccessfulExports / State.Stats.TotalExports) * 100) or 100
-            statLabels.SuccessRate.Text = rate .. "%"
-        end
-        if statLabels.TotalInstances then
-            statLabels.TotalInstances.Text = Utility.FormatNumber(State.Stats.TotalInstances)
-        end
-    end
-    
-    --------------------------------------------------------------------------------
-    -- EXPORT PAGE
-    --------------------------------------------------------------------------------
-    
-    local exportPage = tabPages["Export"]
-    
-    -- Export Mode Card
-    local exportModeCard = Components.CreateCard({
-        Name = "ExportMode",
-        Size = UDim2.new(1, 0, 0, 100),
-        Color = Config.UI.Colors.Surface,
-        Parent = exportPage
-    })
-    
-    local exportModeTitle = Utility.Create("TextLabel", {
-        Name = "Title",
-        Size = UDim2.new(1, -20, 0, 25),
-        Position = UDim2.new(0, 15, 0, 10),
-        BackgroundTransparency = 1,
-        Text = "📦 Export Mode",
-        TextColor3 = Config.UI.Colors.Text,
-        Font = Config.UI.Fonts.Heading,
-        TextSize = 15,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        Parent = exportModeCard
-    })
-    
-    local exportModeDropdown = Components.CreateDropdown({
-        Name = "ModeDropdown",
-        Size = UDim2.new(1, -30, 0, 40),
-        Position = UDim2.new(0, 15, 0, 45),
-        Options = {"Full Game", "Models Only", "Terrain Only"},
-        Default = "Full Game",
-        Parent = exportModeCard,
-        Callback = function(value)
-            Config.Export.CurrentMode = value
-            Logger.Info("Export mode changed to: " .. value)
-        end
-    })
-    
-    exportModeDropdown.Position = UDim2.new(0, 15, 0, 45)
-    
-    -- Progress Card
-    local progressCard = Components.CreateCard({
-        Name = "Progress",
-        Size = UDim2.new(1, 0, 0, 130),
-        Color = Config.UI.Colors.Surface,
-        LayoutOrder = 2,
-        Parent = exportPage
-    })
-    
-    local progressTitle = Utility.Create("TextLabel", {
-        Name = "Title",
-        Size = UDim2.new(1, -20, 0, 25),
-        Position = UDim2.new(0, 15, 0, 10),
-        BackgroundTransparency = 1,
-        Text = "⏳ Export Progress",
-        TextColor3 = Config.UI.Colors.Text,
-        Font = Config.UI.Fonts.Heading,
-        TextSize = 15,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        Parent = progressCard
-    })
-    
-    local progressBar = Components.CreateProgressBar({
-        Name = "ProgressBar",
-        Size = UDim2.new(1, -30, 0, 12),
-        Color = Config.UI.Colors.Primary,
-        Gradient = true,
-        GradientEnd = Config.UI.Colors.Accent,
-        Value = 0,
-        Parent = progressCard
-    })
-    
-    progressBar.Position = UDim2.new(0, 15, 0, 45)
-    
-    local progressPercent = Utility.Create("TextLabel", {
-        Name = "Percent",
-        Size = UDim2.new(0, 50, 0, 20),
-        Position = UDim2.new(1, -65, 0, 62),
-        BackgroundTransparency = 1,
-        Text = "0%",
-        TextColor3 = Config.UI.Colors.Primary,
-        Font = Config.UI.Fonts.Heading,
-        TextSize = 14,
-        TextXAlignment = Enum.TextXAlignment.Right,
-        Parent = progressCard
-    })
-    
-    local progressStatus = Utility.Create("TextLabel", {
-        Name = "Status",
-        Size = UDim2.new(1, -70, 0, 20),
-        Position = UDim2.new(0, 15, 0, 62),
-        BackgroundTransparency = 1,
-        Text = "Ready to export",
-        TextColor3 = Config.UI.Colors.TextSecondary,
-        Font = Config.UI.Fonts.Body,
-        TextSize = 13,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        Parent = progressCard
-    })
-    
-    local progressDetails = Utility.Create("TextLabel", {
-        Name = "Details",
-        Size = UDim2.new(1, -30, 0, 20),
-        Position = UDim2.new(0, 15, 0, 90),
-        BackgroundTransparency = 1,
-        Text = "📁 Output: " .. Config.Export.OutputFolder,
-        TextColor3 = Config.UI.Colors.TextMuted,
-        Font = Config.UI.Fonts.Body,
-        TextSize = 11,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        Parent = progressCard
-    })
-    
-    -- Export Button
-    local exportButtonContainer = Utility.Create("Frame", {
-        Name = "ButtonContainer",
-        Size = UDim2.new(1, 0, 0, 50),
-        BackgroundTransparency = 1,
-        LayoutOrder = 3,
-        Parent = exportPage
-    })
-    
-    local exportButton = Components.CreateButton({
-        Name = "ExportButton",
-        Size = UDim2.new(1, 0, 0, 50),
-        Text = "🚀 Start Export",
-        Color = Config.UI.Colors.Primary,
-        Gradient = true,
-        GradientEnd = Config.UI.Colors.PrimaryDark,
-        TextSize = 16,
-        Parent = exportButtonContainer,
-        Callback = function()
-            if not State.IsExporting then
-                local modeMap = {
-                    ["Full Game"] = "FullGame",
-                    ["Models Only"] = "FullModel",
-                    ["Terrain Only"] = "Terrain"
-                }
-                
-                local mode = modeMap[exportModeDropdown.GetValue()] or "FullGame"
-                UI.StartExport(mode)
-            end
-        end
-    })
-    
-    -- Options Card
-    local optionsCard = Components.CreateCard({
-        Name = "Options",
-        Size = UDim2.new(1, 0, 0, 180),
-        Color = Config.UI.Colors.Surface,
-        LayoutOrder = 4,
-        Parent = exportPage
-    })
-    
-    local optionsTitle = Utility.Create("TextLabel", {
-        Name = "Title",
-        Size = UDim2.new(1, -20, 0, 25),
-        Position = UDim2.new(0, 15, 0, 10),
-        BackgroundTransparency = 1,
-        Text = "⚙️ Export Options",
-        TextColor3 = Config.UI.Colors.Text,
-        Font = Config.UI.Fonts.Heading,
-        TextSize = 15,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        Parent = optionsCard
-    })
-    
-    local optionsContainer = Utility.Create("Frame", {
-        Name = "Container",
-        Size = UDim2.new(1, -30, 0, 130),
-        Position = UDim2.new(0, 15, 0, 40),
-        BackgroundTransparency = 1,
-        Parent = optionsCard
-    })
-    
-    local optionsLayout = Utility.Create("UIListLayout", {
-        SortOrder = Enum.SortOrder.LayoutOrder,
-        Padding = UDim.new(0, 8),
-        Parent = optionsContainer
-    })
-    
-    -- Toggle options
-    local decompileToggle = Components.CreateToggle({
-        Name = "DecompileScripts",
-        Text = "📜 Decompile Scripts",
-        Value = Config.Export.DecompileScripts,
-        Parent = optionsContainer,
-        Callback = function(value)
-            Config.Export.DecompileScripts = value
-            Logger.Info("Decompile scripts: " .. tostring(value))
-        end
-    })
-    
-    local terrainToggle = Components.CreateToggle({
-        Name = "IncludeTerrain",
-        Text = "🏔️ Include Terrain",
-        Value = Config.Export.IncludeTerrain,
-        Parent = optionsContainer,
-        Callback = function(value)
-            Config.Export.IncludeTerrain = value
-            Logger.Info("Include terrain: " .. tostring(value))
-        end
-    })
-    
-    local preserveToggle = Components.CreateToggle({
-        Name = "PreserveDisabled",
-        Text = "🔒 Preserve Disabled Scripts",
-        Value = Config.Export.PreserveDisabled,
-        Parent = optionsContainer,
-        Callback = function(value)
-            Config.Export.PreserveDisabled = value
-        end
-    })
-    
-    -- Export function
-    function UI.StartExport(mode)
-        if State.IsExporting then
-            Components.CreateNotification({
-                Type = "warning",
-                Title = "Already Exporting",
-                Message = "Please wait for current export to finish",
-                Parent = screenGui
-            })
-            return
-        end
-        
-        Logger.Info("Starting export: " .. mode)
-        
-        Components.CreateNotification({
-            Type = "info",
-            Title = "Export Started",
-            Message = "Exporting " .. mode .. "...",
-            Parent = screenGui
-        })
-        
-        exportButton.Text = "⏳ Exporting..."
-        exportButton.BackgroundColor3 = Config.UI.Colors.TextMuted
-        
-        task.spawn(function()
-            local success, result = Exporter.Export(mode, function(progress, status)
-                progressBar.SetProgress(progress)
-                progressPercent.Text = math.floor(progress) .. "%"
-                progressStatus.Text = status
+            
+            App.UpdateStatus("Serializing game...", "info")
+            
+            local xmlContent = InstanceSerializer.SerializeToFile(instancesToSave, {
+                IncludeScripts = App.Settings.IncludeScripts,
+                IncludeTerrain = App.Settings.IncludeTerrain,
+            }, function(percent, status)
+                App.UpdateProgress(percent)
+                App.UpdateStatus(status, "info")
             end)
             
-            exportButton.Text = "🚀 Start Export"
-            exportButton.BackgroundColor3 = Config.UI.Colors.Primary
+            -- Save file
+            local fileName = App.Settings.FileName .. "_FullGame" .. App.Settings.ExportFormat
+            App.UpdateStatus("Saving to " .. fileName .. "...", "info")
             
-            updateStats()
-            
-            if success then
-                Components.CreateNotification({
-                    Type = "success",
-                    Title = "Export Complete!",
-                    Message = "Saved to: " .. tostring(result),
-                    Duration = 6,
-                    Parent = screenGui
-                })
-            else
-                Components.CreateNotification({
-                    Type = "error",
-                    Title = "Export Failed",
-                    Message = tostring(result),
-                    Duration = 6,
-                    Parent = screenGui
-                })
+            if App.SaveToFile(xmlContent, fileName) then
+                local stats = InstanceSerializer.Stats
+                App.UpdateStatus(string.format("Saved! (%s instances, %s scripts, %s parts)",
+                    Utils.FormatNumber(stats.ProcessedInstances),
+                    Utils.FormatNumber(stats.Scripts),
+                    Utils.FormatNumber(stats.Parts)), "success")
             end
         end)
-    end
-    
-    --------------------------------------------------------------------------------
-    -- SERVICES PAGE
-    --------------------------------------------------------------------------------
-    
-    local servicesPage = tabPages["Services"]
-    
-    local servicesTitle = Utility.Create("TextLabel", {
-        Name = "Title",
-        Size = UDim2.new(1, 0, 0, 25),
-        BackgroundTransparency = 1,
-        Text = "🗂️ Select Services to Export",
-        TextColor3 = Config.UI.Colors.Text,
-        Font = Config.UI.Fonts.Heading,
-        TextSize = 16,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        Parent = servicesPage
-    })
-    
-    local servicesDesc = Utility.Create("TextLabel", {
-        Name = "Desc",
-        Size = UDim2.new(1, 0, 0, 18),
-        BackgroundTransparency = 1,
-        Text = "Toggle which services to include in Full Game export",
-        TextColor3 = Config.UI.Colors.TextMuted,
-        Font = Config.UI.Fonts.Body,
-        TextSize = 12,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        LayoutOrder = 1,
-        Parent = servicesPage
-    })
-    
-    for i, serviceData in ipairs(Config.Export.ServicesToExport) do
-        local serviceToggle = Components.CreateToggle({
-            Name = serviceData.Name,
-            Text = serviceData.Icon .. " " .. serviceData.Name,
-            Value = serviceData.Enabled,
-            Parent = servicesPage,
-            Callback = function(value)
-                Config.Export.ServicesToExport[i].Enabled = value
-                Logger.Debug(serviceData.Name .. " export: " .. tostring(value))
-            end
-        })
-        serviceToggle.LayoutOrder = i + 1
-    end
-    
-    --------------------------------------------------------------------------------
-    -- SETTINGS PAGE
-    --------------------------------------------------------------------------------
-    
-    local settingsPage = tabPages["Settings"]
-    
-    -- Output Settings
-    local outputCard = Components.CreateCard({
-        Name = "OutputSettings",
-        Size = UDim2.new(1, 0, 0, 140),
-        Color = Config.UI.Colors.Surface,
-        Parent = settingsPage
-    })
-    
-    local outputTitle = Utility.Create("TextLabel", {
-        Name = "Title",
-        Size = UDim2.new(1, -20, 0, 25),
-        Position = UDim2.new(0, 15, 0, 10),
-        BackgroundTransparency = 1,
-        Text = "📁 Output Settings",
-        TextColor3 = Config.UI.Colors.Text,
-        Font = Config.UI.Fonts.Heading,
-        TextSize = 15,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        Parent = outputCard
-    })
-    
-    -- Output Folder
-    local folderLabel = Utility.Create("TextLabel", {
-        Name = "FolderLabel",
-        Size = UDim2.new(0, 100, 0, 20),
-        Position = UDim2.new(0, 15, 0, 45),
-        BackgroundTransparency = 1,
-        Text = "Output Folder:",
-        TextColor3 = Config.UI.Colors.TextSecondary,
-        Font = Config.UI.Fonts.Body,
-        TextSize = 13,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        Parent = outputCard
-    })
-    
-    local folderInput = Components.CreateInput({
-        Name = "FolderInput",
-        Size = UDim2.new(1, -130, 0, 36),
-        Default = Config.Export.OutputFolder,
-        Placeholder = "Folder name...",
-        Parent = outputCard,
-        Callback = function(value)
-            Config.Export.OutputFolder = value
-            Logger.Info("Output folder changed to: " .. value)
-        end
-    })
-    
-    folderInput.Position = UDim2.new(0, 115, 0, 42)
-    
-    -- Output Format
-    local formatLabel = Utility.Create("TextLabel", {
-        Name = "FormatLabel",
-        Size = UDim2.new(0, 100, 0, 20),
-        Position = UDim2.new(0, 15, 0, 95),
-        BackgroundTransparency = 1,
-        Text = "File Format:",
-        TextColor3 = Config.UI.Colors.TextSecondary,
-        Font = Config.UI.Fonts.Body,
-        TextSize = 13,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        Parent = outputCard
-    })
-    
-    local formatDropdown = Components.CreateDropdown({
-        Name = "FormatDropdown",
-        Size = UDim2.new(1, -130, 0, 36),
-        Options = {"rbxlx", "rbxl"},
-        Default = Config.Export.OutputFormat,
-        Parent = outputCard,
-        Callback = function(value)
-            Config.Export.OutputFormat = value
-            Logger.Info("Output format changed to: " .. value)
-        end
-    })
-    
-    formatDropdown.Position = UDim2.new(0, 115, 0, 92)
-    
-    -- Performance Settings
-    local perfCard = Components.CreateCard({
-        Name = "PerformanceSettings",
-        Size = UDim2.new(1, 0, 0, 130),
-        Color = Config.UI.Colors.Surface,
-        LayoutOrder = 2,
-        Parent = settingsPage
-    })
-    
-    local perfTitle = Utility.Create("TextLabel", {
-        Name = "Title",
-        Size = UDim2.new(1, -20, 0, 25),
-        Position = UDim2.new(0, 15, 0, 10),
-        BackgroundTransparency = 1,
-        Text = "⚡ Performance",
-        TextColor3 = Config.UI.Colors.Text,
-        Font = Config.UI.Fonts.Heading,
-        TextSize = 15,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        Parent = perfCard
-    })
-    
-    -- Timeout
-    local timeoutLabel = Utility.Create("TextLabel", {
-        Name = "TimeoutLabel",
-        Size = UDim2.new(0, 130, 0, 20),
-        Position = UDim2.new(0, 15, 0, 45),
-        BackgroundTransparency = 1,
-        Text = "Decompile Timeout:",
-        TextColor3 = Config.UI.Colors.TextSecondary,
-        Font = Config.UI.Fonts.Body,
-        TextSize = 13,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        Parent = perfCard
-    })
-    
-    local timeoutInput = Components.CreateInput({
-        Name = "TimeoutInput",
-        Size = UDim2.new(0, 80, 0, 36),
-        Default = tostring(Config.Export.DecompileTimeout),
-        Placeholder = "10",
-        Parent = perfCard,
-        Callback = function(value)
-            local num = tonumber(value)
-            if num then
-                Config.Export.DecompileTimeout = num
-                Logger.Info("Decompile timeout set to: " .. num .. "s")
-            end
-        end
-    })
-    
-    timeoutInput.Position = UDim2.new(0, 145, 0, 42)
-    
-    local timeoutSuffix = Utility.Create("TextLabel", {
-        Name = "Suffix",
-        Size = UDim2.new(0, 40, 0, 36),
-        Position = UDim2.new(0, 230, 0, 42),
-        BackgroundTransparency = 1,
-        Text = "seconds",
-        TextColor3 = Config.UI.Colors.TextMuted,
-        Font = Config.UI.Fonts.Body,
-        TextSize = 12,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        Parent = perfCard
-    })
-    
-    -- Yield Interval
-    local yieldLabel = Utility.Create("TextLabel", {
-        Name = "YieldLabel",
-        Size = UDim2.new(0, 130, 0, 20),
-        Position = UDim2.new(0, 15, 0, 90),
-        BackgroundTransparency = 1,
-        Text = "Yield Interval:",
-        TextColor3 = Config.UI.Colors.TextSecondary,
-        Font = Config.UI.Fonts.Body,
-        TextSize = 13,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        Parent = perfCard
-    })
-    
-    local yieldInput = Components.CreateInput({
-        Name = "YieldInput",
-        Size = UDim2.new(0, 80, 0, 36),
-        Default = tostring(Config.Export.YieldInterval),
-        Placeholder = "50",
-        Parent = perfCard,
-        Callback = function(value)
-            local num = tonumber(value)
-            if num then
-                Config.Export.YieldInterval = num
-            end
-        end
-    })
-    
-    yieldInput.Position = UDim2.new(0, 145, 0, 87)
-    
-    local yieldSuffix = Utility.Create("TextLabel", {
-        Name = "Suffix",
-        Size = UDim2.new(0, 60, 0, 36),
-        Position = UDim2.new(0, 230, 0, 87),
-        BackgroundTransparency = 1,
-        Text = "instances",
-        TextColor3 = Config.UI.Colors.TextMuted,
-        Font = Config.UI.Fonts.Body,
-        TextSize = 12,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        Parent = perfCard
-    })
-    
-    --------------------------------------------------------------------------------
-    -- CONSOLE PAGE
-    --------------------------------------------------------------------------------
-    
-    local consolePage = tabPages["Console"]
-    
-    -- Console Header
-    local consoleHeader = Utility.Create("Frame", {
-        Name = "Header",
-        Size = UDim2.new(1, 0, 0, 40),
-        BackgroundColor3 = Config.UI.Colors.Surface,
-        BorderSizePixel = 0,
-        Parent = consolePage
-    })
-    
-    Utility.AddCorner(consoleHeader, UDim.new(0, 8))
-    
-    local consoleTitle = Utility.Create("TextLabel", {
-        Name = "Title",
-        Size = UDim2.new(0, 150, 1, 0),
-        Position = UDim2.new(0, 12, 0, 0),
-        BackgroundTransparency = 1,
-        Text = "📋 Console Logs",
-        TextColor3 = Config.UI.Colors.Text,
-        Font = Config.UI.Fonts.Heading,
-        TextSize = 14,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        Parent = consoleHeader
-    })
-    
-    local clearBtn = Components.CreateButton({
-        Name = "ClearBtn",
-        Size = UDim2.new(0, 80, 0, 28),
-        Position = UDim2.new(1, -90, 0.5, -14),
-        Text = "🗑️ Clear",
-        Color = Config.UI.Colors.Error,
-        TextSize = 12,
-        CornerRadius = UDim.new(0, 6),
-        Parent = consoleHeader,
-        Callback = function()
-            Logger.Clear()
-        end
-    })
-    
-    clearBtn.Position = UDim2.new(1, -90, 0.5, -14)
-    
-    -- Console Output
-    local consoleOutput = Utility.Create("ScrollingFrame", {
-        Name = "Output",
-        Size = UDim2.new(1, 0, 1, -52),
-        Position = UDim2.new(0, 0, 0, 48),
-        BackgroundColor3 = Config.UI.Colors.BackgroundSecondary,
-        BorderSizePixel = 0,
-        ScrollBarThickness = 4,
-        ScrollBarImageColor3 = Config.UI.Colors.Primary,
-        CanvasSize = UDim2.new(0, 0, 0, 0),
-        AutomaticCanvasSize = Enum.AutomaticSize.Y,
-        LayoutOrder = 1,
-        Parent = consolePage
-    })
-    
-    Utility.AddCorner(consoleOutput, UDim.new(0, 8))
-    
-    local consoleLayout = Utility.Create("UIListLayout", {
-        SortOrder = Enum.SortOrder.LayoutOrder,
-        Padding = UDim.new(0, 2),
-        Parent = consoleOutput
-    })
-    
-    Utility.Create("UIPadding", {
-        PaddingTop = UDim.new(0, 8),
-        PaddingBottom = UDim.new(0, 8),
-        PaddingLeft = UDim.new(0, 8),
-        PaddingRight = UDim.new(0, 8),
-        Parent = consoleOutput
-    })
-    
-    local logCounter = 0
-    
-    local function addLogEntry(log)
-        logCounter = logCounter + 1
         
-        local entry = Utility.Create("Frame", {
-            Name = "Log_" .. logCounter,
-            Size = UDim2.new(1, 0, 0, 24),
-            BackgroundTransparency = 1,
-            LayoutOrder = logCounter,
-            Parent = consoleOutput
-        })
-        
-        local time = Utility.Create("TextLabel", {
-            Name = "Time",
-            Size = UDim2.new(0, 60, 1, 0),
-            BackgroundTransparency = 1,
-            Text = log.Time,
-            TextColor3 = Config.UI.Colors.TextMuted,
-            Font = Config.UI.Fonts.Code,
-            TextSize = 11,
-            TextXAlignment = Enum.TextXAlignment.Left,
-            Parent = entry
-        })
-        
-        local icon = Utility.Create("TextLabel", {
-            Name = "Icon",
-            Size = UDim2.new(0, 20, 1, 0),
-            Position = UDim2.new(0, 60, 0, 0),
-            BackgroundTransparency = 1,
-            Text = log.Icon,
-            TextSize = 12,
-            Parent = entry
-        })
-        
-        local message = Utility.Create("TextLabel", {
-            Name = "Message",
-            Size = UDim2.new(1, -85, 1, 0),
-            Position = UDim2.new(0, 82, 0, 0),
-            BackgroundTransparency = 1,
-            Text = log.Message,
-            TextColor3 = log.Color,
-            Font = Config.UI.Fonts.Code,
-            TextSize = 12,
-            TextXAlignment = Enum.TextXAlignment.Left,
-            TextTruncate = Enum.TextTruncate.AtEnd,
-            Parent = entry
-        })
-    end
-    
-    Logger.OnLog = addLogEntry
-    
-    Logger.OnClear = function()
-        for _, child in ipairs(consoleOutput:GetChildren()) do
-            if child:IsA("Frame") then
-                child:Destroy()
-            end
+        if not success then
+            App.UpdateStatus("Error: " .. tostring(err), "error")
         end
-        logCounter = 0
-    end
-    
-    --------------------------------------------------------------------------------
-    -- ABOUT PAGE
-    --------------------------------------------------------------------------------
-    
-    local aboutPage = tabPages["About"]
-    
-    -- About Card
-    local aboutCard = Components.CreateCard({
-        Name = "AboutCard",
-        Size = UDim2.new(1, 0, 0, 180),
-        Color = Config.UI.Colors.Surface,
-        Parent = aboutPage
-    })
-    
-    local aboutGradient = Utility.Create("Frame", {
-        Name = "Gradient",
-        Size = UDim2.new(1, 0, 0, 80),
-        BackgroundColor3 = Color3.new(1, 1, 1),
-        BorderSizePixel = 0,
-        Parent = aboutCard
-    })
-    
-    Utility.Create("UICorner", {
-        CornerRadius = UDim.new(0, 12),
-        Parent = aboutGradient
-    })
-    
-    Utility.AddGradient(aboutGradient, {Config.UI.Colors.Primary, Config.UI.Colors.Secondary, Config.UI.Colors.Accent}, 90)
-    aboutGradient.BackgroundTransparency = 0.7
-    
-    local aboutLogo = Utility.Create("TextLabel", {
-        Name = "Logo",
-        Size = UDim2.new(0, 60, 0, 60),
-        Position = UDim2.new(0.5, -30, 0, 10),
-        BackgroundColor3 = Config.UI.Colors.Primary,
-        Text = "🚀",
-        TextSize = 30,
-        Parent = aboutCard
-    })
-    
-    Utility.AddCorner(aboutLogo, UDim.new(0, 16))
-    Utility.AddGradient(aboutLogo, {Config.UI.Colors.Primary, Config.UI.Colors.PrimaryDark}, 135)
-    Utility.AddShadow(aboutLogo, 20, 0.5)
-    
-    local aboutName = Utility.Create("TextLabel", {
-        Name = "Name",
-        Size = UDim2.new(1, 0, 0, 25),
-        Position = UDim2.new(0, 0, 0, 85),
-        BackgroundTransparency = 1,
-        Text = "BaoSaveInstance",
-        TextColor3 = Config.UI.Colors.Text,
-        Font = Config.UI.Fonts.Title,
-        TextSize = 20,
-        Parent = aboutCard
-    })
-    
-    local aboutVersion = Utility.Create("TextLabel", {
-        Name = "Version",
-        Size = UDim2.new(1, 0, 0, 20),
-        Position = UDim2.new(0, 0, 0, 108),
-        BackgroundTransparency = 1,
-        Text = "Version " .. Config.UI.Version,
-        TextColor3 = Config.UI.Colors.TextSecondary,
-        Font = Config.UI.Fonts.Body,
-        TextSize = 13,
-        Parent = aboutCard
-    })
-    
-    local aboutDesc = Utility.Create("TextLabel", {
-        Name = "Desc",
-        Size = UDim2.new(1, -30, 0, 40),
-        Position = UDim2.new(0, 15, 0, 135),
-        BackgroundTransparency = 1,
-        Text = "The most advanced game decompiler & exporter for Roblox.\nCreated with ❤️ by " .. Config.UI.Author,
-        TextColor3 = Config.UI.Colors.TextMuted,
-        Font = Config.UI.Fonts.Body,
-        TextSize = 12,
-        Parent = aboutCard
-    })
-    
-    -- Features Card
-    local featuresCard = Components.CreateCard({
-        Name = "Features",
-        Size = UDim2.new(1, 0, 0, 200),
-        Color = Config.UI.Colors.Surface,
-        LayoutOrder = 2,
-        Parent = aboutPage
-    })
-    
-    local featuresTitle = Utility.Create("TextLabel", {
-        Name = "Title",
-        Size = UDim2.new(1, -20, 0, 25),
-        Position = UDim2.new(0, 15, 0, 10),
-        BackgroundTransparency = 1,
-        Text = "✨ Features",
-        TextColor3 = Config.UI.Colors.Text,
-        Font = Config.UI.Fonts.Heading,
-        TextSize = 15,
-        TextXAlignment = Enum.TextXAlignment.Left,
-        Parent = featuresCard
-    })
-    
-    local features = {
-        "🎮 Full Game Export with Scripts & Terrain",
-        "🏗️ Model-Only Export Mode",
-        "🏔️ Terrain-Only Export Mode",
-        "📜 Script Decompilation Support",
-        "⚙️ Customizable Service Selection",
-        "🚫 Blacklist/Whitelist System",
-        "📊 Real-time Progress Tracking",
-        "🎨 Beautiful Modern UI"
-    }
-    
-    for i, feature in ipairs(features) do
-        local featureLabel = Utility.Create("TextLabel", {
-            Name = "Feature_" .. i,
-            Size = UDim2.new(1, -30, 0, 18),
-            Position = UDim2.new(0, 15, 0, 35 + (i-1) * 20),
-            BackgroundTransparency = 1,
-            Text = feature,
-            TextColor3 = Config.UI.Colors.TextSecondary,
-            Font = Config.UI.Fonts.Body,
-            TextSize = 12,
-            TextXAlignment = Enum.TextXAlignment.Left,
-            Parent = featuresCard
-        })
-    end
-    
-    --------------------------------------------------------------------------------
-    -- WINDOW CONTROLS & DRAGGING
-    --------------------------------------------------------------------------------
-    
-    -- Close button
-    closeBtn.MouseButton1Click:Connect(function()
-        Utility.Tween(mainWindow, {
-            Size = UDim2.new(0, 0, 0, 0),
-            Position = UDim2.new(0.5, 0, 0.5, 0)
-        }, 0.3)
         
-        task.delay(0.3, function()
-            screenGui:Destroy()
-        end)
+        App.IsProcessing = false
+        App.UpdateProgress(100)
     end)
+end
+
+--- Decompile models only
+function App.DecompileModels()
+    if App.IsProcessing then
+        App.UpdateStatus("Already processing...", "warning")
+        return
+    end
     
-    -- Minimize button
-    minimizeBtn.MouseButton1Click:Connect(function()
-        State.IsMinimized = not State.IsMinimized
-        
-        if State.IsMinimized then
-            Utility.Tween(mainWindow, {Size = UDim2.new(0, 250, 0, 50)}, 0.3)
-            contentArea.Visible = false
-        else
-            Utility.Tween(mainWindow, {Size = Config.UI.WindowSize}, 0.3)
-            task.delay(0.2, function()
-                contentArea.Visible = true
+    App.IsProcessing = true
+    App.UpdateStatus("Starting model decompile...", "info")
+    App.UpdateProgress(0)
+    
+    task.spawn(function()
+        local success, err = Utils.SafeCall(function()
+            App.UpdateStatus("Serializing models...", "info")
+            
+            local xmlContent = InstanceSerializer.SerializeToFile({Workspace}, {
+                IncludeScripts = App.Settings.IncludeScripts,
+                IncludeTerrain = false, -- Exclude terrain for models only
+            }, function(percent, status)
+                App.UpdateProgress(percent)
+                App.UpdateStatus(status, "info")
             end)
-        end
-    end)
-    
-    -- Dragging
-    titleBar.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            State.IsDragging = true
-            State.DragStart = input.Position
-            State.StartPos = mainWindow.Position
-        end
-    end)
-    
-    titleBar.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            State.IsDragging = false
-        end
-    end)
-    
-    UserInputService.InputChanged:Connect(function(input)
-        if State.IsDragging and input.UserInputType == Enum.UserInputType.MouseMovement then
-            local delta = input.Position - State.DragStart
-            mainWindow.Position = UDim2.new(
-                State.StartPos.X.Scale,
-                State.StartPos.X.Offset + delta.X,
-                State.StartPos.Y.Scale,
-                State.StartPos.Y.Offset + delta.Y
-            )
-        end
-    end)
-    
-    --------------------------------------------------------------------------------
-    -- KEYBIND
-    --------------------------------------------------------------------------------
-    
-    UserInputService.InputBegan:Connect(function(input, gameProcessed)
-        if gameProcessed then return end
+            
+            -- Save file
+            local fileName = App.Settings.FileName .. "_ModelsOnly" .. App.Settings.ExportFormat
+            App.UpdateStatus("Saving to " .. fileName .. "...", "info")
+            
+            if App.SaveToFile(xmlContent, fileName) then
+                local stats = InstanceSerializer.Stats
+                App.UpdateStatus(string.format("Saved! (%s models, %s parts)",
+                    Utils.FormatNumber(stats.Models),
+                    Utils.FormatNumber(stats.Parts)), "success")
+            end
+        end)
         
-        if input.KeyCode == Enum.KeyCode.RightControl then
-            screenGui.Enabled = not screenGui.Enabled
+        if not success then
+            App.UpdateStatus("Error: " .. tostring(err), "error")
         end
+        
+        App.IsProcessing = false
+        App.UpdateProgress(100)
     end)
-    
-    --------------------------------------------------------------------------------
-    -- INITIALIZATION
-    --------------------------------------------------------------------------------
-    
-    -- Opening animation
-    mainWindow.Size = UDim2.new(0, 0, 0, 0)
-    mainWindow.Position = UDim2.new(0.5, 0, 0.5, 0)
-    
-    Utility.Tween(mainWindow, {
-        Size = Config.UI.WindowSize,
-        Position = UDim2.new(0.5, -350, 0.5, -275)
-    }, 0.5, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
-    
-    -- Welcome log
-    task.delay(0.5, function()
-        Logger.Info("BaoSaveInstance v" .. Config.UI.Version .. " loaded!")
-        Logger.Info("Game: " .. Utility.GetGameName())
-        Logger.Info("PlaceId: " .. game.PlaceId)
-        Logger.Success("Ready to export!")
-    end)
-    
-    -- Return reference
-    UI.ScreenGui = screenGui
-    UI.MainWindow = mainWindow
-    UI.UpdateStats = updateStats
-    
-    return UI
 end
 
---------------------------------------------------------------------------------
--- GLOBAL API
---------------------------------------------------------------------------------
-
-local BaoSaveInstance = {}
-
-BaoSaveInstance.Config = Config
-BaoSaveInstance.State = State
-BaoSaveInstance.Logger = Logger
-BaoSaveInstance.Exporter = Exporter
-
-function BaoSaveInstance.Show()
-    return UI.Create()
-end
-
-function BaoSaveInstance.DecompileFullGame()
-    return Exporter.Export("FullGame")
-end
-
-function BaoSaveInstance.DecompileFullModel()
-    return Exporter.Export("FullModel")
-end
-
-function BaoSaveInstance.DecompileTerrain()
-    return Exporter.Export("Terrain")
-end
-
-function BaoSaveInstance.Export(options)
-    options = options or {}
-    for key, value in pairs(options) do
-        if Config.Export[key] ~= nil then
-            Config.Export[key] = value
-        end
+--- Decompile terrain only
+function App.DecompileTerrain()
+    if App.IsProcessing then
+        App.UpdateStatus("Already processing...", "warning")
+        return
     end
-    return Exporter.Export(options.Mode or "FullGame")
+    
+    App.IsProcessing = true
+    App.UpdateStatus("Starting terrain decompile...", "info")
+    App.UpdateProgress(0)
+    
+    task.spawn(function()
+        local success, err = Utils.SafeCall(function()
+            App.UpdateStatus("Serializing terrain...", "info")
+            
+            -- Build terrain-only XML
+            Utils.ResetRefCounter()
+            
+            local xmlParts = {
+                '<?xml version="1.0" encoding="UTF-8"?>',
+                '<roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4">',
+                '<Meta name="ExplicitAutoJoints">true</Meta>',
+            }
+            
+            local terrainXml = TerrainSerializer.Serialize(Workspace.Terrain, function(percent, status)
+                App.UpdateProgress(percent)
+                App.UpdateStatus(status, "info")
+            end)
+            
+            table.insert(xmlParts, terrainXml)
+            table.insert(xmlParts, '</roblox>')
+            
+            local xmlContent = table.concat(xmlParts, "\n")
+            
+            -- Save file
+            local fileName = App.Settings.FileName .. "_TerrainOnly" .. App.Settings.ExportFormat
+            App.UpdateStatus("Saving to " .. fileName .. "...", "info")
+            
+            if App.SaveToFile(xmlContent, fileName) then
+                App.UpdateStatus("Terrain saved successfully!", "success")
+            end
+        end)
+        
+        if not success then
+            App.UpdateStatus("Error: " .. tostring(err), "error")
+        end
+        
+        App.IsProcessing = false
+        App.UpdateProgress(100)
+    end)
 end
 
---------------------------------------------------------------------------------
--- AUTO INITIALIZE
---------------------------------------------------------------------------------
-
-if getgenv then
-    getgenv().BaoSaveInstance = BaoSaveInstance
+--- Destroy the application
+function App.Destroy()
+    -- Animate out
+    if App.MainFrame then
+        TweenService:Create(App.MainFrame, TweenInfo.new(0.2, Enum.EasingStyle.Back, Enum.EasingDirection.In), {
+            Position = UDim2.new(0.5, -190, 0.5, -200),
+            BackgroundTransparency = 1
+        }):Play()
+        
+        task.delay(0.2, function()
+            UI.Cleanup()
+            if App.GUI then
+                App.GUI:Destroy()
+            end
+        end)
+    end
 end
 
--- Auto show UI
-BaoSaveInstance.Show()
+--=============================================================================
+-- INITIALIZATION
+--=============================================================================
 
-Logger.Info("BaoSaveInstance initialized!")
-Logger.Info("Press RightCtrl to toggle UI")
+-- Start the application
+App.Init()
 
-return BaoSaveInstance
+-- Print startup message
+print([[
+╔══════════════════════════════════════════════════════════════════╗
+║                    BaoSaveInstance v1.0                          ║
+║                     Successfully Loaded!                          ║
+║                                                                   ║
+║  Commands:                                                        ║
+║  - Use the GUI buttons to decompile and save                     ║
+║  - Files are saved to your executor's workspace folder           ║
+╚══════════════════════════════════════════════════════════════════╝
+]])
+
+-- Return the App for external access if needed
+return App
