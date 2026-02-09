@@ -359,20 +359,37 @@ end
 function PropertySerializer.GetProperties(instance)
     local properties = {}
     
-    -- Try to get properties using various methods
-    local success, props = Utils.SafeCall(function()
-        -- Method 1: Use getproperties if available (executor function)
-        local getProps = Utils.GetFunction("getproperties")
-        if getProps then
-            return getProps(instance)
-        end
-        
-        -- Method 2: Use known property lists based on class
+    -- 1. Always get known properties first (Base Layer)
+    -- This ensures we never lose critical data like Name, Position, Size even if getproperties fails
+    local success, knownProps = Utils.SafeCall(function()
         return PropertySerializer.GetKnownProperties(instance)
     end)
     
-    if success and props then
-        properties = props
+    if success and knownProps then
+        for k, v in pairs(knownProps) do
+            properties[k] = v
+        end
+    end
+    
+    -- 2. Try to get executor properties (Enhancement Layer)
+    local getProps = Utils.GetFunction("getproperties")
+    if getProps then
+        local success, execProps = Utils.SafeCall(function()
+            return getProps(instance)
+        end)
+        
+        if success and execProps then
+            for k, v in pairs(execProps) do
+                -- Overwrite or add executor properties
+                properties[k] = v
+            end
+        end
+    end
+    
+    -- 3. ALWAYS Ensure Name is present (Critical Fallback)
+    if not properties["Name"] then
+        local success, name = Utils.SafeCall(function() return instance.Name end)
+        if success then properties["Name"] = name end
     end
     
     return properties
@@ -434,6 +451,20 @@ PropertySerializer.KnownClassProperties = {
     ["Weld"] = {"Name", "Part0", "Part1", "C0", "C1", "Enabled"},
     ["WeldConstraint"] = {"Name", "Part0", "Part1", "Enabled"},
     ["Motor6D"] = {"Name", "Part0", "Part1", "C0", "C1", "CurrentAngle", "DesiredAngle", "MaxVelocity", "Enabled"},
+    
+    -- Services & Critical Classes
+    ["Workspace"] = {"Name", "Gravity", "FallenPartsDestroyHeight", "StreamingEnabled", "ClientAnimatorThrottling", "InterpolationThrottling", "MeshPartHeadsAndAccessories", "SignalBehavior", "StreamOutBehavior", "Terrain"},
+    ["Lighting"] = {"Name", "Ambient", "Brightness", "ColorShift_Bottom", "ColorShift_Top", "GlobalShadows", "OutdoorAmbient", "ShadowSoftness", "ClockTime", "GeographicLatitude", "TimeOfDay", "FogColor", "FogEnd", "FogStart", "Technology", "EnvironmentDiffuseScale", "EnvironmentSpecularScale", "ExposureCompensation"},
+    ["ReplicatedStorage"] = {"Name"},
+    ["ReplicatedFirst"] = {"Name"},
+    ["StarterPlayer"] = {"Name", "CameraMaxZoomDistance", "CameraMinZoomDistance", "CameraMode", "CharacterAutoLoads", "CharacterMainMaxSlopeAngle", "CharacterMaxSlopeAngle", "CharacterJumpHeight", "CharacterWalkSpeed", "DevCameraOcclusionMode", "DevComputerCameraMovementMode", "DevComputerMovementMode", "DevTouchCameraMovementMode", "DevTouchMovementMode", "EnableMouseLockOption", "HealthDisplayDistance", "LoadCharacterAppearance", "NameDisplayDistance", "UserEmotesEnabled"},
+    ["Teams"] = {"Name"},
+    ["SoundService"] = {"Name", "AmbientReverb", "DistanceFactor", "DopplerScale", "RespectFilteringEnabled", "RolloffScale"},
+    ["StarterGui"] = {"Name", "ScreenOrientation", "ShowDevelopmentGui", "ResetPlayerGuiOnSpawn"},
+    ["StarterPack"] = {"Name"},
+    ["Chat"] = {"Name", "BubbleChatEnabled", "LoadDefaultChat"},
+    ["LocalizationService"] = {"Name"},
+    ["TestService"] = {"Name", "AutoRuns", "Description", "Is30FpsThrottleEnabled", "IsPhysicsEnvironmentalThrottled", "IsSleepAllowed", "NumberOfPlayers", "SimulateSecondsLag", "Timeout"},
     
     ["Folder"] = {"Name"},
     ["Configuration"] = {"Name"},
