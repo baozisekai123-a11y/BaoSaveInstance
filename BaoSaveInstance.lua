@@ -193,6 +193,12 @@ PropertySerializer.TypeHandlers = {
         if url == "" then
             return string.format('<Content name="%s"><null></null></Content>', Utils.EscapeXML(name))
         end
+        
+        -- If it's just a number, prepend rbxassetid://
+        if tonumber(url) then
+            url = "rbxassetid://" .. url
+        end
+        
         return string.format('<Content name="%s"><url>%s</url></Content>', Utils.EscapeXML(name), Utils.EscapeXML(url))
     end,
     
@@ -370,20 +376,12 @@ PropertySerializer.SkipClasses = {
 ---@param name string Property name
 ---@param value any Property value
 ---@return string|nil XML string or nil if unsupported
-function PropertySerializer.SerializeProperty(name, value)
+function PropertySerializer.SerializeProperty(instance, name, value)
     if value == nil then return nil end
-    
     local valueType = typeof(value)
-    local handler = PropertySerializer.TypeHandlers[valueType]
     
-    if handler then
-        local success, result = Utils.SafeCall(handler, name, value)
-        if success and result then
-            return result
-        end
-    end
-    
-    -- Handle special Content properties (Textures, Meshes, Sounds)
+    -- 1. Content properties MUST be checked first to avoid being caught by the string handler
+    -- These require the <Content><url> tag to load in Studio
     local contentProps = {
         ["MeshId"] = true, ["TextureId"] = true, ["TextureID"] = true, 
         ["SoundId"] = true, ["AnimationId"] = true, ["SkyboxBk"] = true,
@@ -393,25 +391,31 @@ function PropertySerializer.SerializeProperty(name, value)
         ["ColorMap"] = true, ["MetalnessMap"] = true, ["NormalMap"] = true,
         ["RoughnessMap"] = true, ["PantsTemplate"] = true, ["ShirtTemplate"] = true,
         ["Graphic"] = true, ["OverlayTextureId"] = true, ["CageMeshId"] = true,
-        ["ReferenceMeshId"] = true
+        ["ReferenceMeshId"] = true, ["BaseTextureId"] = true, ["NormalTextureId"] = true
     }
     
     if contentProps[name] then
         return PropertySerializer.TypeHandlers["Content"](name, value)
     end
     
-    -- Handle Instance references (Mapping)
-    -- This is the ULTIMATE REF HANDLER: It handles any property that returns an instance
+    -- 2. Standard Type Handlers
+    local handler = PropertySerializer.TypeHandlers[valueType]
+    
+    if handler then
+        local success, result = Utils.SafeCall(handler, name, value)
+        if success and result then
+            return result
+        end
+    end
+    
+    -- 3. Handle Instance references (Mapping)
     if valueType == "Instance" then
         local target = value
         if not target then return string.format('<Ref name="%s">null</Ref>', Utils.EscapeXML(name)) end
-        
-        -- Special case: If the instance is not in the map yet, it might be outside the save scope
-        -- In Ultimate Version, we try to ensure it's mapped if it's reachable
         return string.format('<Ref name="%s">%s</Ref>', Utils.EscapeXML(name), Utils.GetRefId(target))
     end
     
-    -- Handle BinaryString properties (Attributes, ChildData, etc.)
+    -- 4. Handle BinaryString properties (Attributes, ChildData, etc.)
     if name == "ChildData" or name == "MeshData" or name == "TerrainData" or name == "Attributes" then
         return string.format('<BinaryString name="%s"><![CDATA[%s]]></BinaryString>',
             Utils.EscapeXML(name), tostring(value))
@@ -501,16 +505,28 @@ PropertySerializer.KnownClassProperties = {
     ["MeshPart"] = {
         "MeshId", "TextureID", "CollisionFidelity", "RenderFidelity", 
         "DoubleSided", "FluidFidelity", "InitialSize", "HasSkinnedMesh",
-        "VertexColor" -- Some MeshParts have vertex data
+        "VertexColor", "BaseTextureId", "NormalTextureId"
     },
     ["UnionOperation"] = {
         "UsePartColor", "CollisionFidelity", "RenderFidelity", 
         "ChildData", "MeshData", "HasAnisotropicTangentSpace"
     },
-    ["SpecialMesh"] = {"MeshId", "TextureId", "Scale", "Offset", "MeshType", "VertexColor"},
+    ["SpecialMesh"] = {
+        "MeshId", "TextureId", "Scale", "Offset", "MeshType", 
+        "VertexColor", "LODX", "LODY"
+    },
     ["BlockMesh"] = {"Scale", "Offset"},
     ["CylinderMesh"] = {"Scale", "Offset"},
     ["FileMesh"] = {"MeshId", "TextureId", "Scale", "Offset"},
+    
+    ["SurfaceAppearance"] = {
+        "Name", "ColorMap", "MetalnessMap", "NormalMap", "RoughnessMap", 
+        "AlphaMode"
+    },
+    ["MaterialVariant"] = {
+        "Name", "BaseColorId", "ColorMap", "MetalnessMap", "NormalMap", 
+        "RoughnessMap", "Material", "BaseMaterial"
+    },
     ["WedgePart"] = {},
     ["CornerWedgePart"] = {},
     ["TrussPart"] = {},
@@ -539,7 +555,10 @@ PropertySerializer.KnownClassProperties = {
     ["Shirt"] = {"Name", "ShirtTemplate", "Color3"},
     ["Pants"] = {"Name", "PantsTemplate", "Color3"},
     ["ShirtGraphic"] = {"Name", "Graphic", "Color3"},
-    ["WrapLayer"] = {"Name", "ImportOrigin", "ImportOriginWorld", "BindOffset", "ShrinkFactor", "CageMeshId", "ReferenceMeshId", "AutoSkin", "Enabled"},
+    ["WrapLayer"] = {
+        "Name", "ImportOrigin", "ImportOriginWorld", "BindOffset", "ShrinkFactor", 
+        "CageMeshId", "ReferenceMeshId", "AutoSkin", "Enabled", "Order"
+    },
     ["WrapTarget"] = {"Name", "ImportOrigin", "ImportOriginWorld", "Stiffness", "Enabled"},
     
     ["HumanoidDescription"] = {
@@ -1007,7 +1026,7 @@ function InstanceSerializer.Serialize(instance, options, callback, depth)
     local properties = PropertySerializer.GetProperties(instance)
     
     for name, value in pairs(properties) do
-        local propXml = PropertySerializer.SerializeProperty(name, value)
+        local propXml = PropertySerializer.SerializeProperty(instance, name, value)
         if propXml then
             table.insert(xmlParts, propXml)
         end
