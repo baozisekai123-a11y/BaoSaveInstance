@@ -1406,11 +1406,37 @@ App.Settings = {
 
 --- Initialize the application
 function App.Init()
-    -- Clean up existing GUI if present
-    local existingGui = Players.LocalPlayer.PlayerGui:FindFirstChild("BaoSaveInstance")
-    if existingGui then
-        existingGui:Destroy()
+    -- Wait for LocalPlayer
+    if not Players.LocalPlayer then
+        Players:GetPropertyChangedSignal("LocalPlayer"):Wait()
     end
+    
+    -- Clean up existing GUI in PlayerGui
+    local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
+    for _, gui in ipairs(playerGui:GetChildren()) do
+        if gui.Name == "BaoSaveInstance" then gui:Destroy() end
+    end
+    
+    -- Check for gethui support (Synapse/ScriptWare/etc.)
+    local getHui = Utils.GetFunction("gethui")
+    local coreGui = game:GetService("CoreGui")
+    
+    -- Try to clean up from CoreGui/gethui if possible
+    if getHui then
+        pcall(function()
+            local hiddenUI = getHui()
+            if hiddenUI and hiddenUI:FindFirstChild("BaoSaveInstance") then
+                hiddenUI.BaoSaveInstance:Destroy()
+            end
+        end)
+    end
+    
+    -- Also check CoreGui directly if we have access
+    pcall(function()
+        if coreGui:FindFirstChild("BaoSaveInstance") then
+            coreGui.BaoSaveInstance:Destroy()
+        end
+    end)
     
     UI.Cleanup()
     
@@ -1420,15 +1446,26 @@ function App.Init()
     App.GUI.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     App.GUI.ResetOnSpawn = false
     
-    -- Check for gethui (exploit protection)
-    local getHui = Utils.GetFunction("gethui")
+    -- Try to parent to gethui() first for protection
+    local parented = false
+    
     if getHui then
-        App.GUI.Parent = getHui()
-    else
-        App.GUI.Parent = Players.LocalPlayer.PlayerGui
+        local success, hiddenUI = pcall(getHui)
+        if success and hiddenUI then
+            App.GUI.Parent = hiddenUI
+            parented = true
+        end
+    end
+    
+    -- Fallback to PlayerGui
+    if not parented then
+        App.GUI.Parent = playerGui
     end
     
     App.CreateMainWindow()
+    
+    -- Print success message to console
+    print("BaoSaveInstance GUI Loaded!")
 end
 
 --- Create the main window
