@@ -8,11 +8,21 @@
     ╚══════════════════════════════════════════════════════════════════════════╝
 ]]
 
+do -- Encapsulate the script to prevent environment leakage
+    
+--=============================================================================
+-- BaoSaveInstance v1.1 - Maximum Fidelity & Stealth
+--=============================================================================
+
 --=============================================================================
 -- SERVICES
 --=============================================================================
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
+local CoreGui = game:GetService("CoreGui")
+local TweenService = game:GetService("TweenService")
+local HttpService = game:GetService("HttpService")
+local Debris = game:GetService("Debris")
 local Lighting = game:GetService("Lighting")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ReplicatedFirst = game:GetService("ReplicatedFirst")
@@ -24,8 +34,6 @@ local SoundService = game:GetService("SoundService")
 local Chat = game:GetService("Chat")
 local LocalizationService = game:GetService("LocalizationService")
 local TestService = game:GetService("TestService")
-local HttpService = game:GetService("HttpService")
-local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 
@@ -134,8 +142,20 @@ function Utils.DeepClone(tbl)
     return copy
 end
 
+--- Generate a unique random string for stealth
+function Utils.GenerateRandomName()
+    local chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+    local name = ""
+    for i = 1, math.random(10, 20) do
+        local r = math.random(1, #chars)
+        name = name .. string.sub(chars, r, r)
+    end
+    return name
+end
+
 local refCounter = 0
 local instanceMap = {} -- [Instance] = RefID
+local currentGuiName = Utils.GenerateRandomName()
 
 function Utils.GenerateRefId()
     refCounter = refCounter + 1
@@ -711,6 +731,7 @@ function TerrainSerializer.Serialize(terrain, callback)
     end
     
     callback(10, "Getting terrain size...")
+    task.wait() -- Yield for performance
     
     -- Get terrain region and voxel data
     local success2, terrainData = Utils.SafeCall(function()
@@ -732,6 +753,7 @@ function TerrainSerializer.Serialize(terrain, callback)
     
     if success2 and terrainData then
         callback(30, "Reading voxel data...")
+        task.wait() -- Yield for performance
         
         -- Read terrain voxels using executor's terrain functions if available
         local readVoxels = Utils.GetFunction("readterrainvoxels") or Utils.GetFunction("ReadVoxels")
@@ -744,6 +766,7 @@ function TerrainSerializer.Serialize(terrain, callback)
             
             if success3 and voxelData then
                 callback(50, "Encoding voxel data...")
+                task.wait() -- Yield for performance
                 
                 -- Encode voxel data
                 local voxelString = TerrainSerializer.EncodeVoxels(voxelData, callback)
@@ -760,6 +783,7 @@ function TerrainSerializer.Serialize(terrain, callback)
             
             if success3 and smoothGrid then
                 callback(60, "Processing terrain region...")
+                task.wait() -- Yield for performance
                 -- Store region info for reference (corrected format)
                 table.insert(xmlParts, PropertySerializer.TypeHandlers["Vector3"]("RegionMin", terrainData.MinPos))
                 table.insert(xmlParts, PropertySerializer.TypeHandlers["Vector3"]("RegionMax", terrainData.MaxPos))
@@ -768,6 +792,7 @@ function TerrainSerializer.Serialize(terrain, callback)
     end
     
     callback(90, "Finalizing terrain...")
+    task.wait() -- Yield for performance
     
     table.insert(xmlParts, '</Properties>')
     table.insert(xmlParts, '</Item>')
@@ -1012,12 +1037,21 @@ function InstanceSerializer.SerializeToFile(instances, options, callback)
     table.insert(xmlParts, '<Meta name="ExplicitAutoJoints">true</Meta>')
     
     -- Serialize each root instance
+    local batchCount = 0
     for i, instance in ipairs(instances) do
-        callback(5 + (i / #instances * 5), string.format("Starting: %s", instance.Name))
+        local xml = InstanceSerializer.Serialize(instance, options, function(p, s)
+            callback(10 + (p / 100 * 80), s)
+        end, 0)
         
-        local instanceXml = InstanceSerializer.Serialize(instance, options, callback)
-        if instanceXml and #instanceXml > 0 then
-            table.insert(xmlParts, instanceXml)
+        if xml and #xml > 0 then
+            table.insert(xmlParts, xml)
+        end
+        
+        -- Anti-detection/Anti-lag yielding
+        batchCount = batchCount + 1
+        if batchCount >= 50 then
+            batchCount = 0
+            task.wait()
         end
     end
     
@@ -1486,49 +1520,47 @@ App.Settings = {
 
 --- Initialize the application
 function App.Init()
-    -- Wait for LocalPlayer
+    -- Wait for LocalPlayer safely
     if not Players.LocalPlayer then
-        Players:GetPropertyChangedSignal("LocalPlayer"):Wait()
+        repeat task.wait() until Players.LocalPlayer
     end
     
-    -- Clean up existing GUI in PlayerGui
+    -- Clean up existing GUIs using the random name tracking if possible
+    -- Or scan for common names for safety
     local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
-    for _, gui in ipairs(playerGui:GetChildren()) do
-        if gui.Name == "BaoSaveInstance" then gui:Destroy() end
-    end
-    
-    -- Check for gethui support (Synapse/ScriptWare/etc.)
     local getHui = Utils.GetFunction("gethui")
-    local coreGui = game:GetService("CoreGui")
     
-    -- Try to clean up from CoreGui/gethui if possible
-    if getHui then
-        pcall(function()
-            local hiddenUI = getHui()
-            if hiddenUI and hiddenUI:FindFirstChild("BaoSaveInstance") then
-                hiddenUI.BaoSaveInstance:Destroy()
+    local function SafeCleanup(container)
+        if not container then return end
+        for _, gui in ipairs(container:GetChildren()) do
+            if gui:IsA("ScreenGui") and (gui.Name == "BaoSaveInstance" or gui:FindFirstChild("MainFrame")) then
+                gui:Destroy()
             end
-        end)
+        end
     end
     
-    -- Also check CoreGui directly if we have access
-    pcall(function()
-        if coreGui:FindFirstChild("BaoSaveInstance") then
-            coreGui.BaoSaveInstance:Destroy()
-        end
-    end)
+    SafeCleanup(playerGui)
+    SafeCleanup(CoreGui)
+    if getHui then pcall(function() SafeCleanup(getHui()) end) end
     
     UI.Cleanup()
     
-    -- Create main ScreenGui
+    -- Create main ScreenGui with a random name for stealth
     App.GUI = Instance.new("ScreenGui")
-    App.GUI.Name = "BaoSaveInstance"
+    App.GUI.Name = currentGuiName
     App.GUI.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     App.GUI.ResetOnSpawn = false
     
-    -- Try to parent to gethui() first for protection
-    local parented = false
+    -- Hide GUI from some basic detection methods
+    pcall(function()
+        App.GUI.IgnoreGuiInset = true
+        if App.GUI:CanSetProperty("DisplayOrder") then
+            App.GUI.DisplayOrder = 999999
+        end
+    end)
     
+    -- Use gethui if available (best protection)
+    local parented = false
     if getHui then
         local success, hiddenUI = pcall(getHui)
         if success and hiddenUI then
@@ -1537,15 +1569,20 @@ function App.Init()
         end
     end
     
-    -- Fallback to PlayerGui
     if not parented then
-        App.GUI.Parent = playerGui
+        -- Fallback to CoreGui or PlayerGui
+        pcall(function()
+            App.GUI.Parent = CoreGui
+            parented = true
+        end)
+        
+        if not parented then
+            App.GUI.Parent = playerGui
+        end
     end
     
     App.CreateMainWindow()
-    
-    -- Print success message to console
-    print("BaoSaveInstance GUI Loaded!")
+    print("BaoSaveInstance [" .. currentGuiName .. "] Loaded!")
 end
 
 --- Create the main window
@@ -2030,6 +2067,8 @@ function App.DecompileFullGame()
                 TestService,
                 game:GetService("TextChatService"),
                 game:GetService("VoiceChatService"),
+                game:GetService("ServerScriptService"),
+                game:GetService("ServerStorage"),
             }
             
             for _, service in ipairs(servicesToSave) do
@@ -2094,6 +2133,8 @@ function App.DecompileModels()
                 SoundService,
                 Chat,
                 game:GetService("TextChatService"),
+                game:GetService("ServerScriptService"),
+                game:GetService("ServerStorage"),
             }
             
             for _, service in ipairs(services) do
@@ -2220,3 +2261,5 @@ print([[
 
 -- Return the App for external access if needed
 return App
+
+end -- End of encapsulation block
