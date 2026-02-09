@@ -819,10 +819,14 @@ function InstanceSerializer.Serialize(instance, options, callback, depth)
         end
     end
     
-    -- Skip terrain if option is disabled (terrain handled separately)
-    if not options.IncludeTerrain and instance:IsA("Terrain") then
-        InstanceSerializer.Stats.SkippedInstances = InstanceSerializer.Stats.SkippedInstances + 1
-        return ""
+    -- Handle Terrain specially (nested in Workspace)
+    if instance:IsA("Terrain") then
+        if options.IncludeTerrain then
+            return TerrainSerializer.Serialize(instance, callback)
+        else
+            InstanceSerializer.Stats.SkippedInstances = InstanceSerializer.Stats.SkippedInstances + 1
+            return ""
+        end
     end
     
     local xmlParts = {}
@@ -937,16 +941,8 @@ function InstanceSerializer.SerializeToFile(instances, options, callback)
         end
     end
     
-    -- Handle terrain separately if included
-    if options.IncludeTerrain then
-        callback(90, "Processing terrain...")
-        local terrainXml = TerrainSerializer.Serialize(Workspace.Terrain, function(p, s)
-            callback(90 + (p / 100 * 8), s)
-        end)
-        if terrainXml and #terrainXml > 0 then
-            table.insert(xmlParts, terrainXml)
-        end
-    end
+    -- Terrain is now handled inside InstanceSerializer.Serialize as a child of Workspace
+    -- Separate serialization block removed to prevent duplicates
     
     -- Close root element
     table.insert(xmlParts, '</roblox>')
