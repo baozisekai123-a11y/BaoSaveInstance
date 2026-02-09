@@ -17,25 +17,31 @@ do -- Encapsulate the script to prevent environment leakage
 --=============================================================================
 -- SERVICES
 --=============================================================================
-local Players = game:GetService("Players")
-local Workspace = game:GetService("Workspace")
-local CoreGui = game:GetService("CoreGui")
-local TweenService = game:GetService("TweenService")
-local HttpService = game:GetService("HttpService")
-local Debris = game:GetService("Debris")
-local Lighting = game:GetService("Lighting")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local ReplicatedFirst = game:GetService("ReplicatedFirst")
-local StarterGui = game:GetService("StarterGui")
-local StarterPack = game:GetService("StarterPack")
-local StarterPlayer = game:GetService("StarterPlayer")
-local Teams = game:GetService("Teams")
-local SoundService = game:GetService("SoundService")
-local Chat = game:GetService("Chat")
-local LocalizationService = game:GetService("LocalizationService")
-local TestService = game:GetService("TestService")
-local UserInputService = game:GetService("UserInputService")
-local RunService = game:GetService("RunService")
+local getService = game.GetService
+local function GetService(name)
+    local cloneref = (getfenv().cloneref or getfenv().cloneref_old or function(i) return i end)
+    return cloneref(getService(game, name))
+end
+
+local Players = GetService("Players")
+local Workspace = GetService("Workspace")
+local CoreGui = GetService("CoreGui")
+local TweenService = GetService("TweenService")
+local HttpService = GetService("HttpService")
+local Debris = GetService("Debris")
+local Lighting = GetService("Lighting")
+local ReplicatedStorage = GetService("ReplicatedStorage")
+local ReplicatedFirst = GetService("ReplicatedFirst")
+local StarterGui = GetService("StarterGui")
+local StarterPack = GetService("StarterPack")
+local StarterPlayer = GetService("StarterPlayer")
+local Teams = GetService("Teams")
+local SoundService = GetService("SoundService")
+local Chat = GetService("Chat")
+local LocalizationService = GetService("LocalizationService")
+local TestService = GetService("TestService")
+local UserInputService = GetService("UserInputService")
+local RunService = GetService("RunService")
 
 --=============================================================================
 -- CONFIGURATION
@@ -142,6 +148,15 @@ function Utils.DeepClone(tbl)
     return copy
 end
 
+--- Safely handle NaN and Inf numbers for XML
+function Utils.SafeNumber(n)
+    if typeof(n) ~= "number" then return 0 end
+    if n ~= n or n == math.huge or n == -math.huge then
+        return 0
+    end
+    return n
+end
+
 --- Generate a unique random string for stealth
 function Utils.GenerateRandomName()
     local chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
@@ -203,10 +218,10 @@ PropertySerializer.TypeHandlers = {
     end,
     
     ["number"] = function(name, value)
+        value = Utils.SafeNumber(value)
         if value == math.floor(value) then
             return string.format('<int name="%s">%d</int>', Utils.EscapeXML(name), value)
         else
-            -- Use 15+ digits of precision for critical coordinates
             return string.format('<float name="%s">%.17g</float>', Utils.EscapeXML(name), value)
         end
     end,
@@ -217,12 +232,12 @@ PropertySerializer.TypeHandlers = {
     
     ["Vector3"] = function(name, value)
         return string.format('<Vector3 name="%s"><X>%.17g</X><Y>%.17g</Y><Z>%.17g</Z></Vector3>',
-            Utils.EscapeXML(name), value.X, value.Y, value.Z)
+            Utils.EscapeXML(name), Utils.SafeNumber(value.X), Utils.SafeNumber(value.Y), Utils.SafeNumber(value.Z))
     end,
     
     ["Vector2"] = function(name, value)
         return string.format('<Vector2 name="%s"><X>%.17g</X><Y>%.17g</Y></Vector2>',
-            Utils.EscapeXML(name), value.X, value.Y)
+            Utils.EscapeXML(name), Utils.SafeNumber(value.X), Utils.SafeNumber(value.Y))
     end,
     
     ["CFrame"] = function(name, value)
@@ -234,7 +249,7 @@ PropertySerializer.TypeHandlers = {
         
         local xml = {}
         for i, fmt in ipairs(parts) do
-            table.insert(xml, string.format(fmt, components[i]))
+            table.insert(xml, string.format(fmt, Utils.SafeNumber(components[i])))
         end
         
         return string.format('<CoordinateFrame name="%s">%s</CoordinateFrame>',
@@ -370,6 +385,7 @@ PropertySerializer.SkipClasses = {
     ["PlayerGui"] = true,
     ["Backpack"] = true,
     ["CoreGui"] = true,
+    ["Camera"] = true, -- Prevent ghosting issues
 }
 
 --- Serialize a property value to XML
@@ -1653,9 +1669,8 @@ function App.Init()
     -- Hide GUI from some basic detection methods
     pcall(function()
         App.GUI.IgnoreGuiInset = true
-        if App.GUI:CanSetProperty("DisplayOrder") then
-            App.GUI.DisplayOrder = 999999
-        end
+        -- Set DisplayOrder safely without using non-standard methods
+        App.GUI.DisplayOrder = 999999
     end)
     
     -- Use gethui if available (best protection)
