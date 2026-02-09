@@ -361,6 +361,12 @@ function PropertySerializer.SerializeProperty(name, value)
         return string.format('<Ref name="%s">%s</Ref>', Utils.EscapeXML(name), Utils.GetRefId(value))
     end
     
+    -- Handle BinaryString properties (like ChildData)
+    if name == "ChildData" or name == "MeshData" or name == "TerrainData" then
+        return string.format('<BinaryString name="%s"><![CDATA[%s]]></BinaryString>',
+            Utils.EscapeXML(name), tostring(value))
+    end
+    
     return nil
 end
 
@@ -371,7 +377,6 @@ function PropertySerializer.GetProperties(instance)
     local properties = {}
     
     -- 1. Always get known properties first (Base Layer)
-    -- This ensures we never lose critical data like Name, Position, Size even if getproperties fails
     local success, knownProps = Utils.SafeCall(function()
         return PropertySerializer.GetKnownProperties(instance)
     end)
@@ -384,20 +389,41 @@ function PropertySerializer.GetProperties(instance)
     
     -- 2. Try to get executor properties (Enhancement Layer)
     local getProps = Utils.GetFunction("getproperties")
-    if getProps then
+    local getHiddenProps = Utils.GetFunction("gethiddenproperties")
+    
+    if getHiddenProps then
+        local success, execProps = Utils.SafeCall(function()
+            return getHiddenProps(instance)
+        end)
+        if success and execProps then
+            for k, v in pairs(execProps) do
+                properties[k] = v
+            end
+        end
+    elseif getProps then
         local success, execProps = Utils.SafeCall(function()
             return getProps(instance)
         end)
-        
         if success and execProps then
             for k, v in pairs(execProps) do
-                -- Overwrite or add executor properties
                 properties[k] = v
             end
         end
     end
     
-    -- 3. ALWAYS Ensure Name is present (Critical Fallback)
+    -- 3. DEEP FETCH: Explicitly try to get critical hidden properties for Models/Unions
+    if instance:IsA("UnionOperation") then
+        local getHidden = Utils.GetFunction("gethiddenproperty")
+        if getHidden then
+            local success, childData = Utils.SafeCall(function() return getHidden(instance, "ChildData") end)
+            if success and childData then properties["ChildData"] = childData end
+            
+            local success2, meshData = Utils.SafeCall(function() return getHidden(instance, "MeshData") end)
+            if success2 and meshData then properties["MeshData"] = meshData end
+        end
+    end
+    
+    -- 4. ALWAYS Ensure Name is present (Critical Fallback)
     if not properties["Name"] then
         local success, name = Utils.SafeCall(function() return instance.Name end)
         if success then properties["Name"] = name end
@@ -412,11 +438,22 @@ PropertySerializer.KnownClassProperties = {
         "Name", "Anchored", "CanCollide", "CanTouch", "CanQuery", "CastShadow",
         "Color", "Material", "MaterialVariant", "Reflectance", "Transparency",
         "Size", "CFrame", "Position", "Orientation", "Locked", "Massless",
-        "RootPriority", "CustomPhysicalProperties", "CollisionGroup"
+        "RootPriority", "CustomPhysicalProperties", "CollisionGroup", "PivotOffset",
+        "EnableFluidForces", "ReceiveAge"
     },
     ["Part"] = {"Shape"},
-    ["MeshPart"] = {"MeshId", "TextureID", "CollisionFidelity", "RenderFidelity"},
-    ["UnionOperation"] = {"UsePartColor", "CollisionFidelity", "RenderFidelity"},
+    ["MeshPart"] = {
+        "MeshId", "TextureID", "CollisionFidelity", "RenderFidelity", 
+        "DoubleSided", "FluidFidelity", "InitialSize", "HasSkinnedMesh"
+    },
+    ["UnionOperation"] = {
+        "UsePartColor", "CollisionFidelity", "RenderFidelity", 
+        "ChildData", "MeshData", "HasAnisotropicTangentSpace"
+    },
+    ["SpecialMesh"] = {"MeshId", "TextureId", "Scale", "Offset", "MeshType", "VertexColor"},
+    ["BlockMesh"] = {"Scale", "Offset"},
+    ["CylinderMesh"] = {"Scale", "Offset"},
+    ["FileMesh"] = {"MeshId", "TextureId", "Scale", "Offset"},
     ["WedgePart"] = {},
     ["CornerWedgePart"] = {},
     ["TrussPart"] = {},
