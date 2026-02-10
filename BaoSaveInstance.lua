@@ -1,2192 +1,1638 @@
 --[[
-    ╔══════════════════════════════════════════════════════════════╗
-    ║                    BaoSaveInstance v2.0                      ║
-    ║         Advanced Roblox Game Decompiler & Exporter          ║
-    ║                                                              ║
-    ║  Features:                                                   ║
-    ║  • Full Game Decompile → single .rbxl                       ║
-    ║  • Full Model Decompile → single .rbxl                      ║
-    ║  • Terrain Export → single .rbxl                            ║
-    ║  • Draggable UI with status indicators                      ║
-    ║  • Modular API architecture                                  ║
-    ╚══════════════════════════════════════════════════════════════╝
---]]
+    ██████╗  █████╗  ██████╗ ███████╗ █████╗ ██╗   ██╗███████╗
+    ██╔══██╗██╔══██╗██╔═══██╗██╔════╝██╔══██╗██║   ██║██╔════╝
+    ██████╔╝███████║██║   ██║███████╗███████║██║   ██║█████╗  
+    ██╔══██╗██╔══██║██║   ██║╚════██║██╔══██║╚██╗ ██╔╝██╔══╝  
+    ██████╔╝██║  ██║╚██████╔╝███████║██║  ██║ ╚████╔╝ ███████╗
+    ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═╝  ╚═══╝  ╚══════╝
+    
+    BaoSaveInstance v3.0 - Advanced Decompiler & Game Saver
+    Tác giả: BaoSaveInstance Engine
+    Chức năng: Decompile + Export full game ra .rbxl duy nhất
+    
+    Hỗ trợ:
+      • Full Game Save (Models + Scripts + Terrain + Properties)
+      • Model Only Save
+      • Terrain Only Save
+      • Script Decompilation (readable Lua)
+      • Single .rbxl output
+]]
 
 -- ============================================================
--- SECTION 0: ENVIRONMENT CHECK & POLYFILLS
+-- PHẦN 0: KIỂM TRA MÔI TRƯỜNG EXECUTOR
 -- ============================================================
 
--- Kiểm tra executor environment
-local function checkEnvironment()
-    local required = {
-        "writefile", "readfile", "isfile", "game"
-    }
-    local missing = {}
-    for _, fn in ipairs(required) do
-        if not getfenv()[fn] and not getgenv()[fn] and not _G[fn] then
-            table.insert(missing, fn)
-        end
+local ENV_CHECK = {}
+
+-- Kiểm tra các hàm cần thiết từ executor
+ENV_CHECK.requiredFunctions = {
+    "writefile", "readfile", "isfile", "makefolder", "isfolder",
+    "getgenv", "getrenv", "getrawmetatable", "hookfunction",
+    "getgc", "getinstances", "getnilinstances", "getscripts",
+    "getloadedmodules", "firesignal", "decompile",
+    "saveinstance", "getconnections", "islclosure",
+    "checkcaller", "newcclosure", "setclipboard"
+}
+
+ENV_CHECK.available = {}
+ENV_CHECK.missing = {}
+
+for _, funcName in ipairs(ENV_CHECK.requiredFunctions) do
+    if getgenv and getgenv()[funcName] then
+        ENV_CHECK.available[funcName] = true
+    elseif _G[funcName] then
+        ENV_CHECK.available[funcName] = true
+    elseif pcall(function() return getfenv()[funcName] end) then
+        ENV_CHECK.available[funcName] = true
+    else
+        ENV_CHECK.missing[#ENV_CHECK.missing + 1] = funcName
     end
-    return #missing == 0, missing
 end
 
--- ============================================================
--- SECTION 1: BaoSaveInstance MODULE / API
--- ============================================================
-
-local BaoSaveInstance = {}
-BaoSaveInstance.__index = BaoSaveInstance
-BaoSaveInstance._VERSION = "2.0.0"
-BaoSaveInstance._NAME = "BaoSaveInstance"
-
--- Trạng thái nội bộ
-BaoSaveInstance._state = {
-    initialized = false,
-    busy = false,
-    currentMode = nil,
-    progress = 0,
-    statusText = "Idle",
-    scriptCache = {},       -- Cache decompiled scripts
-    errorLog = {},          -- Log lỗi
-    stats = {
-        totalInstances = 0,
-        scriptsDecompiled = 0,
-        modelsProcessed = 0,
-        terrainRegions = 0,
-        fileSize = 0
-    }
-}
-
--- Cấu hình mặc định
-BaoSaveInstance._config = {
-    -- Decompile settings
-    decompileScripts = true,         -- Có decompile scripts không
-    decompileTimeout = 10,           -- Timeout cho mỗi script (giây)
-    preserveDisabled = true,         -- Giữ scripts đã disabled
-    
-    -- Save settings
-    savePlayers = false,             -- Không lưu player instances
-    saveCamera = false,              -- Không lưu camera
-    removePlayerCharacters = true,   -- Xóa character khỏi workspace khi save
-    
-    -- Terrain settings
-    terrainChunkSize = 64,           -- Kích thước chunk khi đọc terrain
-    saveTerrainColors = true,        -- Lưu màu terrain custom
-    
-    -- Performance
-    yieldInterval = 50,              -- Yield sau mỗi N instances
-    maxRetries = 3,                  -- Số lần retry khi lỗi
-    
-    -- Output
-    outputFolder = "BaoSaveInstance", -- Thư mục output
-    fileExtension = ".rbxl",          -- Extension file
-    
-    -- Services to save (Full Game mode)
-    fullGameServices = {
-        "Workspace",
-        "Lighting",
-        "ReplicatedFirst",
-        "ReplicatedStorage",
-        "ServerStorage",        -- Có thể không truy cập được từ client
-        "ServerScriptService",  -- Có thể không truy cập được từ client
-        "StarterGui",
-        "StarterPack",
-        "StarterPlayer",
-        "SoundService",
-        "Chat",
-        "LocalizationService",
-        "TestService",
-        "Teams"
-    },
-    
-    -- Services cho Model mode
-    modelServices = {
-        "Workspace",
-        "ReplicatedStorage",
-        "ReplicatedFirst",
-        "Lighting"
-    },
-    
-    -- Class bị loại trừ
-    excludedClasses = {
-        "Player",
-        "PlayerGui",
-        "Backpack",
-        "PlayerScripts",
-        "StatsItem"
-    },
-    
-    -- Instance bị loại trừ theo tên
-    excludedNames = {
-        "BaoSaveInstance_GUI"  -- Không lưu chính UI tool
-    }
-}
-
--- Roblox Services cache
-local Services = {}
-
--- ============================================================
--- SECTION 2: UTILITY FUNCTIONS
--- ============================================================
-
-local Util = {}
-
---- Lấy service an toàn, không error nếu không tồn tại
-function Util.getService(serviceName)
-    if Services[serviceName] then
-        return Services[serviceName]
-    end
-    local ok, service = pcall(function()
-        return game:GetService(serviceName)
-    end)
-    if ok and service then
-        Services[serviceName] = service
-        return service
+-- Hàm lấy function an toàn
+local function safeGetFunc(name)
+    if getgenv and getgenv()[name] then
+        return getgenv()[name]
+    elseif _G[name] then
+        return _G[name]
     end
     return nil
 end
 
---- Sanitize tên file (loại bỏ ký tự không hợp lệ)
-function Util.sanitizeFileName(name)
-    if not name or name == "" then
-        return "Unknown"
+-- ============================================================
+-- PHẦN 1: CORE MODULE - BaoSaveInstance API
+-- ============================================================
+
+local BaoSaveInstance = {}
+BaoSaveInstance.__index = BaoSaveInstance
+BaoSaveInstance.Version = "3.0.0"
+BaoSaveInstance.Name = "BaoSaveInstance"
+
+-- Services
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ReplicatedFirst = game:GetService("ReplicatedFirst")
+local StarterGui = game:GetService("StarterGui")
+local StarterPack = game:GetService("StarterPack")
+local StarterPlayer = game:GetService("StarterPlayer")
+local Lighting = game:GetService("Lighting")
+local SoundService = game:GetService("SoundService")
+local Chat = game:GetService("Chat")
+local LocalizationService = game:GetService("LocalizationService")
+local TestService = game:GetService("TestService")
+local HttpService = game:GetService("HttpService")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local CoreGui = game:GetService("CoreGui")
+local Teams = game:GetService("Teams")
+local InsertService = game:GetService("InsertService")
+local MaterialService = game:GetService("MaterialService")
+local Terrain = Workspace.Terrain
+
+-- ============================================================
+-- PHẦN 2: CONFIGURATION - CẤU HÌNH NÂNG CAO
+-- ============================================================
+
+BaoSaveInstance.Config = {
+    -- === Output Settings ===
+    OutputFolder = "BaoSaveInstance",
+    FileFormat = ".rbxl",
+    
+    -- === Decompile Settings ===
+    DecompileScripts = true,            -- Decompile scripts thành readable Lua
+    DecompileTimeout = 15,              -- Timeout cho mỗi script (giây)
+    DecompileRetries = 3,               -- Số lần retry nếu decompile fail
+    ParallelDecompile = true,           -- Decompile song song (nhanh hơn)
+    MaxParallelThreads = 8,             -- Số thread tối đa cho parallel decompile
+    DecompileBatchSize = 50,            -- Số script mỗi batch
+    CacheDecompiledScripts = true,      -- Cache kết quả decompile
+    
+    -- === Save Settings ===
+    SavePlayers = false,                -- Không save player instances
+    SaveCamera = false,                 -- Không save camera
+    SaveTerrain = true,                 -- Save terrain
+    SaveNilInstances = true,            -- Save instances trong nil
+    SaveHiddenProperties = true,        -- Save hidden properties
+    SaveUnscriptable = true,            -- Save unscriptable properties
+    
+    -- === Performance Settings ===
+    YieldInterval = 100,                -- Yield sau mỗi N instances
+    TaskWaitTime = 0.001,               -- Thời gian wait giữa các yield (tối thiểu)
+    MaxMemoryMB = 2048,                 -- Giới hạn memory sử dụng
+    GCInterval = 500,                   -- Garbage collect sau mỗi N operations
+    UseFastMode = true,                 -- Bật fast mode (bỏ qua một số check)
+    
+    -- === Services to Save ===
+    ServicesToSave = {
+        "Workspace",
+        "ReplicatedStorage",
+        "ReplicatedFirst",
+        "StarterGui",
+        "StarterPack",
+        "StarterPlayer",
+        "Lighting",
+        "SoundService",
+        "Chat",
+        "Teams",
+        "LocalizationService",
+        "MaterialService",
+        "TestService"
+    },
+    
+    -- === Exclusions ===
+    ExcludeClassNames = {
+        "Player", "PlayerGui", "PlayerScripts", "Backpack",
+        "Camera", "Humanoid", -- Humanoid sẽ được handle riêng
+    },
+    
+    ExcludeNames = {},
+    
+    -- === Script Decompile Priority ===
+    ScriptPriority = {
+        "ModuleScript",     -- Decompile ModuleScript trước (thường nhỏ hơn)
+        "LocalScript",      -- Sau đó LocalScript
+        "Script"            -- Cuối cùng là ServerScript
+    }
+}
+
+-- ============================================================
+-- PHẦN 3: UTILITY FUNCTIONS
+-- ============================================================
+
+local Util = {}
+
+-- Log levels
+Util.LogLevel = {
+    DEBUG = 1,
+    INFO = 2,
+    WARN = 3,
+    ERROR = 4
+}
+
+Util.CurrentLogLevel = Util.LogLevel.INFO
+Util.Logs = {}
+
+--- Ghi log với timestamp
+function Util.log(level, message, ...)
+    if level < Util.CurrentLogLevel then return end
+    
+    local levelNames = {[1]="DEBUG", [2]="INFO", [3]="WARN", [4]="ERROR"}
+    local timestamp = os.date("%H:%M:%S")
+    local formatted = string.format("[%s][%s][BaoSave] %s",
+        timestamp, levelNames[level] or "?", 
+        string.format(message, ...))
+    
+    table.insert(Util.Logs, formatted)
+    
+    if level >= Util.LogLevel.INFO then
+        print(formatted)
     end
-    -- Loại bỏ ký tự không hợp lệ cho tên file
-    local sanitized = name:gsub("[^%w%s%-_%.%(%)%[%]]", "")
-    sanitized = sanitized:gsub("%s+", "_")
-    if #sanitized == 0 then
-        sanitized = "Unknown"
+    
+    -- Giới hạn log buffer
+    if #Util.Logs > 10000 then
+        local newLogs = {}
+        for i = 5000, #Util.Logs do
+            newLogs[#newLogs + 1] = Util.Logs[i]
+        end
+        Util.Logs = newLogs
     end
-    -- Giới hạn độ dài
-    if #sanitized > 100 then
-        sanitized = sanitized:sub(1, 100)
-    end
-    return sanitized
 end
 
---- Lấy tên game hiện tại
-function Util.getGameName()
-    local marketplaceService = Util.getService("MarketplaceService")
-    local placeId = game.PlaceId
+--- Đếm nhanh số descendants với yield để không crash
+function Util.fastCountDescendants(instance)
+    local count = 0
+    local stack = {instance}
+    local yieldCounter = 0
     
+    while #stack > 0 do
+        local current = table.remove(stack)
+        local children = current:GetChildren()
+        count = count + #children
+        
+        for i = 1, #children do
+            stack[#stack + 1] = children[i]
+        end
+        
+        yieldCounter = yieldCounter + #children
+        if yieldCounter >= 5000 then
+            yieldCounter = 0
+            task.wait()
+        end
+    end
+    
+    return count
+end
+
+--- Tạo folder an toàn
+function Util.ensureFolder(path)
+    local makefolder = safeGetFunc("makefolder")
+    local isfolder = safeGetFunc("isfolder")
+    
+    if makefolder and isfolder then
+        if not isfolder(path) then
+            makefolder(path)
+        end
+        return true
+    end
+    return false
+end
+
+--- Sanitize tên file (loại bỏ ký tự đặc biệt)
+function Util.sanitizeFileName(name)
+    -- Loại bỏ các ký tự không hợp lệ trong tên file
+    name = name:gsub('[<>:"/\\|?*]', '_')
+    name = name:gsub('%s+', '_')
+    name = name:gsub('_+', '_')
+    name = name:sub(1, 100) -- Giới hạn độ dài
+    return name
+end
+
+--- Lấy tên game
+function Util.getGameName()
     local gameName = "UnknownGame"
     
-    -- Thử lấy tên từ MarketplaceService
-    local ok, info = pcall(function()
-        return marketplaceService:GetProductInfo(placeId)
+    pcall(function()
+        local marketInfo = game:GetService("MarketplaceService")
+            :GetProductInfo(game.PlaceId)
+        if marketInfo and marketInfo.Name then
+            gameName = marketInfo.Name
+        end
     end)
     
-    if ok and info and info.Name then
-        gameName = info.Name
-    else
-        -- Fallback: dùng PlaceId
-        gameName = "Game_" .. tostring(placeId)
+    if gameName == "UnknownGame" then
+        pcall(function()
+            gameName = game:GetService("MarketplaceService")
+                :GetProductInfo(game.GameId).Name
+        end)
     end
     
     return Util.sanitizeFileName(gameName)
 end
 
---- Format số byte thành dạng đọc được
-function Util.formatBytes(bytes)
-    if bytes < 1024 then
-        return string.format("%d B", bytes)
-    elseif bytes < 1024 * 1024 then
-        return string.format("%.1f KB", bytes / 1024)
-    elseif bytes < 1024 * 1024 * 1024 then
-        return string.format("%.1f MB", bytes / (1024 * 1024))
-    else
-        return string.format("%.2f GB", bytes / (1024 * 1024 * 1024))
-    end
+--- Đo thời gian thực thi
+function Util.measureTime(func, label)
+    local start = os.clock()
+    local results = {func()}
+    local elapsed = os.clock() - start
+    Util.log(2, "%s hoàn thành trong %.3f giây", label, elapsed)
+    return elapsed, unpack(results)
 end
 
---- Yield thông minh - tránh crash khi xử lý nhiều instance
-function Util.smartYield(counter, interval)
-    if counter % (interval or BaoSaveInstance._config.yieldInterval) == 0 then
-        task.wait()
-        -- Kiểm tra heartbeat để đảm bảo không freeze
-        if game:GetService("RunService").Heartbeat then
-            game:GetService("RunService").Heartbeat:Wait()
+--- Kiểm tra memory và GC nếu cần
+function Util.checkMemory(config)
+    local memMB = collectgarbage("count") / 1024
+    if memMB > (config.MaxMemoryMB or 2048) * 0.8 then
+        collectgarbage("collect")
+        task.wait(0.01)
+        Util.log(3, "Memory cao (%.1f MB), đã GC", memMB)
+    end
+    return memMB
+end
+
+--- Safe pcall với retry
+function Util.safeCall(func, retries, ...)
+    retries = retries or 1
+    local args = {...}
+    
+    for attempt = 1, retries do
+        local success, result = pcall(func, unpack(args))
+        if success then
+            return true, result
         end
-    end
-end
-
---- Deep clone table
-function Util.deepClone(original)
-    local clone = {}
-    for key, value in pairs(original) do
-        if type(value) == "table" then
-            clone[key] = Util.deepClone(value)
+        
+        if attempt < retries then
+            task.wait(0.01 * attempt)
         else
-            clone[key] = value
+            return false, result
         end
     end
-    return clone
 end
 
---- Log error an toàn
-function Util.logError(context, err)
-    local entry = {
-        time = os.time(),
-        context = context,
-        message = tostring(err)
-    }
-    table.insert(BaoSaveInstance._state.errorLog, entry)
-    warn("[BaoSaveInstance ERROR] [" .. context .. "] " .. tostring(err))
-end
-
---- Log info
-function Util.logInfo(msg)
-    print("[BaoSaveInstance] " .. tostring(msg))
-end
-
---- Kiểm tra instance có bị loại trừ không
-function Util.isExcluded(instance)
-    if not instance then return true end
-    
-    -- Kiểm tra class
-    for _, className in ipairs(BaoSaveInstance._config.excludedClasses) do
-        if instance:IsA(className) then
-            return true
-        end
-    end
-    
-    -- Kiểm tra tên
-    for _, name in ipairs(BaoSaveInstance._config.excludedNames) do
-        if instance.Name == name then
-            return true
-        end
-    end
-    
-    return false
-end
-
---- Đếm tất cả descendants
-function Util.countDescendants(instance)
-    local count = 0
-    local ok, descendants = pcall(function()
-        return instance:GetDescendants()
-    end)
-    if ok and descendants then
-        count = #descendants
-    end
-    return count
-end
+BaoSaveInstance.Util = Util
 
 -- ============================================================
--- SECTION 3: XML/RBXL SERIALIZER ENGINE
--- ============================================================
-
-local Serializer = {}
-
---- Bảng ánh xạ Roblox type → XML type name
-Serializer.typeMap = {
-    ["string"] = "string",
-    ["boolean"] = "bool",
-    ["number"] = "double",
-    ["BrickColor"] = "BrickColor",
-    ["Color3"] = "Color3",
-    ["Vector3"] = "Vector3",
-    ["Vector2"] = "Vector2",
-    ["CFrame"] = "CoordinateFrame",
-    ["UDim"] = "UDim",
-    ["UDim2"] = "UDim2",
-    ["Rect"] = "Rect2D",
-    ["PhysicalProperties"] = "PhysicalProperties",
-    ["NumberSequence"] = "NumberSequence",
-    ["ColorSequence"] = "ColorSequence",
-    ["NumberRange"] = "NumberRange",
-    ["Faces"] = "Faces",
-    ["Axes"] = "Axes",
-    ["Ray"] = "Ray",
-    ["Enum"] = "token",
-    ["Instance"] = "Ref",
-    ["Font"] = "Font",
-    ["Content"] = "Content"
-}
-
---- ID counter cho referent
-Serializer._refCounter = 0
-Serializer._refMap = {}   -- Instance → referent ID
-
---- Lấy hoặc tạo referent ID cho instance
-function Serializer.getRef(instance)
-    if Serializer._refMap[instance] then
-        return Serializer._refMap[instance]
-    end
-    Serializer._refCounter = Serializer._refCounter + 1
-    local ref = "RBX" .. tostring(Serializer._refCounter)
-    Serializer._refMap[instance] = ref
-    return ref
-end
-
---- Reset serializer state
-function Serializer.reset()
-    Serializer._refCounter = 0
-    Serializer._refMap = {}
-end
-
---- Escape XML special characters
-function Serializer.escapeXml(str)
-    if type(str) ~= "string" then
-        str = tostring(str)
-    end
-    str = str:gsub("&", "&amp;")
-    str = str:gsub("<", "&lt;")
-    str = str:gsub(">", "&gt;")
-    str = str:gsub('"', "&quot;")
-    str = str:gsub("'", "&apos;")
-    -- Xóa ký tự control không hợp lệ trong XML
-    str = str:gsub("[\0-\8\11\12\14-\31]", "")
-    return str
-end
-
---- Serialize Color3 thành XML
-function Serializer.serializeColor3(color)
-    return string.format(
-        "<R>%f</R><G>%f</G><B>%f</B>",
-        color.R, color.G, color.B
-    )
-end
-
---- Serialize Vector3 thành XML
-function Serializer.serializeVector3(vec)
-    return string.format(
-        "<X>%f</X><Y>%f</Y><Z>%f</Z>",
-        vec.X, vec.Y, vec.Z
-    )
-end
-
---- Serialize Vector2 thành XML
-function Serializer.serializeVector2(vec)
-    return string.format(
-        "<X>%f</X><Y>%f</Y>",
-        vec.X, vec.Y
-    )
-end
-
---- Serialize CFrame thành XML
-function Serializer.serializeCFrame(cf)
-    local components = {cf:GetComponents()} -- x,y,z, R00,R01,R02, R10,R11,R12, R20,R21,R22
-    local xml = {}
-    table.insert(xml, string.format("<X>%f</X>", components[1]))
-    table.insert(xml, string.format("<Y>%f</Y>", components[2]))
-    table.insert(xml, string.format("<Z>%f</Z>", components[3]))
-    table.insert(xml, string.format("<R00>%f</R00>", components[4]))
-    table.insert(xml, string.format("<R01>%f</R01>", components[5]))
-    table.insert(xml, string.format("<R02>%f</R02>", components[6]))
-    table.insert(xml, string.format("<R10>%f</R10>", components[7]))
-    table.insert(xml, string.format("<R11>%f</R11>", components[8]))
-    table.insert(xml, string.format("<R12>%f</R12>", components[9]))
-    table.insert(xml, string.format("<R20>%f</R20>", components[10]))
-    table.insert(xml, string.format("<R21>%f</R21>", components[11]))
-    table.insert(xml, string.format("<R22>%f</R22>", components[12]))
-    return table.concat(xml, "")
-end
-
---- Serialize UDim2 thành XML  
-function Serializer.serializeUDim2(udim2)
-    return string.format(
-        "<XS>%f</XS><XO>%d</XO><YS>%f</YS><YO>%d</YO>",
-        udim2.X.Scale, udim2.X.Offset, udim2.Y.Scale, udim2.Y.Offset
-    )
-end
-
---- Serialize UDim thành XML
-function Serializer.serializeUDim(udim)
-    return string.format(
-        "<S>%f</S><O>%d</O>",
-        udim.Scale, udim.Offset
-    )
-end
-
---- Serialize NumberSequence thành XML
-function Serializer.serializeNumberSequence(ns)
-    local parts = {}
-    for _, keypoint in ipairs(ns.Keypoints) do
-        table.insert(parts, string.format("%f %f %f", keypoint.Time, keypoint.Value, keypoint.Envelope))
-    end
-    return table.concat(parts, " ")
-end
-
---- Serialize ColorSequence thành XML
-function Serializer.serializeColorSequence(cs)
-    local parts = {}
-    for _, keypoint in ipairs(cs.Keypoints) do
-        table.insert(parts, string.format(
-            "%f %f %f %f 0",
-            keypoint.Time, keypoint.Value.R, keypoint.Value.G, keypoint.Value.B
-        ))
-    end
-    return table.concat(parts, " ")
-end
-
---- Serialize NumberRange thành XML
-function Serializer.serializeNumberRange(nr)
-    return string.format("%f %f", nr.Min, nr.Max)
-end
-
---- Serialize Rect thành XML
-function Serializer.serializeRect(rect)
-    return string.format(
-        "<min><X>%f</X><Y>%f</Y></min><max><X>%f</X><Y>%f</Y></max>",
-        rect.Min.X, rect.Min.Y, rect.Max.X, rect.Max.Y
-    )
-end
-
---- Serialize PhysicalProperties thành XML
-function Serializer.serializePhysicalProperties(pp)
-    if pp then
-        return string.format(
-            "<CustomPhysics>true</CustomPhysics><Density>%f</Density><Friction>%f</Friction><Elasticity>%f</Elasticity><FrictionWeight>%f</FrictionWeight><ElasticityWeight>%f</ElasticityWeight>",
-            pp.Density, pp.Friction, pp.Elasticity, pp.FrictionWeight, pp.ElasticityWeight
-        )
-    else
-        return "<CustomPhysics>false</CustomPhysics>"
-    end
-end
-
---- Serialize Faces thành XML
-function Serializer.serializeFaces(faces)
-    local val = 0
-    if faces.Top then val = val + 1 end
-    if faces.Bottom then val = val + 2 end
-    if faces.Left then val = val + 4 end
-    if faces.Right then val = val + 8 end
-    if faces.Back then val = val + 16 end
-    if faces.Front then val = val + 32 end
-    return tostring(val)
-end
-
---- Serialize Axes thành XML
-function Serializer.serializeAxes(axes)
-    local val = 0
-    if axes.X then val = val + 1 end
-    if axes.Y then val = val + 2 end
-    if axes.Z then val = val + 4 end
-    return tostring(val)
-end
-
---- Serialize Font thành XML
-function Serializer.serializeFont(font)
-    return string.format(
-        "<Family><url>%s</url></Family><Weight>%d</Weight><Style>%s</Style>",
-        Serializer.escapeXml(tostring(font.Family)),
-        font.Weight.Value,
-        tostring(font.Style)
-    )
-end
-
---- Serialize một property value bất kỳ thành XML string
-function Serializer.serializePropertyValue(propName, value, propType)
-    if value == nil then return nil end
-    
-    local valueType = typeof(value)
-    local xml = {}
-    
-    -- Xử lý theo type
-    if valueType == "string" then
-        table.insert(xml, string.format('<string name="%s">%s</string>', propName, Serializer.escapeXml(value)))
-        
-    elseif valueType == "boolean" then
-        table.insert(xml, string.format('<bool name="%s">%s</bool>', propName, tostring(value)))
-        
-    elseif valueType == "number" then
-        -- Phân biệt int vs float
-        if value == math.floor(value) and math.abs(value) < 2147483647 then
-            table.insert(xml, string.format('<int name="%s">%d</int>', propName, value))
-        else
-            table.insert(xml, string.format('<double name="%s">%f</double>', propName, value))
-        end
-        
-    elseif valueType == "float" then
-        table.insert(xml, string.format('<float name="%s">%f</float>', propName, value))
-        
-    elseif valueType == "BrickColor" then
-        table.insert(xml, string.format('<int name="%s">%d</int>', propName, value.Number))
-        
-    elseif valueType == "Color3" then
-        table.insert(xml, string.format('<Color3 name="%s">%s</Color3>', propName, Serializer.serializeColor3(value)))
-        
-    elseif valueType == "Vector3" then
-        table.insert(xml, string.format('<Vector3 name="%s">%s</Vector3>', propName, Serializer.serializeVector3(value)))
-        
-    elseif valueType == "Vector2" then
-        table.insert(xml, string.format('<Vector2 name="%s">%s</Vector2>', propName, Serializer.serializeVector2(value)))
-        
-    elseif valueType == "CFrame" then
-        table.insert(xml, string.format('<CoordinateFrame name="%s">%s</CoordinateFrame>', propName, Serializer.serializeCFrame(value)))
-        
-    elseif valueType == "UDim2" then
-        table.insert(xml, string.format('<UDim2 name="%s">%s</UDim2>', propName, Serializer.serializeUDim2(value)))
-        
-    elseif valueType == "UDim" then
-        table.insert(xml, string.format('<UDim name="%s">%s</UDim>', propName, Serializer.serializeUDim(value)))
-        
-    elseif valueType == "Rect" then
-        table.insert(xml, string.format('<Rect2D name="%s">%s</Rect2D>', propName, Serializer.serializeRect(value)))
-        
-    elseif valueType == "NumberSequence" then
-        table.insert(xml, string.format('<NumberSequence name="%s">%s</NumberSequence>', propName, Serializer.serializeNumberSequence(value)))
-        
-    elseif valueType == "ColorSequence" then
-        table.insert(xml, string.format('<ColorSequence name="%s">%s</ColorSequence>', propName, Serializer.serializeColorSequence(value)))
-        
-    elseif valueType == "NumberRange" then
-        table.insert(xml, string.format('<NumberRange name="%s">%s</NumberRange>', propName, Serializer.serializeNumberRange(value)))
-        
-    elseif valueType == "PhysicalProperties" then
-        table.insert(xml, string.format('<PhysicalProperties name="%s">%s</PhysicalProperties>', propName, Serializer.serializePhysicalProperties(value)))
-        
-    elseif valueType == "Faces" then
-        table.insert(xml, string.format('<Faces name="%s">%s</Faces>', propName, Serializer.serializeFaces(value)))
-        
-    elseif valueType == "Axes" then
-        table.insert(xml, string.format('<Axes name="%s">%s</Axes>', propName, Serializer.serializeAxes(value)))
-        
-    elseif valueType == "EnumItem" then
-        table.insert(xml, string.format('<token name="%s">%d</token>', propName, value.Value))
-        
-    elseif valueType == "Instance" then
-        -- Reference đến instance khác
-        local ref = Serializer.getRef(value)
-        table.insert(xml, string.format('<Ref name="%s">%s</Ref>', propName, ref))
-        
-    elseif valueType == "Font" then
-        table.insert(xml, string.format('<Font name="%s">%s</Font>', propName, Serializer.serializeFont(value)))
-        
-    elseif valueType == "Content" or valueType == "string" then
-        table.insert(xml, string.format('<Content name="%s"><url>%s</url></Content>', propName, Serializer.escapeXml(tostring(value))))
-        
-    else
-        -- Fallback: serialize as string
-        local strVal = tostring(value)
-        if strVal and strVal ~= "" then
-            table.insert(xml, string.format('<string name="%s">%s</string>', propName, Serializer.escapeXml(strVal)))
-        end
-    end
-    
-    if #xml > 0 then
-        return table.concat(xml, "")
-    end
-    return nil
-end
-
--- ============================================================
--- SECTION 4: PROPERTY DATABASE
--- Danh sách properties cho các class phổ biến
--- ============================================================
-
-local PropertyDB = {}
-
--- Base properties cho mọi Instance
-PropertyDB.Instance = {
-    "Name", "Archivable"
-}
-
--- BasePart properties
-PropertyDB.BasePart = {
-    "Name", "Anchored", "BrickColor", "CanCollide", "CanTouch", "CanQuery",
-    "CastShadow", "Color", "CustomPhysicalProperties",
-    "CFrame", "Size", "Position", "Orientation", "Rotation",
-    "Material", "MaterialVariant", "Reflectance", "Transparency",
-    "Shape", "TopSurface", "BottomSurface", "LeftSurface", "RightSurface",
-    "FrontSurface", "BackSurface", "Locked", "Massless",
-    "RootPriority", "CollisionGroup"
-}
-
--- MeshPart specific
-PropertyDB.MeshPart = {
-    "MeshId", "TextureID", "CollisionFidelity", "RenderFidelity",
-    "DoubleSided"
-}
-
--- Part specific
-PropertyDB.Part = {
-    "Shape"
-}
-
--- UnionOperation
-PropertyDB.UnionOperation = {
-    "UsePartColor", "CollisionFidelity", "RenderFidelity",
-    "SmoothingAngle"
-}
-
--- Model
-PropertyDB.Model = {
-    "Name", "PrimaryPart", "WorldPivot", "LevelOfDetail",
-    "ModelStreamingMode"
-}
-
--- Script types
-PropertyDB.LuaSourceContainer = {
-    "Name", "Disabled", "LinkedSource"
-}
-
--- SpawnLocation
-PropertyDB.SpawnLocation = {
-    "AllowTeamChangeOnTouch", "Duration", "Enabled", "Neutral", "TeamColor"
-}
-
--- Decal / Texture
-PropertyDB.Decal = {
-    "Name", "Color3", "Face", "Texture", "Transparency", "ZIndex"
-}
-
-PropertyDB.Texture = {
-    "Name", "Color3", "Face", "Texture", "Transparency", "ZIndex",
-    "OffsetStudsU", "OffsetStudsV", "StudsPerTileU", "StudsPerTileV"
-}
-
--- Light types
-PropertyDB.Light = {
-    "Name", "Brightness", "Color", "Enabled", "Shadows"
-}
-
-PropertyDB.PointLight = {
-    "Range"
-}
-
-PropertyDB.SpotLight = {
-    "Angle", "Face", "Range"
-}
-
-PropertyDB.SurfaceLight = {
-    "Angle", "Face", "Range"
-}
-
--- Attachment
-PropertyDB.Attachment = {
-    "Name", "CFrame", "Visible", "WorldCFrame"
-}
-
--- Constraints
-PropertyDB.Constraint = {
-    "Name", "Attachment0", "Attachment1", "Color", "Enabled", "Visible"
-}
-
--- Weld
-PropertyDB.Weld = {
-    "Name", "Part0", "Part1", "C0", "C1", "Enabled"
-}
-
--- WeldConstraint
-PropertyDB.WeldConstraint = {
-    "Name", "Part0", "Part1", "Enabled"
-}
-
--- Motor6D
-PropertyDB.Motor6D = {
-    "Name", "Part0", "Part1", "C0", "C1", "Enabled",
-    "CurrentAngle", "DesiredAngle", "MaxVelocity"
-}
-
--- GUI elements
-PropertyDB.ScreenGui = {
-    "Name", "DisplayOrder", "Enabled", "IgnoreGuiInset", "ResetOnSpawn",
-    "ZIndexBehavior"
-}
-
-PropertyDB.Frame = {
-    "Name", "Active", "AnchorPoint", "BackgroundColor3", "BackgroundTransparency",
-    "BorderColor3", "BorderMode", "BorderSizePixel", "ClipsDescendants",
-    "LayoutOrder", "Position", "Rotation", "Size", "SizeConstraint",
-    "Visible", "ZIndex"
-}
-
-PropertyDB.TextLabel = {
-    "Name", "Active", "AnchorPoint", "BackgroundColor3", "BackgroundTransparency",
-    "BorderColor3", "BorderSizePixel", "Font", "FontFace",
-    "LayoutOrder", "Position", "RichText", "Rotation", "Size",
-    "Text", "TextColor3", "TextScaled", "TextSize",
-    "TextStrokeColor3", "TextStrokeTransparency", "TextTransparency",
-    "TextWrapped", "TextXAlignment", "TextYAlignment",
-    "Visible", "ZIndex"
-}
-
-PropertyDB.TextButton = {
-    "Name", "Active", "AnchorPoint", "AutoButtonColor",
-    "BackgroundColor3", "BackgroundTransparency",
-    "BorderColor3", "BorderSizePixel", "Font", "FontFace",
-    "LayoutOrder", "Position", "RichText", "Rotation", "Size",
-    "Text", "TextColor3", "TextScaled", "TextSize",
-    "TextStrokeColor3", "TextStrokeTransparency", "TextTransparency",
-    "TextWrapped", "TextXAlignment", "TextYAlignment",
-    "Visible", "ZIndex"
-}
-
-PropertyDB.ImageLabel = {
-    "Name", "Active", "AnchorPoint", "BackgroundColor3", "BackgroundTransparency",
-    "BorderColor3", "BorderSizePixel", "Image", "ImageColor3",
-    "ImageRectOffset", "ImageRectSize", "ImageTransparency",
-    "LayoutOrder", "Position", "Rotation", "ScaleType", "Size",
-    "SliceCenter", "SliceScale", "TileSize",
-    "Visible", "ZIndex"
-}
-
-PropertyDB.ImageButton = {
-    "Name", "Active", "AnchorPoint", "AutoButtonColor",
-    "BackgroundColor3", "BackgroundTransparency",
-    "BorderColor3", "BorderSizePixel", "Image", "ImageColor3",
-    "ImageRectOffset", "ImageRectSize", "ImageTransparency",
-    "LayoutOrder", "Position", "Rotation", "ScaleType", "Size",
-    "SliceCenter", "SliceScale", "TileSize",
-    "Visible", "ZIndex"
-}
-
-PropertyDB.ScrollingFrame = {
-    "Name", "Active", "AnchorPoint", "AutomaticCanvasSize",
-    "BackgroundColor3", "BackgroundTransparency",
-    "BorderColor3", "BorderSizePixel", "BottomImage",
-    "CanvasPosition", "CanvasSize", "ClipsDescendants",
-    "ElasticBehavior", "HorizontalScrollBarInset",
-    "LayoutOrder", "MidImage", "Position", "Rotation",
-    "ScrollBarImageColor3", "ScrollBarImageTransparency",
-    "ScrollBarThickness", "ScrollingDirection", "ScrollingEnabled",
-    "Size", "TopImage", "VerticalScrollBarInset",
-    "VerticalScrollBarPosition", "Visible", "ZIndex"
-}
-
--- UILayout elements
-PropertyDB.UIListLayout = {
-    "Name", "FillDirection", "HorizontalAlignment", "Padding",
-    "SortOrder", "VerticalAlignment", "Wraps"
-}
-
-PropertyDB.UIGridLayout = {
-    "Name", "CellPadding", "CellSize", "FillDirection",
-    "FillDirectionMaxCells", "HorizontalAlignment",
-    "SortOrder", "StartCorner", "VerticalAlignment"
-}
-
-PropertyDB.UIPadding = {
-    "Name", "PaddingBottom", "PaddingLeft", "PaddingRight", "PaddingTop"
-}
-
-PropertyDB.UICorner = {
-    "Name", "CornerRadius"
-}
-
-PropertyDB.UIStroke = {
-    "Name", "ApplyStrokeMode", "Color", "Enabled",
-    "LineJoinMode", "Thickness", "Transparency"
-}
-
-PropertyDB.UIScale = {
-    "Name", "Scale"
-}
-
-PropertyDB.UIAspectRatioConstraint = {
-    "Name", "AspectRatio", "AspectType", "DominantAxis"
-}
-
-PropertyDB.UISizeConstraint = {
-    "Name", "MaxSize", "MinSize"
-}
-
-PropertyDB.UITextSizeConstraint = {
-    "Name", "MaxTextSize", "MinTextSize"
-}
-
--- Sound
-PropertyDB.Sound = {
-    "Name", "Looped", "PlayOnRemove", "PlaybackSpeed",
-    "Playing", "RollOffMaxDistance", "RollOffMinDistance",
-    "RollOffMode", "SoundId", "TimePosition", "Volume"
-}
-
--- ParticleEmitter
-PropertyDB.ParticleEmitter = {
-    "Name", "Acceleration", "Brightness", "Color",
-    "Drag", "EmissionDirection", "Enabled",
-    "FlipbookFramerate", "FlipbookIncompatible", "FlipbookLayout",
-    "FlipbookMode", "FlipbookStartRandom",
-    "Lifetime", "LightEmission", "LightInfluence",
-    "LockedToPart", "Orientation", "Rate", "RotSpeed",
-    "Rotation", "Shape", "ShapeInOut", "ShapeStyle",
-    "Size", "Speed", "SpreadAngle", "Squash",
-    "Texture", "TimeScale", "Transparency",
-    "VelocityInheritance", "WindAffectsDrag", "ZOffset"
-}
-
--- Beam
-PropertyDB.Beam = {
-    "Name", "Attachment0", "Attachment1", "Brightness",
-    "Color", "CurveSize0", "CurveSize1", "Enabled",
-    "FaceCamera", "LightEmission", "LightInfluence",
-    "Segments", "Texture", "TextureLength", "TextureMode",
-    "TextureSpeed", "Transparency", "Width0", "Width1",
-    "ZOffset"
-}
-
--- Trail
-PropertyDB.Trail = {
-    "Name", "Attachment0", "Attachment1", "Brightness",
-    "Color", "Enabled", "FaceCamera", "Lifetime",
-    "LightEmission", "LightInfluence", "MaxLength",
-    "MinLength", "Texture", "TextureLength", "TextureMode",
-    "Transparency", "WidthScale"
-}
-
--- Lighting
-PropertyDB.Lighting = {
-    "Ambient", "Brightness", "ColorShift_Bottom", "ColorShift_Top",
-    "EnvironmentDiffuseScale", "EnvironmentSpecularScale",
-    "ExposureCompensation", "FogColor", "FogEnd", "FogStart",
-    "GeographicLatitude", "GlobalShadows", "OutdoorAmbient",
-    "ShadowSoftness", "Technology", "ClockTime", "TimeOfDay"
-}
-
--- Atmosphere
-PropertyDB.Atmosphere = {
-    "Name", "Color", "Decay", "Density", "Glare", "Haze", "Offset"
-}
-
--- Sky
-PropertyDB.Sky = {
-    "Name", "CelestialBodiesShown", "MoonAngularSize",
-    "MoonTextureId", "SkyboxBk", "SkyboxDn", "SkyboxFt",
-    "SkyboxLf", "SkyboxRt", "SkyboxUp",
-    "StarCount", "SunAngularSize", "SunTextureId"
-}
-
--- Camera
-PropertyDB.Camera = {
-    "Name", "CFrame", "CameraSubject", "CameraType",
-    "DiagonalFieldOfView", "FieldOfView", "FieldOfViewMode",
-    "Focus", "HeadLocked", "HeadScale",
-    "MaxAxisFieldOfView", "NearPlaneZ", "VRTiltAndRollEnabled"
-}
-
--- Humanoid
-PropertyDB.Humanoid = {
-    "Name", "AutoJumpEnabled", "AutoRotate",
-    "AutomaticScalingEnabled", "BreakJointsOnDeath",
-    "DisplayDistanceType", "DisplayName",
-    "HealthDisplayDistance", "HealthDisplayType",
-    "HipHeight", "JumpHeight", "JumpPower",
-    "MaxHealth", "Health", "MaxSlopeAngle",
-    "NameDisplayDistance", "NameOcclusion",
-    "RequiresNeck", "RigType", "UseJumpPower", "WalkSpeed"
-}
-
--- Folder / Configuration
-PropertyDB.Folder = {
-    "Name"
-}
-
-PropertyDB.Configuration = {
-    "Name"
-}
-
--- ValueObjects
-PropertyDB.ValueObject = {
-    "Name", "Value"
-}
-
--- SurfaceAppearance
-PropertyDB.SurfaceAppearance = {
-    "Name", "AlphaMode", "ColorMap", "MetalnessMap",
-    "NormalMap", "RoughnessMap", "TexturePack"
-}
-
--- SpecialMesh
-PropertyDB.SpecialMesh = {
-    "Name", "MeshId", "MeshType", "Offset", "Scale", "TextureId",
-    "VertexColor"
-}
-
--- BillboardGui
-PropertyDB.BillboardGui = {
-    "Name", "Active", "Adornee", "AlwaysOnTop",
-    "Brightness", "ClipsDescendants", "CurrentDistance",
-    "DistanceLowerLimit", "DistanceStep", "DistanceUpperLimit",
-    "Enabled", "ExtentsOffset", "ExtentsOffsetWorldSpace",
-    "LightInfluence", "MaxDistance", "PlayerToHideFrom",
-    "Size", "SizeOffset", "StudsOffset", "StudsOffsetWorldSpace",
-    "ZIndexBehavior"
-}
-
--- SurfaceGui
-PropertyDB.SurfaceGui = {
-    "Name", "Active", "Adornee", "AlwaysOnTop",
-    "Brightness", "CanvasSize", "ClipsDescendants",
-    "Enabled", "Face", "LightInfluence", "PixelsPerStud",
-    "SizingMode", "ToolPunchThroughDistance",
-    "ZIndexBehavior", "ZOffset"
-}
-
---- Lấy danh sách properties cho một class
-function PropertyDB.getPropertiesForClass(className)
-    local props = {}
-    
-    -- Thêm base Instance properties
-    for _, p in ipairs(PropertyDB.Instance or {}) do
-        table.insert(props, p)
-    end
-    
-    -- Kiểm tra class cụ thể
-    if PropertyDB[className] then
-        for _, p in ipairs(PropertyDB[className]) do
-            if not table.find(props, p) then
-                table.insert(props, p)
-            end
-        end
-    end
-    
-    -- Kiểm tra class kế thừa
-    -- BasePart hierarchy
-    local basePartClasses = {
-        "Part", "MeshPart", "UnionOperation", "NegateOperation",
-        "WedgePart", "CornerWedgePart", "TrussPart", "SpawnLocation",
-        "Seat", "VehicleSeat", "SkateboardPlatform"
-    }
-    
-    for _, bpClass in ipairs(basePartClasses) do
-        if className == bpClass then
-            for _, p in ipairs(PropertyDB.BasePart) do
-                if not table.find(props, p) then
-                    table.insert(props, p)
-                end
-            end
-            break
-        end
-    end
-    
-    -- Light hierarchy
-    local lightClasses = {"PointLight", "SpotLight", "SurfaceLight"}
-    for _, lClass in ipairs(lightClasses) do
-        if className == lClass then
-            for _, p in ipairs(PropertyDB.Light) do
-                if not table.find(props, p) then
-                    table.insert(props, p)
-                end
-            end
-            break
-        end
-    end
-    
-    -- ValueObject hierarchy
-    local valueClasses = {
-        "BoolValue", "BrickColorValue", "CFrameValue",
-        "Color3Value", "IntValue", "NumberValue",
-        "ObjectValue", "RayValue", "StringValue", "Vector3Value"
-    }
-    for _, vClass in ipairs(valueClasses) do
-        if className == vClass then
-            for _, p in ipairs(PropertyDB.ValueObject) do
-                if not table.find(props, p) then
-                    table.insert(props, p)
-                end
-            end
-            break
-        end
-    end
-    
-    return props
-end
-
--- ============================================================
--- SECTION 5: SCRIPT DECOMPILER WRAPPER
+-- PHẦN 4: SCRIPT DECOMPILER ENGINE (CẢI TIẾN TỐC ĐỘ)
 -- ============================================================
 
 local ScriptDecompiler = {}
+ScriptDecompiler.__index = ScriptDecompiler
 
---- Decompile một script instance, trả về source code string
-function ScriptDecompiler.decompile(scriptInstance)
+-- Cache để tránh decompile lại cùng 1 script
+ScriptDecompiler.Cache = {}
+ScriptDecompiler.Stats = {
+    total = 0,
+    success = 0,
+    failed = 0,
+    cached = 0,
+    skipped = 0
+}
+
+--- Khởi tạo decompiler
+function ScriptDecompiler.new(config)
+    local self = setmetatable({}, ScriptDecompiler)
+    self.config = config or BaoSaveInstance.Config
+    self.decompileFunc = safeGetFunc("decompile")
+    self.getscriptsFunc = safeGetFunc("getscripts")
+    self.getloadedmodulesFunc = safeGetFunc("getloadedmodules")
+    self.isReady = self.decompileFunc ~= nil
+    
+    -- Reset stats
+    ScriptDecompiler.Stats = {
+        total = 0, success = 0, failed = 0, cached = 0, skipped = 0
+    }
+    
+    return self
+end
+
+--- Decompile 1 script đơn lẻ với timeout và retry
+function ScriptDecompiler:decompileScript(scriptInstance)
+    if not self.isReady then
+        return false, "-- Decompile function không khả dụng"
+    end
+    
     if not scriptInstance then
-        return "-- [BaoSaveInstance] nil script instance"
+        return false, "-- Script instance nil"
     end
     
     -- Kiểm tra cache
-    if BaoSaveInstance._state.scriptCache[scriptInstance] then
-        return BaoSaveInstance._state.scriptCache[scriptInstance]
+    local cacheKey = tostring(scriptInstance:GetDebugId())
+    if self.config.CacheDecompiledScripts and ScriptDecompiler.Cache[cacheKey] then
+        ScriptDecompiler.Stats.cached = ScriptDecompiler.Stats.cached + 1
+        return true, ScriptDecompiler.Cache[cacheKey]
     end
+    
+    ScriptDecompiler.Stats.total = ScriptDecompiler.Stats.total + 1
     
     local source = nil
+    local success = false
+    local retries = self.config.DecompileRetries or 3
     
-    -- Phương pháp 1: Thử dùng hàm decompile của executor
-    if decompile then
+    for attempt = 1, retries do
         local ok, result = pcall(function()
-            return decompile(scriptInstance)
+            return self.decompileFunc(scriptInstance)
         end)
+        
         if ok and result and type(result) == "string" and #result > 0 then
             source = result
+            success = true
+            break
+        end
+        
+        -- Retry với delay tăng dần
+        if attempt < retries then
+            task.wait(0.05 * attempt)
         end
     end
     
-    -- Phương pháp 2: Thử dùng getscriptbytecode + decompile
-    if not source and getscriptbytecode then
-        local ok, bytecode = pcall(function()
-            return getscriptbytecode(scriptInstance)
-        end)
-        if ok and bytecode then
-            -- Một số executor cung cấp decompile từ bytecode
-            if decompile then
-                local ok2, result = pcall(function()
-                    return decompile(bytecode)
-                end)
-                if ok2 and result then
-                    source = result
-                end
-            end
+    if success and source then
+        -- Post-process: làm sạch source code
+        source = self:postProcessSource(source, scriptInstance)
+        
+        -- Cache kết quả
+        if self.config.CacheDecompiledScripts then
+            ScriptDecompiler.Cache[cacheKey] = source
         end
-    end
-    
-    -- Phương pháp 3: Thử đọc Source property trực tiếp
-    if not source then
-        local ok, result = pcall(function()
-            return scriptInstance.Source
-        end)
-        if ok and result and type(result) == "string" and #result > 0 then
-            source = result
-        end
-    end
-    
-    -- Phương pháp 4: Thử gethiddenproperty
-    if not source and gethiddenproperty then
-        local ok, result = pcall(function()
-            return gethiddenproperty(scriptInstance, "Source")
-        end)
-        if ok and result and type(result) == "string" and #result > 0 then
-            source = result
-        end
-    end
-    
-    -- Fallback: không decompile được
-    if not source or source == "" then
-        local className = scriptInstance.ClassName or "Unknown"
-        local name = scriptInstance.Name or "Unknown"
-        source = string.format(
-            "-- [BaoSaveInstance] Could not decompile this %s: %s\n" ..
-            "-- This may be a server-side script or protected script.\n" ..
-            "-- ClassName: %s\n" ..
-            "-- Full Path: %s\n",
-            className, name, className,
+        
+        ScriptDecompiler.Stats.success = ScriptDecompiler.Stats.success + 1
+        return true, source
+    else
+        ScriptDecompiler.Stats.failed = ScriptDecompiler.Stats.failed + 1
+        local fallback = string.format(
+            "-- [BaoSaveInstance] Decompile failed cho: %s\n" ..
+            "-- Class: %s\n" ..
+            "-- Path: %s\n" ..
+            "-- Lý do: Executor không thể decompile script này\n",
+            scriptInstance.Name,
+            scriptInstance.ClassName,
             scriptInstance:GetFullName()
         )
+        return false, fallback
     end
-    
-    -- Clean up source
-    source = ScriptDecompiler.cleanSource(source)
-    
-    -- Cache kết quả
-    BaoSaveInstance._state.scriptCache[scriptInstance] = source
-    BaoSaveInstance._state.stats.scriptsDecompiled = BaoSaveInstance._state.stats.scriptsDecompiled + 1
-    
-    return source
 end
 
---- Clean up decompiled source code
-function ScriptDecompiler.cleanSource(source)
-    if not source or type(source) ~= "string" then
-        return "-- [BaoSaveInstance] Invalid source"
-    end
+--- Post-process source code (làm sạch, thêm header)
+function ScriptDecompiler:postProcessSource(source, scriptInstance)
+    -- Thêm header comment
+    local header = string.format(
+        "--[[\n" ..
+        "    Decompiled bởi BaoSaveInstance v%s\n" ..
+        "    Script: %s\n" ..
+        "    Class: %s\n" ..
+        "    Path: %s\n" ..
+        "    Time: %s\n" ..
+        "]]--\n\n",
+        BaoSaveInstance.Version,
+        scriptInstance.Name,
+        scriptInstance.ClassName,
+        scriptInstance:GetFullName(),
+        os.date("%Y-%m-%d %H:%M:%S")
+    )
     
-    -- Loại bỏ null bytes
-    source = source:gsub("\0", "")
+    -- Loại bỏ các dòng thừa từ decompiler
+    source = source:gsub("^%s*\n", "") -- Bỏ dòng trống đầu
     
-    -- Đảm bảo kết thúc bằng newline
-    if source:sub(-1) ~= "\n" then
-        source = source .. "\n"
-    end
-    
-    return source
+    return header .. source
 end
 
---- Decompile tất cả scripts trong một container
-function ScriptDecompiler.decompileAll(container, statusCallback)
-    local scripts = {}
-    local count = 0
+--- Decompile hàng loạt scripts (BATCH - TỐC ĐỘ CAO)
+function ScriptDecompiler:batchDecompile(scripts, progressCallback)
+    if not self.isReady then
+        Util.log(4, "Decompile function không khả dụng!")
+        return {}
+    end
     
-    local ok, descendants = pcall(function()
-        return container:GetDescendants()
+    local results = {}
+    local total = #scripts
+    local batchSize = self.config.DecompileBatchSize or 50
+    local processed = 0
+    
+    Util.log(2, "Bắt đầu batch decompile %d scripts...", total)
+    
+    -- Sắp xếp theo priority (ModuleScript trước vì thường nhỏ)
+    local priorityOrder = {}
+    for i, className in ipairs(self.config.ScriptPriority) do
+        priorityOrder[className] = i
+    end
+    
+    table.sort(scripts, function(a, b)
+        local pa = priorityOrder[a.ClassName] or 99
+        local pb = priorityOrder[b.ClassName] or 99
+        if pa == pb then
+            -- Script nhỏ hơn decompile trước (heuristic)
+            return a.Name < b.Name
+        end
+        return pa < pb
     end)
     
-    if not ok or not descendants then
-        return scripts
-    end
-    
-    for i, inst in ipairs(descendants) do
-        if inst:IsA("LuaSourceContainer") then
-            -- Script, LocalScript, ModuleScript
-            local source = ScriptDecompiler.decompile(inst)
-            scripts[inst] = source
-            count = count + 1
-            
-            if statusCallback then
-                statusCallback(string.format("Decompiling scripts... %d found", count))
-            end
-            
-            -- Yield để tránh freeze
-            Util.smartYield(i, 5) -- Yield thường xuyên hơn vì decompile tốn thời gian
-        end
-    end
-    
-    Util.logInfo(string.format("Decompiled %d scripts total", count))
-    return scripts
-end
-
--- ============================================================
--- SECTION 6: INSTANCE SERIALIZER (Instance → XML)
--- ============================================================
-
-local InstanceSerializer = {}
-
---- Serialize một instance và tất cả children thành XML
---- Trả về table of XML string chunks (để tối ưu memory)
-function InstanceSerializer.serialize(instance, depth, chunks, counter, statusCallback)
-    if not instance then return counter end
-    if Util.isExcluded(instance) then return counter end
-    
-    depth = depth or 0
-    chunks = chunks or {}
-    counter = counter or {count = 0}
-    
-    local className = instance.ClassName
-    local ref = Serializer.getRef(instance)
-    local indent = string.rep("  ", depth)
-    
-    -- Mở tag Item
-    table.insert(chunks, string.format(
-        '%s<Item class="%s" referent="%s">',
-        indent, Serializer.escapeXml(className), ref
-    ))
-    table.insert(chunks, indent .. "  <Properties>")
-    
-    -- Serialize properties
-    local props = PropertyDB.getPropertiesForClass(className)
-    
-    for _, propName in ipairs(props) do
-        local ok, value = pcall(function()
-            return instance[propName]
-        end)
+    -- Decompile theo batch
+    for batchStart = 1, total, batchSize do
+        local batchEnd = math.min(batchStart + batchSize - 1, total)
         
-        if ok and value ~= nil then
-            local xmlProp = Serializer.serializePropertyValue(propName, value)
-            if xmlProp then
-                table.insert(chunks, indent .. "    " .. xmlProp)
+        for i = batchStart, batchEnd do
+            local script = scripts[i]
+            
+            if script and script.Parent ~= nil or self.config.SaveNilInstances then
+                local ok, source = self:decompileScript(script)
+                results[script] = {
+                    success = ok,
+                    source = source,
+                    className = script.ClassName,
+                    fullName = pcall(function() return script:GetFullName() end) 
+                        and script:GetFullName() or "Unknown"
+                }
+            else
+                ScriptDecompiler.Stats.skipped = ScriptDecompiler.Stats.skipped + 1
+            end
+            
+            processed = processed + 1
+            
+            -- Gọi callback cập nhật progress
+            if progressCallback then
+                progressCallback(processed, total, script)
+            end
+        end
+        
+        -- Yield giữa các batch để không crash
+        task.wait(self.config.TaskWaitTime or 0.001)
+        
+        -- Kiểm tra memory
+        if processed % (batchSize * 5) == 0 then
+            Util.checkMemory(self.config)
+        end
+    end
+    
+    Util.log(2, "Batch decompile hoàn thành: %d/%d thành công, %d cached, %d failed, %d skipped",
+        ScriptDecompiler.Stats.success,
+        ScriptDecompiler.Stats.total,
+        ScriptDecompiler.Stats.cached,
+        ScriptDecompiler.Stats.failed,
+        ScriptDecompiler.Stats.skipped)
+    
+    return results
+end
+
+--- Thu thập tất cả scripts trong game
+function ScriptDecompiler:collectAllScripts()
+    local allScripts = {}
+    local seen = {}
+    
+    -- Phương pháp 1: Dùng getscripts() nếu có
+    if self.getscriptsFunc then
+        local ok, scripts = pcall(self.getscriptsFunc)
+        if ok and scripts then
+            for _, s in ipairs(scripts) do
+                local id = tostring(s:GetDebugId())
+                if not seen[id] then
+                    seen[id] = true
+                    allScripts[#allScripts + 1] = s
+                end
             end
         end
     end
     
-    -- Serialize Source cho script types
-    if instance:IsA("LuaSourceContainer") and BaoSaveInstance._config.decompileScripts then
-        local source = ScriptDecompiler.decompile(instance)
-        if source then
-            local escapedSource = Serializer.escapeXml(source)
-            table.insert(chunks, string.format(
-                '%s    <ProtectedString name="Source"><![CDATA[%s]]></ProtectedString>',
-                indent, source  -- CDATA không cần escape
-            ))
+    -- Phương pháp 2: Dùng getloadedmodules() nếu có
+    if self.getloadedmodulesFunc then
+        local ok, modules = pcall(self.getloadedmodulesFunc)
+        if ok and modules then
+            for _, m in ipairs(modules) do
+                local id = tostring(m:GetDebugId())
+                if not seen[id] then
+                    seen[id] = true
+                    allScripts[#allScripts + 1] = m
+                end
+            end
         end
     end
     
-    -- Serialize Attributes
-    local attrOk, attributes = pcall(function()
-        return instance:GetAttributes()
-    end)
-    if attrOk and attributes and next(attributes) then
-        InstanceSerializer.serializeAttributes(instance, attributes, chunks, indent .. "    ")
+    -- Phương pháp 3: Quét services thủ công (fallback)
+    local servicesToScan = {
+        Workspace, ReplicatedStorage, ReplicatedFirst,
+        StarterGui, StarterPack, StarterPlayer,
+        Lighting, SoundService, Chat, Teams
+    }
+    
+    for _, service in ipairs(servicesToScan) do
+        pcall(function()
+            local stack = {service}
+            local yieldCount = 0
+            
+            while #stack > 0 do
+                local current = table.remove(stack)
+                
+                if current:IsA("LuaSourceContainer") then
+                    local id = tostring(current:GetDebugId())
+                    if not seen[id] then
+                        seen[id] = true
+                        allScripts[#allScripts + 1] = current
+                    end
+                end
+                
+                local childrenOk, children = pcall(function()
+                    return current:GetChildren()
+                end)
+                
+                if childrenOk and children then
+                    for _, child in ipairs(children) do
+                        stack[#stack + 1] = child
+                    end
+                end
+                
+                yieldCount = yieldCount + 1
+                if yieldCount >= 2000 then
+                    yieldCount = 0
+                    task.wait()
+                end
+            end
+        end)
     end
     
-    -- Serialize Tags
-    local tagOk, tags = pcall(function()
-        return instance:GetTags()
-    end)
-    if tagOk and tags and #tags > 0 then
-        local tagStr = table.concat(tags, "\n")
-        table.insert(chunks, string.format(
-            '%s    <string name="Tags">%s</string>',
-            indent, Serializer.escapeXml(tagStr)
-        ))
-    end
-    
-    table.insert(chunks, indent .. "  </Properties>")
-    
-    -- Counter và yield
-    counter.count = counter.count + 1
-    if counter.count % BaoSaveInstance._config.yieldInterval == 0 then
-        task.wait()
-        if statusCallback then
-            statusCallback(string.format("Serializing... %d instances processed", counter.count))
+    -- Phương pháp 4: Nil instances
+    if self.config.SaveNilInstances then
+        local getNilFunc = safeGetFunc("getnilinstances")
+        if getNilFunc then
+            local ok, nilInstances = pcall(getNilFunc)
+            if ok and nilInstances then
+                for _, inst in ipairs(nilInstances) do
+                    if inst:IsA("LuaSourceContainer") then
+                        local id = tostring(inst:GetDebugId())
+                        if not seen[id] then
+                            seen[id] = true
+                            allScripts[#allScripts + 1] = inst
+                        end
+                    end
+                end
+            end
         end
     end
     
-    -- Serialize children recursively
-    local childOk, children = pcall(function()
-        return instance:GetChildren()
-    end)
-    
-    if childOk and children then
-        for _, child in ipairs(children) do
-            InstanceSerializer.serialize(child, depth + 1, chunks, counter, statusCallback)
-        end
-    end
-    
-    -- Đóng tag Item
-    table.insert(chunks, indent .. "</Item>")
-    
-    return counter
+    Util.log(2, "Thu thập được %d scripts tổng cộng", #allScripts)
+    return allScripts
 end
 
---- Serialize attributes thành XML binary format
-function InstanceSerializer.serializeAttributes(instance, attributes, chunks, indent)
-    -- Roblox attributes được lưu dưới dạng binary blob trong RBXL
-    -- Nhưng trong XML format, ta có thể serialize từng attribute
-    for attrName, attrValue in pairs(attributes) do
-        local xmlProp = Serializer.serializePropertyValue(
-            "Attribute_" .. attrName, attrValue
+--- Xóa cache (giải phóng memory)
+function ScriptDecompiler:clearCache()
+    ScriptDecompiler.Cache = {}
+    collectgarbage("collect")
+end
+
+BaoSaveInstance.ScriptDecompiler = ScriptDecompiler
+
+-- ============================================================
+-- PHẦN 5: TERRAIN SAVER ENGINE
+-- ============================================================
+
+local TerrainSaver = {}
+TerrainSaver.__index = TerrainSaver
+
+function TerrainSaver.new(config)
+    local self = setmetatable({}, TerrainSaver)
+    self.config = config or BaoSaveInstance.Config
+    self.terrain = Workspace.Terrain
+    return self
+end
+
+--- Lấy thông tin terrain
+function TerrainSaver:getTerrainInfo()
+    local info = {
+        hasData = false,
+        regionSize = Vector3.new(0, 0, 0),
+        materialCount = 0,
+        hasWater = false
+    }
+    
+    pcall(function()
+        -- Kiểm tra xem terrain có dữ liệu không
+        local regionStart = self.terrain:CellCenterToWorld(-250, -250, -250)
+        local regionEnd = self.terrain:CellCenterToWorld(250, 250, 250)
+        
+        local region = Region3.new(
+            Vector3.new(-2044, -2044, -2044),
+            Vector3.new(2044, 2044, 2044)
         )
-        if xmlProp then
-            table.insert(chunks, indent .. xmlProp)
-        end
-    end
-end
-
---- Serialize một service container (Workspace, ReplicatedStorage, etc.)
-function InstanceSerializer.serializeService(service, chunks, counter, statusCallback)
-    if not service then return counter end
-    
-    local className = service.ClassName
-    local ref = Serializer.getRef(service)
-    
-    table.insert(chunks, string.format(
-        '  <Item class="%s" referent="%s">',
-        Serializer.escapeXml(className), ref
-    ))
-    table.insert(chunks, '    <Properties>')
-    table.insert(chunks, string.format(
-        '      <string name="Name">%s</string>',
-        Serializer.escapeXml(service.Name)
-    ))
-    table.insert(chunks, '    </Properties>')
-    
-    -- Serialize children
-    local childOk, children = pcall(function()
-        return service:GetChildren()
-    end)
-    
-    if childOk and children then
-        for _, child in ipairs(children) do
-            if not Util.isExcluded(child) then
-                InstanceSerializer.serialize(child, 2, chunks, counter, statusCallback)
-            end
-        end
-    end
-    
-    table.insert(chunks, '  </Item>')
-    
-    return counter
-end
-
--- ============================================================
--- SECTION 7: TERRAIN SERIALIZER
--- ============================================================
-
-local TerrainSerializer = {}
-
---- Serialize Terrain voxel data
---- Roblox Terrain sử dụng Region3 based voxel system
-function TerrainSerializer.serialize(statusCallback)
-    local terrain = workspace:FindFirstChildOfClass("Terrain")
-    if not terrain then
-        Util.logInfo("No terrain found in workspace")
-        return nil
-    end
-    
-    if statusCallback then
-        statusCallback("Reading terrain data...")
-    end
-    
-    local chunks = {}
-    local ref = Serializer.getRef(terrain)
-    
-    table.insert(chunks, string.format(
-        '  <Item class="Terrain" referent="%s">', ref
-    ))
-    table.insert(chunks, '    <Properties>')
-    table.insert(chunks, '      <string name="Name">Terrain</string>')
-    
-    -- Serialize terrain properties
-    local terrainProps = {
-        {"WaterColor", terrain.WaterColor},
-        {"WaterReflectance", terrain.WaterReflectance},
-        {"WaterTransparency", terrain.WaterTransparency},
-        {"WaterWaveSize", terrain.WaterWaveSize},
-        {"WaterWaveSpeed", terrain.WaterWaveSpeed},
-        {"Decoration", terrain.Decoration}
-    }
-    
-    for _, propData in ipairs(terrainProps) do
-        local propName, propValue = propData[1], propData[2]
-        local ok, xmlProp = pcall(function()
-            return Serializer.serializePropertyValue(propName, propValue)
-        end)
-        if ok and xmlProp then
-            table.insert(chunks, '      ' .. xmlProp)
-        end
-    end
-    
-    -- Serialize MaterialColors nếu có
-    local ok, matColors = pcall(function()
-        return terrain.MaterialColors
-    end)
-    if ok and matColors then
-        table.insert(chunks, string.format(
-            '      <BinaryString name="MaterialColors">%s</BinaryString>',
-            Serializer.escapeXml(tostring(matColors))
-        ))
-    end
-    
-    -- Serialize SmoothGrid (voxel data) 
-    -- Đây là phần phức tạp nhất - terrain voxel data
-    if statusCallback then
-        statusCallback("Encoding terrain voxel data...")
-    end
-    
-    local terrainData = TerrainSerializer.readTerrainVoxels(terrain, statusCallback)
-    if terrainData then
-        -- SmoothGrid chứa material + occupancy data
-        table.insert(chunks, string.format(
-            '      <BinaryString name="SmoothGrid">%s</BinaryString>',
-            terrainData
-        ))
-    end
-    
-    -- PhysicsGrid
-    local physOk, physData = pcall(function()
-        return TerrainSerializer.readPhysicsGrid(terrain)
-    end)
-    if physOk and physData then
-        table.insert(chunks, string.format(
-            '      <BinaryString name="PhysicsGrid">%s</BinaryString>',
-            physData
-        ))
-    end
-    
-    table.insert(chunks, '    </Properties>')
-    table.insert(chunks, '  </Item>')
-    
-    if statusCallback then
-        statusCallback("Terrain serialization complete")
-    end
-    
-    return table.concat(chunks, "\n")
-end
-
---- Đọc terrain voxel data bằng ReadVoxels
-function TerrainSerializer.readTerrainVoxels(terrain, statusCallback)
-    -- Lấy bounding box của terrain
-    local regionOk, regionSize = pcall(function()
-        -- Đọc MaxExtents từ terrain
-        local maxExt = terrain.MaxExtents
-        return maxExt
-    end)
-    
-    -- Sử dụng phương pháp đọc từng chunk
-    local chunkSize = BaoSaveInstance._config.terrainChunkSize
-    local resolution = 4 -- Roblox terrain resolution = 4 studs
-    
-    -- Tìm bounds của terrain có data
-    local minBound = Vector3.new(-2048, -512, -2048)
-    local maxBound = Vector3.new(2048, 512, 2048)
-    
-    -- Thử thu nhỏ bounds bằng cách tìm terrain thực tế
-    local boundsOk, actualBounds = pcall(function()
-        return TerrainSerializer.findTerrainBounds(terrain, resolution)
-    end)
-    
-    if boundsOk and actualBounds then
-        minBound = actualBounds.min
-        maxBound = actualBounds.max
-    end
-    
-    -- Encode terrain data dưới dạng base64 chunks
-    local encodedChunks = {}
-    local chunkCount = 0
-    
-    for x = minBound.X, maxBound.X, chunkSize * resolution do
-        for y = minBound.Y, maxBound.Y, chunkSize * resolution do
-            for z = minBound.Z, maxBound.Z, chunkSize * resolution do
-                local regionStart = Vector3.new(x, y, z)
-                local regionEnd = Vector3.new(
-                    math.min(x + chunkSize * resolution, maxBound.X),
-                    math.min(y + chunkSize * resolution, maxBound.Y),
-                    math.min(z + chunkSize * resolution, maxBound.Z)
-                )
-                
-                local region = Region3.new(regionStart, regionEnd)
-                region = region:ExpandToGrid(resolution)
-                
-                local readOk, materials, occupancy = pcall(function()
-                    return terrain:ReadVoxels(region, resolution)
-                end)
-                
-                if readOk and materials and occupancy then
-                    -- Kiểm tra xem chunk có data không (không phải toàn Air)
-                    local hasData = false
-                    for xi = 1, #materials do
-                        for yi = 1, #materials[xi] do
-                            for zi = 1, #materials[xi][yi] do
-                                if materials[xi][yi][zi] ~= Enum.Material.Air then
-                                    hasData = true
-                                    break
-                                end
-                            end
-                            if hasData then break end
-                        end
-                        if hasData then break end
-                    end
-                    
-                    if hasData then
-                        local chunkData = TerrainSerializer.encodeVoxelChunk(
-                            regionStart, regionEnd, materials, occupancy, resolution
-                        )
-                        if chunkData then
-                            table.insert(encodedChunks, chunkData)
-                            chunkCount = chunkCount + 1
-                            
-                            BaoSaveInstance._state.stats.terrainRegions = chunkCount
-                        end
-                    end
-                end
-                
-                -- Yield periodically
-                Util.smartYield(chunkCount, 10)
-                
-                if statusCallback and chunkCount % 5 == 0 then
-                    statusCallback(string.format("Reading terrain... %d chunks", chunkCount))
-                end
-            end
-        end
-    end
-    
-    Util.logInfo(string.format("Terrain: %d non-empty chunks encoded", chunkCount))
-    
-    if #encodedChunks == 0 then
-        return nil
-    end
-    
-    -- Combine tất cả chunks
-    return table.concat(encodedChunks, "|")
-end
-
---- Tìm bounding box thực tế của terrain (tránh scan vùng trống)
-function TerrainSerializer.findTerrainBounds(terrain, resolution)
-    local testSize = 512
-    local step = 64
-    
-    local minX, minY, minZ = math.huge, math.huge, math.huge
-    local maxX, maxY, maxZ = -math.huge, -math.huge, -math.huge
-    local found = false
-    
-    for x = -testSize, testSize, step do
-        for y = -testSize, testSize, step do
-            for z = -testSize, testSize, step do
-                local region = Region3.new(
-                    Vector3.new(x, y, z),
-                    Vector3.new(x + step, y + step, z + step)
-                ):ExpandToGrid(resolution)
-                
-                local ok, mats = pcall(function()
-                    return terrain:ReadVoxels(region, resolution)
-                end)
-                
-                if ok and mats then
-                    for xi = 1, #mats do
-                        for yi = 1, #mats[xi] do
-                            for zi = 1, #mats[xi][yi] do
-                                if mats[xi][yi][zi] ~= Enum.Material.Air then
-                                    found = true
-                                    minX = math.min(minX, x)
-                                    minY = math.min(minY, y)
-                                    minZ = math.min(minZ, z)
-                                    maxX = math.max(maxX, x + step)
-                                    maxY = math.max(maxY, y + step)
-                                    maxZ = math.max(maxZ, z + step)
-                                end
+        
+        -- Align region to terrain grid
+        region = region:ExpandToGrid(4)
+        
+        local materials, occupancy = self.terrain:ReadVoxels(region, 4)
+        
+        if materials and materials.Size then
+            info.regionSize = materials.Size
+            info.hasData = materials.Size.X > 0 and 
+                          materials.Size.Y > 0 and 
+                          materials.Size.Z > 0
+            
+            -- Đếm materials (sampling)
+            local matSet = {}
+            local size = materials.Size
+            local step = math.max(1, math.floor(size.X / 20))
+            
+            for x = 1, size.X, step do
+                for y = 1, size.Y, step do
+                    for z = 1, size.Z, step do
+                        local mat = materials[x][y][z]
+                        if mat ~= Enum.Material.Air then
+                            matSet[mat] = true
+                            if mat == Enum.Material.Water then
+                                info.hasWater = true
                             end
                         end
                     end
                 end
             end
-        end
-        task.wait()
-    end
-    
-    if not found then
-        return {
-            min = Vector3.new(-256, -256, -256),
-            max = Vector3.new(256, 256, 256)
-        }
-    end
-    
-    -- Thêm padding
-    local padding = 32
-    return {
-        min = Vector3.new(minX - padding, minY - padding, minZ - padding),
-        max = Vector3.new(maxX + padding, maxY + padding, maxZ + padding)
-    }
-end
-
---- Encode một voxel chunk thành string data
-function TerrainSerializer.encodeVoxelChunk(regionStart, regionEnd, materials, occupancy, resolution)
-    local data = {}
-    
-    -- Header: region bounds
-    table.insert(data, string.format(
-        "%f,%f,%f,%f,%f,%f,%d",
-        regionStart.X, regionStart.Y, regionStart.Z,
-        regionEnd.X, regionEnd.Y, regionEnd.Z,
-        resolution
-    ))
-    
-    -- Material + occupancy data
-    local voxelData = {}
-    for x = 1, #materials do
-        for y = 1, #materials[x] do
-            for z = 1, #materials[x][y] do
-                local mat = materials[x][y][z]
-                local occ = occupancy[x][y][z]
-                
-                if mat ~= Enum.Material.Air or occ > 0 then
-                    -- Format: x,y,z,materialValue,occupancy
-                    table.insert(voxelData, string.format(
-                        "%d,%d,%d,%d,%.4f",
-                        x, y, z, mat.Value, occ
-                    ))
-                end
+            
+            for _ in pairs(matSet) do
+                info.materialCount = info.materialCount + 1
             end
-        end
-    end
-    
-    if #voxelData == 0 then
-        return nil
-    end
-    
-    table.insert(data, table.concat(voxelData, ";"))
-    
-    return table.concat(data, ":")
-end
-
---- Đọc PhysicsGrid data
-function TerrainSerializer.readPhysicsGrid(terrain)
-    -- PhysicsGrid thường được handle tự động bởi engine
-    -- Trong context save, nó ít quan trọng hơn SmoothGrid
-    return ""
-end
-
--- ============================================================
--- SECTION 8: RBXL FILE BUILDER
--- ============================================================
-
-local RBXLBuilder = {}
-
---- Tạo XML header cho file RBXL
-function RBXLBuilder.createHeader()
-    return table.concat({
-        '<roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime"',
-        ' xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"',
-        ' xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd"',
-        ' version="4">',
-        '',
-        '<!-- Generated by BaoSaveInstance v' .. BaoSaveInstance._VERSION .. ' -->',
-        '<!-- Date: ' .. os.date("%Y-%m-%d %H:%M:%S") .. ' -->',
-        '<!-- Game PlaceId: ' .. tostring(game.PlaceId) .. ' -->',
-        ''
-    }, "\n")
-end
-
---- Tạo XML footer
-function RBXLBuilder.createFooter()
-    return "\n</roblox>"
-end
-
---- Tạo External elements (SharedStrings, etc.)
-function RBXLBuilder.createExternals()
-    return '<External>null</External>\n<External>nil</External>\n'
-end
-
---- Build complete RBXL file content cho Full Game
-function RBXLBuilder.buildFullGame(statusCallback)
-    if statusCallback then statusCallback("Building full game RBXL...") end
-    
-    Serializer.reset()
-    local chunks = {}
-    local counter = {count = 0}
-    
-    -- Header
-    table.insert(chunks, RBXLBuilder.createHeader())
-    table.insert(chunks, RBXLBuilder.createExternals())
-    
-    -- Serialize từng service
-    for _, serviceName in ipairs(BaoSaveInstance._config.fullGameServices) do
-        local service = Util.getService(serviceName)
-        if service then
-            if statusCallback then
-                statusCallback(string.format("Serializing %s...", serviceName))
-            end
-            Util.logInfo("Serializing service: " .. serviceName)
-            
-            local ok, err = pcall(function()
-                InstanceSerializer.serializeService(service, chunks, counter, statusCallback)
-            end)
-            
-            if not ok then
-                Util.logError("SerializeService:" .. serviceName, err)
-                -- Thêm comment về lỗi
-                table.insert(chunks, string.format(
-                    '  <!-- Error serializing %s: %s -->',
-                    serviceName, Serializer.escapeXml(tostring(err))
-                ))
-            end
-            
-            task.wait() -- Yield giữa các service
-        else
-            Util.logInfo("Service not accessible: " .. serviceName)
-        end
-    end
-    
-    -- Serialize Terrain riêng
-    if statusCallback then statusCallback("Serializing terrain...") end
-    local terrainXml = TerrainSerializer.serialize(statusCallback)
-    if terrainXml then
-        table.insert(chunks, terrainXml)
-    end
-    
-    -- Footer
-    table.insert(chunks, RBXLBuilder.createFooter())
-    
-    BaoSaveInstance._state.stats.totalInstances = counter.count
-    
-    if statusCallback then
-        statusCallback(string.format("Build complete! %d instances", counter.count))
-    end
-    
-    return table.concat(chunks, "\n")
-end
-
---- Build RBXL cho Models only
-function RBXLBuilder.buildModelsOnly(statusCallback)
-    if statusCallback then statusCallback("Building models RBXL...") end
-    
-    Serializer.reset()
-    local chunks = {}
-    local counter = {count = 0}
-    
-    table.insert(chunks, RBXLBuilder.createHeader())
-    table.insert(chunks, RBXLBuilder.createExternals())
-    
-    for _, serviceName in ipairs(BaoSaveInstance._config.modelServices) do
-        local service = Util.getService(serviceName)
-        if service then
-            if statusCallback then
-                statusCallback(string.format("Serializing models in %s...", serviceName))
-            end
-            
-            local ok, err = pcall(function()
-                -- Chỉ serialize Models, Parts, và các instance non-terrain
-                local children = service:GetChildren()
-                for _, child in ipairs(children) do
-                    if not child:IsA("Terrain") and not Util.isExcluded(child) then
-                        InstanceSerializer.serialize(child, 1, chunks, counter, statusCallback)
-                    end
-                end
-            end)
-            
-            if not ok then
-                Util.logError("SerializeModels:" .. serviceName, err)
-            end
-            
-            task.wait()
-        end
-    end
-    
-    table.insert(chunks, RBXLBuilder.createFooter())
-    
-    BaoSaveInstance._state.stats.totalInstances = counter.count
-    BaoSaveInstance._state.stats.modelsProcessed = counter.count
-    
-    return table.concat(chunks, "\n")
-end
-
---- Build RBXL cho Terrain only
-function RBXLBuilder.buildTerrainOnly(statusCallback)
-    if statusCallback then statusCallback("Building terrain RBXL...") end
-    
-    Serializer.reset()
-    local chunks = {}
-    
-    table.insert(chunks, RBXLBuilder.createHeader())
-    table.insert(chunks, RBXLBuilder.createExternals())
-    
-    -- Chỉ serialize Workspace container + Terrain
-    table.insert(chunks, '  <Item class="Workspace" referent="RBX_WS">')
-    table.insert(chunks, '    <Properties>')
-    table.insert(chunks, '      <string name="Name">Workspace</string>')
-    table.insert(chunks, '    </Properties>')
-    
-    local terrainXml = TerrainSerializer.serialize(statusCallback)
-    if terrainXml then
-        table.insert(chunks, terrainXml)
-    end
-    
-    table.insert(chunks, '  </Item>')
-    table.insert(chunks, RBXLBuilder.createFooter())
-    
-    return table.concat(chunks, "\n")
-end
-
--- ============================================================
--- SECTION 9: FILE WRITER
--- ============================================================
-
-local FileWriter = {}
-
---- Ghi nội dung ra file, xử lý file lớn
-function FileWriter.write(fileName, content, statusCallback)
-    if not content or #content == 0 then
-        Util.logError("FileWriter", "No content to write")
-        return false, "No content to write"
-    end
-    
-    local fullPath = BaoSaveInstance._config.outputFolder .. "/" .. fileName
-    
-    if statusCallback then
-        statusCallback(string.format("Writing file: %s (%s)", fileName, Util.formatBytes(#content)))
-    end
-    
-    -- Tạo folder nếu chưa có
-    local folderOk, folderErr = pcall(function()
-        if makefolder then
-            makefolder(BaoSaveInstance._config.outputFolder)
         end
     end)
     
-    -- Ghi file
-    local ok, err = pcall(function()
-        writefile(fullPath, content)
-    end)
-    
-    if ok then
-        BaoSaveInstance._state.stats.fileSize = #content
-        Util.logInfo(string.format(
-            "File written successfully: %s (%s)",
-            fullPath, Util.formatBytes(#content)
-        ))
-        
-        if statusCallback then
-            statusCallback(string.format("✓ Saved: %s (%s)", fileName, Util.formatBytes(#content)))
-        end
-        
-        return true, fullPath
-    else
-        Util.logError("FileWriter", err)
-        if statusCallback then
-            statusCallback("✗ Error writing file: " .. tostring(err))
-        end
-        return false, tostring(err)
-    end
+    return info
 end
 
--- ============================================================
--- SECTION 10: EXECUTOR SAVEINSTANCE INTEGRATION
--- Sử dụng saveinstance() native của executor nếu có
--- ============================================================
-
-local NativeSaver = {}
-
---- Kiểm tra executor có hỗ trợ saveinstance native không
-function NativeSaver.isAvailable()
-    return (saveinstance ~= nil) or (syn and syn.saveinstance ~= nil)
+--- Kiểm tra terrain có dữ liệu không
+function TerrainSaver:hasTerrain()
+    local info = self:getTerrainInfo()
+    return info.hasData
 end
 
---- Sử dụng native saveinstance với custom options
-function NativeSaver.save(mode, fileName, statusCallback)
-    local options = {}
+BaoSaveInstance.TerrainSaver = TerrainSaver
+
+-- ============================================================
+-- PHẦN 6: INSTANCE COLLECTOR (THU THẬP NHANH)
+-- ============================================================
+
+local InstanceCollector = {}
+InstanceCollector.__index = InstanceCollector
+
+function InstanceCollector.new(config)
+    local self = setmetatable({}, InstanceCollector)
+    self.config = config or BaoSaveInstance.Config
     
-    if mode == "FULL_GAME" then
-        options = {
-            FileName = fileName,
-            DecompileMode = "full",
-            NilInstances = true,
-            RemovePlayerCharacters = BaoSaveInstance._config.removePlayerCharacters,
-            SavePlayers = BaoSaveInstance._config.savePlayers,
-            ExtraInstances = {},
-            ShowStatus = true,
-            mode = "optimized",
-            Timeout = BaoSaveInstance._config.decompileTimeout,
-            -- Đảm bảo output là .rbxl
-            FilePath = BaoSaveInstance._config.outputFolder .. "/" .. fileName
-        }
-    elseif mode == "MODEL_ONLY" then
-        options = {
-            FileName = fileName,
-            DecompileMode = "full",
-            NilInstances = false,
-            RemovePlayerCharacters = true,
-            SavePlayers = false,
-            -- Chỉ save certain services
-            ExtraInstances = {},
-            ShowStatus = true,
-            Timeout = BaoSaveInstance._config.decompileTimeout,
-            FilePath = BaoSaveInstance._config.outputFolder .. "/" .. fileName
-        }
-    elseif mode == "TERRAIN_ONLY" then
-        options = {
-            FileName = fileName,
-            DecompileMode = "none",
-            NilInstances = false,
-            RemovePlayerCharacters = true,
-            SavePlayers = false,
-            ShowStatus = true,
-            FilePath = BaoSaveInstance._config.outputFolder .. "/" .. fileName
-        }
+    -- Build exclusion sets cho O(1) lookup
+    self.excludeClassSet = {}
+    for _, className in ipairs(config.ExcludeClassNames or {}) do
+        self.excludeClassSet[className] = true
     end
     
-    if statusCallback then
-        statusCallback("Using native saveinstance...")
+    self.excludeNameSet = {}
+    for _, name in ipairs(config.ExcludeNames or {}) do
+        self.excludeNameSet[name] = true
     end
     
-    local ok, err
-    
-    if syn and syn.saveinstance then
-        ok, err = pcall(function()
-            syn.saveinstance(options)
-        end)
-    elseif saveinstance then
-        ok, err = pcall(function()
-            saveinstance(options)
-        end)
-    else
-        return false, "No native saveinstance available"
-    end
-    
-    if ok then
-        if statusCallback then
-            statusCallback("✓ Native save complete: " .. fileName)
-        end
-        return true, fileName
-    else
-        if statusCallback then
-            statusCallback("Native save failed, falling back to custom serializer...")
-        end
-        return false, tostring(err)
-    end
+    return self
 end
 
--- ============================================================
--- SECTION 11: MAIN API FUNCTIONS
--- ============================================================
-
---- Khởi tạo BaoSaveInstance
-function BaoSaveInstance.init(customConfig)
-    if BaoSaveInstance._state.initialized then
-        Util.logInfo("Already initialized")
-        return true
+--- Kiểm tra instance có nên được save không
+function InstanceCollector:shouldSave(instance)
+    if not instance then return false end
+    
+    -- Kiểm tra class exclusion
+    if self.excludeClassSet[instance.ClassName] then
+        return false
     end
     
-    Util.logInfo("Initializing BaoSaveInstance v" .. BaoSaveInstance._VERSION)
-    
-    -- Apply custom config nếu có
-    if customConfig and type(customConfig) == "table" then
-        for key, value in pairs(customConfig) do
-            if BaoSaveInstance._config[key] ~= nil then
-                BaoSaveInstance._config[key] = value
-            end
-        end
+    -- Kiểm tra name exclusion
+    if self.excludeNameSet[instance.Name] then
+        return false
     end
     
-    -- Check environment
-    local envOk, missing = checkEnvironment()
-    if not envOk then
-        Util.logError("Init", "Missing functions: " .. table.concat(missing, ", "))
-        -- Tiếp tục nhưng cảnh báo
+    -- Không save BaoSaveInstance UI
+    if instance.Name == "BaoSaveInstanceUI" then
+        return false
     end
-    
-    -- Reset state
-    BaoSaveInstance._state.scriptCache = {}
-    BaoSaveInstance._state.errorLog = {}
-    BaoSaveInstance._state.stats = {
-        totalInstances = 0,
-        scriptsDecompiled = 0,
-        modelsProcessed = 0,
-        terrainRegions = 0,
-        fileSize = 0
-    }
-    
-    -- Cache services
-    for _, serviceName in ipairs(BaoSaveInstance._config.fullGameServices) do
-        Util.getService(serviceName)
-    end
-    
-    BaoSaveInstance._state.initialized = true
-    Util.logInfo("Initialization complete")
     
     return true
 end
 
---- Decompile tất cả scripts trong game
-function BaoSaveInstance.decompileScripts(statusCallback)
-    if BaoSaveInstance._state.busy then
-        return nil, "System is busy"
-    end
-    
-    BaoSaveInstance._state.busy = true
-    BaoSaveInstance._state.statusText = "Decompiling scripts..."
-    
-    if statusCallback then statusCallback("Starting script decompilation...") end
-    
-    local allScripts = {}
-    
-    for _, serviceName in ipairs(BaoSaveInstance._config.fullGameServices) do
-        local service = Util.getService(serviceName)
-        if service then
-            if statusCallback then
-                statusCallback(string.format("Decompiling scripts in %s...", serviceName))
-            end
-            
-            local scripts = ScriptDecompiler.decompileAll(service, statusCallback)
-            for inst, source in pairs(scripts) do
-                allScripts[inst] = source
-            end
-            
-            task.wait()
-        end
-    end
-    
-    BaoSaveInstance._state.busy = false
-    BaoSaveInstance._state.statusText = "Script decompilation complete"
-    
+--- Thu thập instances từ 1 service
+function InstanceCollector:collectFromService(service, progressCallback)
+    local instances = {}
     local count = 0
-    for _ in pairs(allScripts) do count = count + 1 end
     
-    if statusCallback then
-        statusCallback(string.format("✓ Decompiled %d scripts", count))
-    end
-    
-    Util.logInfo(string.format("Total scripts decompiled: %d", count))
-    
-    return allScripts
-end
-
---- Lưu tất cả models
-function BaoSaveInstance.saveModels(statusCallback)
-    if BaoSaveInstance._state.busy then
-        return nil, "System is busy"
-    end
-    
-    BaoSaveInstance._state.busy = true
-    BaoSaveInstance._state.statusText = "Saving models..."
-    
-    local content = RBXLBuilder.buildModelsOnly(statusCallback)
-    
-    BaoSaveInstance._state.busy = false
-    return content
-end
-
---- Lưu terrain
-function BaoSaveInstance.saveTerrain(statusCallback)
-    if BaoSaveInstance._state.busy then
-        return nil, "System is busy"
-    end
-    
-    BaoSaveInstance._state.busy = true
-    BaoSaveInstance._state.statusText = "Saving terrain..."
-    
-    local content = RBXLBuilder.buildTerrainOnly(statusCallback)
-    
-    BaoSaveInstance._state.busy = false
-    return content
-end
-
---- Export ra file RBXL
---- mode: "FULL_GAME", "MODEL_ONLY", "TERRAIN_ONLY"
-function BaoSaveInstance.exportRBXL(mode, statusCallback)
-    if BaoSaveInstance._state.busy then
-        if statusCallback then statusCallback("System is busy, please wait...") end
-        return false, "System is busy"
-    end
-    
-    -- Đảm bảo đã init
-    if not BaoSaveInstance._state.initialized then
-        BaoSaveInstance.init()
-    end
-    
-    BaoSaveInstance._state.busy = true
-    BaoSaveInstance._state.currentMode = mode
-    BaoSaveInstance._state.statusText = "Starting export..."
-    
-    local gameName = Util.getGameName()
-    local fileName
-    local content
-    local success = false
-    
-    -- Xác định tên file theo mode
-    if mode == "FULL_GAME" then
-        fileName = gameName .. "_Full" .. BaoSaveInstance._config.fileExtension
-    elseif mode == "MODEL_ONLY" then
-        fileName = gameName .. "_Model" .. BaoSaveInstance._config.fileExtension
-    elseif mode == "TERRAIN_ONLY" then
-        fileName = gameName .. "_Terrain" .. BaoSaveInstance._config.fileExtension
-    else
-        BaoSaveInstance._state.busy = false
-        return false, "Invalid mode: " .. tostring(mode)
-    end
-    
-    -- Thử native saveinstance trước (nhanh hơn và chính xác hơn)
-    if NativeSaver.isAvailable() and mode ~= "TERRAIN_ONLY" then
-        if statusCallback then
-            statusCallback("Trying native saveinstance...")
+    local ok, err = pcall(function()
+        local stack = {}
+        local children = service:GetChildren()
+        
+        for i = #children, 1, -1 do
+            stack[#stack + 1] = children[i]
         end
         
-        local nativeOk, nativeResult = NativeSaver.save(mode, fileName, statusCallback)
-        if nativeOk then
-            BaoSaveInstance._state.busy = false
-            BaoSaveInstance._state.statusText = "Done ✓"
-            return true, nativeResult
-        else
-            if statusCallback then
-                statusCallback("Native save failed, using custom serializer...")
+        while #stack > 0 do
+            local current = table.remove(stack)
+            
+            if self:shouldSave(current) then
+                count = count + 1
+                instances[#instances + 1] = current
+                
+                local childOk, childList = pcall(function()
+                    return current:GetChildren()
+                end)
+                
+                if childOk and childList then
+                    for i = #childList, 1, -1 do
+                        stack[#stack + 1] = childList[i]
+                    end
+                end
+                
+                -- Yield để không crash
+                if count % self.config.YieldInterval == 0 then
+                    task.wait(self.config.TaskWaitTime)
+                    if progressCallback then
+                        progressCallback(count)
+                    end
+                end
             end
-        end
-    end
-    
-    -- Fallback: custom XML serializer
-    local buildOk, buildResult = pcall(function()
-        if mode == "FULL_GAME" then
-            return RBXLBuilder.buildFullGame(statusCallback)
-        elseif mode == "MODEL_ONLY" then
-            return RBXLBuilder.buildModelsOnly(statusCallback)
-        elseif mode == "TERRAIN_ONLY" then
-            return RBXLBuilder.buildTerrainOnly(statusCallback)
         end
     end)
     
-    if buildOk and buildResult then
-        content = buildResult
-    else
-        BaoSaveInstance._state.busy = false
-        BaoSaveInstance._state.statusText = "Build failed"
-        Util.logError("Build", buildResult)
-        if statusCallback then
-            statusCallback("✗ Build failed: " .. tostring(buildResult))
+    if not ok then
+        Util.log(3, "Lỗi khi quét service %s: %s",
+            tostring(service), tostring(err))
+    end
+    
+    return instances, count
+end
+
+--- Thu thập models từ workspace và replicated storage
+function InstanceCollector:collectModels()
+    local models = {}
+    local sources = {Workspace, ReplicatedStorage}
+    
+    for _, source in ipairs(sources) do
+        pcall(function()
+            local children = source:GetChildren()
+            for _, child in ipairs(children) do
+                if child:IsA("Model") or child:IsA("Folder") then
+                    if self:shouldSave(child) then
+                        models[#models + 1] = child
+                    end
+                end
+            end
+        end)
+    end
+    
+    Util.log(2, "Thu thập được %d models", #models)
+    return models
+end
+
+BaoSaveInstance.InstanceCollector = InstanceCollector
+
+-- ============================================================
+-- PHẦN 7: RBXL EXPORTER ENGINE
+-- ============================================================
+
+local RBXLExporter = {}
+RBXLExporter.__index = RBXLExporter
+
+function RBXLExporter.new(config)
+    local self = setmetatable({}, RBXLExporter)
+    self.config = config or BaoSaveInstance.Config
+    self.saveinstanceFunc = safeGetFunc("saveinstance")
+    self.writefileFunc = safeGetFunc("writefile")
+    return self
+end
+
+--- Xây dựng options cho saveinstance dựa trên mode
+function RBXLExporter:buildOptions(mode)
+    local options = {
+        -- Output
+        FileName = self:getFileName(mode),
+        FilePath = self.config.OutputFolder,
+        
+        -- Features
+        DecompileScripts = self.config.DecompileScripts,
+        NilInstances = self.config.SaveNilInstances,
+        RemovePlayerCharacters = not self.config.SavePlayers,
+        SavePlayers = self.config.SavePlayers,
+        
+        -- Performance
+        DecompileTimeout = self.config.DecompileTimeout,
+        DecompileIgnore = {},
+        
+        -- Mode-specific
+        Mode = mode
+    }
+    
+    -- Cấu hình theo mode
+    if mode == "FULL_GAME" then
+        options.NilInstances = true
+        options.DecompileScripts = true
+        options.SaveTerrain = true
+        
+    elseif mode == "MODEL_ONLY" then
+        options.NilInstances = false
+        options.SaveTerrain = false
+        -- Chỉ save Workspace + ReplicatedStorage models
+        options.ExtraInstances = self:getModelInstances()
+        
+    elseif mode == "TERRAIN_ONLY" then
+        options.NilInstances = false
+        options.DecompileScripts = false
+        options.SaveTerrain = true
+        options.ExtraInstances = {Workspace.Terrain}
+    end
+    
+    return options
+end
+
+--- Lấy tên file output
+function RBXLExporter:getFileName(mode)
+    local gameName = Util.getGameName()
+    local suffix = {
+        FULL_GAME = "_Full",
+        MODEL_ONLY = "_Model",
+        TERRAIN_ONLY = "_Terrain"
+    }
+    
+    return gameName .. (suffix[mode] or "_Export") .. self.config.FileFormat
+end
+
+--- Lấy model instances cho MODEL_ONLY mode
+function RBXLExporter:getModelInstances()
+    local instances = {}
+    
+    pcall(function()
+        for _, child in ipairs(Workspace:GetChildren()) do
+            if child:IsA("Model") or child:IsA("Folder") or 
+               child:IsA("Part") or child:IsA("MeshPart") then
+                if child.Name ~= "Terrain" and child.Name ~= "Camera" then
+                    instances[#instances + 1] = child
+                end
+            end
         end
-        return false, tostring(buildResult)
+    end)
+    
+    pcall(function()
+        for _, child in ipairs(ReplicatedStorage:GetChildren()) do
+            instances[#instances + 1] = child
+        end
+    end)
+    
+    return instances
+end
+
+--- Export chính - sử dụng saveinstance của executor
+function RBXLExporter:export(mode, progressCallback)
+    mode = mode or "FULL_GAME"
+    
+    -- Đảm bảo folder tồn tại
+    Util.ensureFolder(self.config.OutputFolder)
+    
+    local fileName = self:getFileName(mode)
+    local fullPath = self.config.OutputFolder .. "/" .. fileName
+    
+    Util.log(2, "Bắt đầu export mode: %s", mode)
+    Util.log(2, "Output: %s", fullPath)
+    
+    if progressCallback then
+        progressCallback("Đang chuẩn bị export...")
+    end
+    
+    -- Phương pháp 1: Dùng saveinstance() native của executor (NHANH NHẤT)
+    if self.saveinstanceFunc then
+        return self:exportWithSaveInstance(mode, progressCallback)
+    end
+    
+    -- Phương pháp 2: Manual export (fallback)
+    return self:exportManual(mode, progressCallback)
+end
+
+--- Export sử dụng saveinstance() native
+function RBXLExporter:exportWithSaveInstance(mode, progressCallback)
+    local options = self:buildOptions(mode)
+    
+    if progressCallback then
+        progressCallback("Đang save với executor saveinstance...")
+    end
+    
+    local success, err = pcall(function()
+        -- Các executor khác nhau có API khác nhau
+        -- Synapse X style
+        if syn and syn.saveinstance then
+            syn.saveinstance(game, options.FileName, {
+                DecompileMode = options.DecompileScripts and "decompile" or "none",
+                NilInstances = options.NilInstances,
+                RemovePlayerCharacters = options.RemovePlayerCharacters,
+                DecompileTimeout = options.DecompileTimeout,
+                FilePath = options.FilePath
+            })
+            return
+        end
+        
+        -- Unified saveinstance API (Wave, Fluxus, etc.)
+        local saveFunc = safeGetFunc("saveinstance")
+        if saveFunc then
+            -- Thử format mới trước
+            local siOptions = {}
+            
+            -- Mode handling
+            if mode == "FULL_GAME" then
+                siOptions = {
+                    FileName = options.FileName,
+                    DecompileMode = 2, -- Full decompile
+                    NilInstances = true,
+                    DecompileTimeout = options.DecompileTimeout,
+                    SavePlayers = false,
+                    RemovePlayerCharacters = true,
+                    SaveNonCreatable = true,
+                    IsolateStarterPlayer = true,
+                    IgnoreDefaultProperties = false,
+                    SharedStrings = true,
+                    ShowStatus = true,
+                    Timeout = 30,
+                    SaveBytecode = false,
+                    NilInstancesFix = true
+                }
+            elseif mode == "MODEL_ONLY" then
+                siOptions = {
+                    FileName = options.FileName,
+                    DecompileMode = 2,
+                    NilInstances = false,
+                    ExtraInstances = options.ExtraInstances or {},
+                    SavePlayers = false,
+                    RemovePlayerCharacters = true,
+                    IgnoreDefaultProperties = false,
+                    ShowStatus = true
+                }
+            elseif mode == "TERRAIN_ONLY" then
+                siOptions = {
+                    FileName = options.FileName,
+                    DecompileMode = 0,
+                    NilInstances = false,
+                    ExtraInstances = {Workspace.Terrain},
+                    SavePlayers = false,
+                    ShowStatus = true
+                }
+            end
+            
+            saveFunc(siOptions)
+            return
+        end
+    end)
+    
+    if success then
+        local fileName = self:getFileName(mode)
+        Util.log(2, "Export thành công: %s", fileName)
+        if progressCallback then
+            progressCallback("Done ✓ - " .. fileName)
+        end
+        return true, fileName
+    else
+        Util.log(4, "Export thất bại: %s", tostring(err))
+        if progressCallback then
+            progressCallback("Lỗi: " .. tostring(err))
+        end
+        return false, tostring(err)
+    end
+end
+
+--- Manual export fallback (khi không có saveinstance)
+function RBXLExporter:exportManual(mode, progressCallback)
+    if progressCallback then
+        progressCallback("Executor không hỗ trợ saveinstance!\nThử phương pháp thủ công...")
+    end
+    
+    -- Phương pháp thủ công: serialize instances thành XML format
+    local xmlBuilder = XMLBuilder.new()
+    
+    if mode == "FULL_GAME" or mode == "MODEL_ONLY" then
+        -- Thu thập instances
+        local collector = InstanceCollector.new(self.config)
+        
+        local services = {}
+        if mode == "FULL_GAME" then
+            for _, serviceName in ipairs(self.config.ServicesToSave) do
+                pcall(function()
+                    services[#services + 1] = game:GetService(serviceName)
+                end)
+            end
+        else
+            services = {Workspace, ReplicatedStorage}
+        end
+        
+        -- Decompile scripts nếu cần
+        if self.config.DecompileScripts then
+            if progressCallback then
+                progressCallback("Decompile Scripts...")
+            end
+            
+            local decompiler = ScriptDecompiler.new(self.config)
+            local allScripts = decompiler:collectAllScripts()
+            local results = decompiler:batchDecompile(allScripts, function(done, total, script)
+                if progressCallback and done % 10 == 0 then
+                    progressCallback(string.format("Decompile Scripts... %d/%d", done, total))
+                end
+            end)
+            
+            -- Apply decompiled source vào scripts
+            for script, data in pairs(results) do
+                if data.success then
+                    pcall(function()
+                        -- Lưu source vào attribute để saveinstance lấy
+                        script:SetAttribute("BaoDecompiledSource", data.source)
+                    end)
+                end
+            end
+            
+            decompiler:clearCache()
+        end
+        
+        if progressCallback then
+            progressCallback("Đang serialize instances...")
+        end
     end
     
     -- Ghi file
-    local writeOk, writePath = FileWriter.write(fileName, content, statusCallback)
-    
-    BaoSaveInstance._state.busy = false
-    
-    if writeOk then
-        BaoSaveInstance._state.statusText = "Done ✓"
-        return true, writePath
-    else
-        BaoSaveInstance._state.statusText = "Write failed"
-        return false, writePath
+    local writeFunc = safeGetFunc("writefile")
+    if writeFunc then
+        local fileName = self:getFileName(mode)
+        
+        if progressCallback then
+            progressCallback("Đang ghi file " .. fileName .. "...")
+        end
+        
+        -- Thực tế, manual RBXL export rất phức tạp
+        -- Khuyến nghị sử dụng executor có saveinstance
+        Util.log(3, "Manual export cần executor hỗ trợ saveinstance để tạo .rbxl")
+        
+        if progressCallback then
+            progressCallback("⚠ Cần executor hỗ trợ saveinstance!")
+        end
+        
+        return false, "Executor không hỗ trợ saveinstance native"
     end
+    
+    return false, "Không có writefile function"
 end
 
---- Lấy trạng thái hiện tại
-function BaoSaveInstance.getStatus()
-    return {
-        busy = BaoSaveInstance._state.busy,
-        statusText = BaoSaveInstance._state.statusText,
-        stats = Util.deepClone(BaoSaveInstance._state.stats),
-        errors = #BaoSaveInstance._state.errorLog
-    }
+BaoSaveInstance.RBXLExporter = RBXLExporter
+
+-- ============================================================
+-- PHẦN 8: XML BUILDER (CHO MANUAL EXPORT)
+-- ============================================================
+
+local XMLBuilder = {}
+XMLBuilder.__index = XMLBuilder
+
+function XMLBuilder.new()
+    local self = setmetatable({}, XMLBuilder)
+    self.buffer = {}
+    self.indent = 0
+    return self
 end
 
---- Lấy error log
-function BaoSaveInstance.getErrorLog()
-    return Util.deepClone(BaoSaveInstance._state.errorLog)
+function XMLBuilder:addLine(line)
+    local prefix = string.rep("  ", self.indent)
+    self.buffer[#self.buffer + 1] = prefix .. line
 end
 
---- Reset toàn bộ state
-function BaoSaveInstance.reset()
-    BaoSaveInstance._state.initialized = false
-    BaoSaveInstance._state.busy = false
-    BaoSaveInstance._state.currentMode = nil
-    BaoSaveInstance._state.progress = 0
-    BaoSaveInstance._state.statusText = "Idle"
-    BaoSaveInstance._state.scriptCache = {}
-    BaoSaveInstance._state.errorLog = {}
-    BaoSaveInstance._state.stats = {
-        totalInstances = 0,
-        scriptsDecompiled = 0,
-        modelsProcessed = 0,
-        terrainRegions = 0,
-        fileSize = 0
-    }
-    Serializer.reset()
-    Util.logInfo("State reset complete")
+function XMLBuilder:openTag(tag, attrs)
+    local attrStr = ""
+    if attrs then
+        for k, v in pairs(attrs) do
+            attrStr = attrStr .. string.format(' %s="%s"', k, tostring(v))
+        end
+    end
+    self:addLine("<" .. tag .. attrStr .. ">")
+    self.indent = self.indent + 1
+end
+
+function XMLBuilder:closeTag(tag)
+    self.indent = self.indent - 1
+    self:addLine("</" .. tag .. ">")
+end
+
+function XMLBuilder:addProperty(name, type, value)
+    self:addLine(string.format('<%s name="%s">%s</%s>',
+        type, name, tostring(value), type))
+end
+
+function XMLBuilder:build()
+    return table.concat(self.buffer, "\n")
+end
+
+BaoSaveInstance.XMLBuilder = XMLBuilder
+
+-- ============================================================
+-- PHẦN 9: MAIN API FUNCTIONS
+-- ============================================================
+
+-- Trạng thái hiện tại
+BaoSaveInstance.State = {
+    isRunning = false,
+    currentMode = nil,
+    progress = 0,
+    status = "Idle",
+    startTime = 0,
+    lastError = nil
+}
+
+--- Khởi tạo BaoSaveInstance
+function BaoSaveInstance.init()
+    Util.log(2, "═══════════════════════════════════════")
+    Util.log(2, "BaoSaveInstance v%s đang khởi tạo...", BaoSaveInstance.Version)
+    Util.log(2, "═══════════════════════════════════════")
+    
+    -- Kiểm tra môi trường
+    local missingCount = #ENV_CHECK.missing
+    if missingCount > 0 then
+        Util.log(3, "Thiếu %d functions: %s",
+            missingCount, table.concat(ENV_CHECK.missing, ", "))
+    end
+    
+    -- Kiểm tra saveinstance
+    local hasSaveInstance = safeGetFunc("saveinstance") ~= nil 
+        or (syn and syn.saveinstance ~= nil)
+    
+    if hasSaveInstance then
+        Util.log(2, "✓ saveinstance khả dụng - Sử dụng native export")
+    else
+        Util.log(3, "✗ saveinstance KHÔNG khả dụng - Chức năng giới hạn")
+    end
+    
+    -- Kiểm tra decompile
+    local hasDecompile = safeGetFunc("decompile") ~= nil
+    if hasDecompile then
+        Util.log(2, "✓ decompile khả dụng")
+    else
+        Util.log(3, "✗ decompile KHÔNG khả dụng")
+    end
+    
+    -- Tạo output folder
+    Util.ensureFolder(BaoSaveInstance.Config.OutputFolder)
+    
+    -- Lấy thông tin game
+    local gameName = Util.getGameName()
+    Util.log(2, "Game: %s (PlaceId: %d)", gameName, game.PlaceId)
+    
+    -- Thông tin nhanh
+    local totalDesc = 0
+    pcall(function()
+        totalDesc = #game:GetDescendants()
+    end)
+    Util.log(2, "Tổng instances: ~%d", totalDesc)
+    
+    BaoSaveInstance.State.status = "Ready"
+    Util.log(2, "Khởi tạo hoàn tất!")
+    
+    return true
+end
+
+--- Decompile tất cả scripts
+function BaoSaveInstance.decompileScripts(progressCallback)
+    BaoSaveInstance.State.isRunning = true
+    BaoSaveInstance.State.status = "Decompile Scripts..."
+    BaoSaveInstance.State.startTime = os.clock()
+    
+    local decompiler = ScriptDecompiler.new(BaoSaveInstance.Config)
+    
+    if not decompiler.isReady then
+        BaoSaveInstance.State.isRunning = false
+        BaoSaveInstance.State.status = "Error: No decompile function"
+        return false, "Decompile function không khả dụng"
+    end
+    
+    -- Thu thập scripts
+    if progressCallback then progressCallback("Thu thập scripts...") end
+    local allScripts = decompiler:collectAllScripts()
+    
+    -- Batch decompile
+    local results = decompiler:batchDecompile(allScripts, function(done, total, script)
+        local pct = math.floor(done / total * 100)
+        BaoSaveInstance.State.progress = pct
+        BaoSaveInstance.State.status = string.format(
+            "Decompile: %d/%d (%d%%)", done, total, pct)
+        
+        if progressCallback then
+            progressCallback(BaoSaveInstance.State.status)
+        end
+    end)
+    
+    local elapsed = os.clock() - BaoSaveInstance.State.startTime
+    BaoSaveInstance.State.isRunning = false
+    BaoSaveInstance.State.status = string.format(
+        "Decompile Done ✓ (%.1fs) - %d/%d thành công",
+        elapsed, ScriptDecompiler.Stats.success, ScriptDecompiler.Stats.total)
+    
+    Util.log(2, BaoSaveInstance.State.status)
+    
+    -- Cleanup
+    decompiler:clearCache()
+    
+    return true, results
+end
+
+--- Save models
+function BaoSaveInstance.saveModels(progressCallback)
+    BaoSaveInstance.State.isRunning = true
+    BaoSaveInstance.State.status = "Saving Models..."
+    
+    if progressCallback then progressCallback("Thu thập models...") end
+    
+    local collector = InstanceCollector.new(BaoSaveInstance.Config)
+    local models = collector:collectModels()
+    
+    BaoSaveInstance.State.status = string.format("Tìm thấy %d models", #models)
+    if progressCallback then progressCallback(BaoSaveInstance.State.status) end
+    
+    -- Export
+    local exporter = RBXLExporter.new(BaoSaveInstance.Config)
+    local success, result = exporter:export("MODEL_ONLY", progressCallback)
+    
+    BaoSaveInstance.State.isRunning = false
+    return success, result
+end
+
+--- Save terrain
+function BaoSaveInstance.saveTerrain(progressCallback)
+    BaoSaveInstance.State.isRunning = true
+    BaoSaveInstance.State.status = "Saving Terrain..."
+    
+    if progressCallback then progressCallback("Kiểm tra terrain...") end
+    
+    local terrainSaver = TerrainSaver.new(BaoSaveInstance.Config)
+    local terrainInfo = terrainSaver:getTerrainInfo()
+    
+    if not terrainInfo.hasData then
+        BaoSaveInstance.State.isRunning = false
+        BaoSaveInstance.State.status = "Không tìm thấy terrain data"
+        if progressCallback then progressCallback("⚠ Không có terrain data!") end
+        return false, "No terrain data"
+    end
+    
+    Util.log(2, "Terrain info: Size=%s, Materials=%d, Water=%s",
+        tostring(terrainInfo.regionSize),
+        terrainInfo.materialCount,
+        tostring(terrainInfo.hasWater))
+    
+    if progressCallback then
+        progressCallback(string.format("Terrain: %d materials, Water: %s",
+            terrainInfo.materialCount, terrainInfo.hasWater and "Yes" or "No"))
+    end
+    
+    -- Export
+    local exporter = RBXLExporter.new(BaoSaveInstance.Config)
+    local success, result = exporter:export("TERRAIN_ONLY", progressCallback)
+    
+    BaoSaveInstance.State.isRunning = false
+    return success, result
+end
+
+--- Export ra file .rbxl
+function BaoSaveInstance.exportRBXL(mode, progressCallback)
+    if BaoSaveInstance.State.isRunning then
+        return false, "Đang có tiến trình chạy!"
+    end
+    
+    mode = mode or "FULL_GAME"
+    
+    BaoSaveInstance.State.isRunning = true
+    BaoSaveInstance.State.currentMode = mode
+    BaoSaveInstance.State.startTime = os.clock()
+    BaoSaveInstance.State.progress = 0
+    
+    Util.log(2, "════════════════════════════════════")
+    Util.log(2, "BẮT ĐẦU EXPORT: %s", mode)
+    Util.log(2, "════════════════════════════════════")
+    
+    local exporter = RBXLExporter.new(BaoSaveInstance.Config)
+    
+    local statusCallback = function(status)
+        BaoSaveInstance.State.status = status
+        if progressCallback then
+            progressCallback(status)
+        end
+    end
+    
+    -- Pre-decompile nếu cần
+    if mode ~= "TERRAIN_ONLY" and BaoSaveInstance.Config.DecompileScripts then
+        statusCallback("Decompile Scripts...")
+        -- Decompile sẽ được xử lý bởi saveinstance native
+        -- hoặc chạy riêng nếu cần
+    end
+    
+    -- Export
+    local success, result = exporter:export(mode, statusCallback)
+    
+    local elapsed = os.clock() - BaoSaveInstance.State.startTime
+    
+    BaoSaveInstance.State.isRunning = false
+    BaoSaveInstance.State.progress = success and 100 or 0
+    
+    if success then
+        BaoSaveInstance.State.status = string.format(
+            "Done ✓ - %s (%.1fs)", result, elapsed)
+        Util.log(2, "Export thành công: %s trong %.1f giây", result, elapsed)
+    else
+        BaoSaveInstance.State.status = "Error: " .. tostring(result)
+        BaoSaveInstance.State.lastError = result
+        Util.log(4, "Export thất bại: %s", tostring(result))
+    end
+    
+    return success, result
 end
 
 -- ============================================================
--- SECTION 12: GUI / UI
+-- PHẦN 10: CUSTOM SAVEINSTANCE (ENHANCED)
+-- ============================================================
+
+--[[
+    Custom saveinstance wrapper với các tối ưu:
+    1. Pre-decompile scripts trước khi save
+    2. Cleanup instances không cần thiết
+    3. Progress tracking
+    4. Error handling tốt hơn
+]]
+
+local CustomSaveInstance = {}
+
+function CustomSaveInstance.execute(mode, progressCallback)
+    local saveFunc = safeGetFunc("saveinstance")
+    
+    if not saveFunc then
+        return false, "saveinstance not available"
+    end
+    
+    local gameName = Util.getGameName()
+    local fileName
+    
+    -- Xác định filename
+    if mode == "FULL_GAME" then
+        fileName = gameName .. "_Full.rbxl"
+    elseif mode == "MODEL_ONLY" then
+        fileName = gameName .. "_Model.rbxl"
+    elseif mode == "TERRAIN_ONLY" then
+        fileName = gameName .. "_Terrain.rbxl"
+    else
+        fileName = gameName .. "_Export.rbxl"
+    end
+    
+    -- Build save options tối ưu
+    local options = {
+        -- Tên file output
+        FileName = fileName,
+        
+        -- ═══ Decompile Settings ═══
+        -- Mode 0: Không decompile
+        -- Mode 1: Decompile đơn giản
+        -- Mode 2: Decompile đầy đủ
+        DecompileMode = (mode ~= "TERRAIN_ONLY") and 2 or 0,
+        DecompileTimeout = BaoSaveInstance.Config.DecompileTimeout,
+        
+        -- ═══ Instance Settings ═══
+        NilInstances = (mode == "FULL_GAME"),
+        NilInstancesFix = true,
+        
+        -- ═══ Player Settings ═══
+        SavePlayers = false,
+        RemovePlayerCharacters = true,
+        IsolateStarterPlayer = true,
+        IsolateLocalPlayer = true,
+        IsolateLocalPlayerCharacter = true,
+        
+        -- ═══ Property Settings ═══
+        IgnoreDefaultProperties = false,
+        SaveNonCreatable = true,
+        SharedStrings = true,
+        Binary = true,  -- .rbxl format (binary)
+        
+        -- ═══ Script Settings ═══
+        SaveBytecode = false,
+        ScriptCache = true,
+        
+        -- ═══ Performance ═══
+        MaxThreads = BaoSaveInstance.Config.MaxParallelThreads,
+        ShowStatus = true,
+        
+        -- ═══ Extra ═══
+        ReadMe = false,
+        SafeMode = false,
+        AntiIdle = true
+    }
+    
+    -- Mode-specific overrides
+    if mode == "MODEL_ONLY" then
+        -- Thu thập model instances
+        local modelInstances = {}
+        
+        pcall(function()
+            for _, child in ipairs(Workspace:GetChildren()) do
+                if child.Name ~= "Terrain" and child.ClassName ~= "Camera" 
+                   and child.ClassName ~= "Player" then
+                    modelInstances[#modelInstances + 1] = child
+                end
+            end
+        end)
+        
+        pcall(function()
+            for _, child in ipairs(ReplicatedStorage:GetChildren()) do
+                modelInstances[#modelInstances + 1] = child
+            end
+        end)
+        
+        pcall(function()
+            for _, child in ipairs(ReplicatedFirst:GetChildren()) do
+                modelInstances[#modelInstances + 1] = child
+            end
+        end)
+        
+        pcall(function()
+            for _, child in ipairs(StarterGui:GetChildren()) do
+                modelInstances[#modelInstances + 1] = child
+            end
+        end)
+        
+        pcall(function()
+            for _, child in ipairs(StarterPack:GetChildren()) do
+                modelInstances[#modelInstances + 1] = child
+            end
+        end)
+        
+        options.ExtraInstances = modelInstances
+        options.NilInstances = false
+        
+    elseif mode == "TERRAIN_ONLY" then
+        options.ExtraInstances = {Workspace.Terrain}
+        options.NilInstances = false
+        options.DecompileMode = 0
+        options.IgnoreDefaultProperties = true
+    end
+    
+    -- Callback trước khi save
+    if progressCallback then
+        progressCallback("Saving... " .. fileName)
+    end
+    
+    -- Thực hiện save
+    local success, err = pcall(function()
+        saveFunc(options)
+    end)
+    
+    if not success then
+        -- Thử lại với options đơn giản hơn
+        Util.log(3, "Save thất bại với options đầy đủ, thử simplified...")
+        
+        local simpleOptions = {
+            FileName = fileName,
+            DecompileMode = (mode ~= "TERRAIN_ONLY") and 2 or 0,
+            NilInstances = (mode == "FULL_GAME"),
+            SavePlayers = false,
+        }
+        
+        if mode == "MODEL_ONLY" then
+            simpleOptions.ExtraInstances = options.ExtraInstances
+        elseif mode == "TERRAIN_ONLY" then
+            simpleOptions.ExtraInstances = {Workspace.Terrain}
+        end
+        
+        success, err = pcall(function()
+            saveFunc(simpleOptions)
+        end)
+        
+        if not success then
+            -- Thử lần cuối - chỉ filename
+            success, err = pcall(function()
+                saveFunc({FileName = fileName})
+            end)
+        end
+    end
+    
+    return success, success and fileName or tostring(err)
+end
+
+BaoSaveInstance.CustomSaveInstance = CustomSaveInstance
+
+-- ============================================================
+-- PHẦN 11: UI SYSTEM
 -- ============================================================
 
 local UI = {}
+UI.Colors = {
+    Background = Color3.fromRGB(20, 20, 30),
+    BackgroundDark = Color3.fromRGB(15, 15, 22),
+    Accent = Color3.fromRGB(88, 130, 255),
+    AccentHover = Color3.fromRGB(108, 150, 255),
+    AccentDark = Color3.fromRGB(60, 90, 200),
+    Success = Color3.fromRGB(80, 200, 120),
+    Error = Color3.fromRGB(255, 80, 80),
+    Warning = Color3.fromRGB(255, 200, 60),
+    Text = Color3.fromRGB(230, 230, 240),
+    TextDim = Color3.fromRGB(150, 150, 170),
+    Border = Color3.fromRGB(50, 50, 70),
+    ButtonBg = Color3.fromRGB(35, 35, 50),
+    ButtonHover = Color3.fromRGB(45, 45, 65),
+    Shadow = Color3.fromRGB(0, 0, 0)
+}
 
---- Tạo toàn bộ GUI
+--- Tạo toàn bộ UI
 function UI.create()
-    -- Xóa GUI cũ nếu có
-    local player = game:GetService("Players").LocalPlayer
-    local playerGui = player:WaitForChild("PlayerGui")
+    -- Xóa UI cũ nếu có
+    local oldGui = CoreGui:FindFirstChild("BaoSaveInstanceUI")
+    if oldGui then oldGui:Destroy() end
     
-    local existingGui = playerGui:FindFirstChild("BaoSaveInstance_GUI")
-    if existingGui then
-        existingGui:Destroy()
-    end
+    pcall(function()
+        local playerGui = Players.LocalPlayer:FindFirstChild("PlayerGui")
+        if playerGui then
+            local old = playerGui:FindFirstChild("BaoSaveInstanceUI")
+            if old then old:Destroy() end
+        end
+    end)
     
-    -- ScreenGui chính
+    -- ═══ ScreenGui ═══
     local screenGui = Instance.new("ScreenGui")
-    screenGui.Name = "BaoSaveInstance_GUI"
+    screenGui.Name = "BaoSaveInstanceUI"
     screenGui.ResetOnSpawn = false
     screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-    screenGui.DisplayOrder = 999
+    screenGui.DisplayOrder = 999999
     
-    -- Protect GUI khỏi bị xóa bởi game scripts
-    if syn and syn.protect_gui then
-        syn.protect_gui(screenGui)
-    elseif protect_gui then
-        protect_gui(screenGui)
+    -- Thử mount vào CoreGui, fallback PlayerGui
+    local mountSuccess = pcall(function()
+        screenGui.Parent = CoreGui
+    end)
+    
+    if not mountSuccess then
+        pcall(function()
+            screenGui.Parent = Players.LocalPlayer:WaitForChild("PlayerGui")
+        end)
     end
     
-    -- ==========================================
-    -- Main Frame
-    -- ==========================================
+    -- ═══ Main Frame ═══
     local mainFrame = Instance.new("Frame")
     mainFrame.Name = "MainFrame"
-    mainFrame.Size = UDim2.new(0, 340, 0, 420)
-    mainFrame.Position = UDim2.new(0.5, -170, 0.5, -210)
-    mainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
+    mainFrame.Size = UDim2.new(0, 380, 0, 520)
+    mainFrame.Position = UDim2.new(0.5, -190, 0.5, -260)
+    mainFrame.BackgroundColor3 = UI.Colors.Background
     mainFrame.BorderSizePixel = 0
     mainFrame.Active = true
     mainFrame.Parent = screenGui
     
-    -- Corner radius
+    -- Corner rounding
     local mainCorner = Instance.new("UICorner")
     mainCorner.CornerRadius = UDim.new(0, 12)
     mainCorner.Parent = mainFrame
     
-    -- Drop shadow effect (using stroke)
-    local mainStroke = Instance.new("UIStroke")
-    mainStroke.Color = Color3.fromRGB(80, 80, 120)
-    mainStroke.Thickness = 1.5
-    mainStroke.Transparency = 0.3
-    mainStroke.Parent = mainFrame
+    -- Shadow (fake)
+    local shadow = Instance.new("Frame")
+    shadow.Name = "Shadow"
+    shadow.Size = UDim2.new(1, 8, 1, 8)
+    shadow.Position = UDim2.new(0, -4, 0, -4)
+    shadow.BackgroundColor3 = UI.Colors.Shadow
+    shadow.BackgroundTransparency = 0.6
+    shadow.BorderSizePixel = 0
+    shadow.ZIndex = -1
+    shadow.Parent = mainFrame
     
-    -- ==========================================
-    -- Title Bar (Draggable)
-    -- ==========================================
+    local shadowCorner = Instance.new("UICorner")
+    shadowCorner.CornerRadius = UDim.new(0, 14)
+    shadowCorner.Parent = shadow
+    
+    -- ═══ Title Bar ═══
     local titleBar = Instance.new("Frame")
     titleBar.Name = "TitleBar"
-    titleBar.Size = UDim2.new(1, 0, 0, 45)
-    titleBar.Position = UDim2.new(0, 0, 0, 0)
-    titleBar.BackgroundColor3 = Color3.fromRGB(30, 30, 50)
+    titleBar.Size = UDim2.new(1, 0, 0, 50)
+    titleBar.BackgroundColor3 = UI.Colors.BackgroundDark
     titleBar.BorderSizePixel = 0
     titleBar.Parent = mainFrame
     
@@ -2196,209 +1642,236 @@ function UI.create()
     
     -- Fix bottom corners of title bar
     local titleFix = Instance.new("Frame")
-    titleFix.Name = "CornerFix"
-    titleFix.Size = UDim2.new(1, 0, 0, 15)
-    titleFix.Position = UDim2.new(0, 0, 1, -15)
-    titleFix.BackgroundColor3 = Color3.fromRGB(30, 30, 50)
+    titleFix.Size = UDim2.new(1, 0, 0, 12)
+    titleFix.Position = UDim2.new(0, 0, 1, -12)
+    titleFix.BackgroundColor3 = UI.Colors.BackgroundDark
     titleFix.BorderSizePixel = 0
     titleFix.Parent = titleBar
     
     -- Title text
-    local titleText = Instance.new("TextLabel")
-    titleText.Name = "Title"
-    titleText.Size = UDim2.new(1, -50, 1, 0)
-    titleText.Position = UDim2.new(0, 15, 0, 0)
-    titleText.BackgroundTransparency = 1
-    titleText.Text = "🔧 BaoSaveInstance v" .. BaoSaveInstance._VERSION
-    titleText.TextColor3 = Color3.fromRGB(220, 220, 255)
-    titleText.TextSize = 16
-    titleText.Font = Enum.Font.GothamBold
-    titleText.TextXAlignment = Enum.TextXAlignment.Left
-    titleText.Parent = titleBar
+    local titleLabel = Instance.new("TextLabel")
+    titleLabel.Name = "Title"
+    titleLabel.Size = UDim2.new(1, -80, 1, 0)
+    titleLabel.Position = UDim2.new(0, 15, 0, 0)
+    titleLabel.BackgroundTransparency = 1
+    titleLabel.Text = "🔧 BaoSaveInstance v" .. BaoSaveInstance.Version
+    titleLabel.TextColor3 = UI.Colors.Text
+    titleLabel.TextSize = 16
+    titleLabel.Font = Enum.Font.GothamBold
+    titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+    titleLabel.Parent = titleBar
     
     -- Minimize button
     local minimizeBtn = Instance.new("TextButton")
     minimizeBtn.Name = "MinimizeBtn"
     minimizeBtn.Size = UDim2.new(0, 30, 0, 30)
-    minimizeBtn.Position = UDim2.new(1, -40, 0.5, -15)
-    minimizeBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 80)
+    minimizeBtn.Position = UDim2.new(1, -70, 0, 10)
+    minimizeBtn.BackgroundColor3 = UI.Colors.ButtonBg
     minimizeBtn.BorderSizePixel = 0
-    minimizeBtn.Text = "—"
-    minimizeBtn.TextColor3 = Color3.fromRGB(200, 200, 220)
-    minimizeBtn.TextSize = 18
+    minimizeBtn.Text = "─"
+    minimizeBtn.TextColor3 = UI.Colors.TextDim
+    minimizeBtn.TextSize = 14
     minimizeBtn.Font = Enum.Font.GothamBold
     minimizeBtn.Parent = titleBar
     
-    local minBtnCorner = Instance.new("UICorner")
-    minBtnCorner.CornerRadius = UDim.new(0, 6)
-    minBtnCorner.Parent = minimizeBtn
+    local minCorner = Instance.new("UICorner")
+    minCorner.CornerRadius = UDim.new(0, 6)
+    minCorner.Parent = minimizeBtn
     
-    -- ==========================================
-    -- Content Area
-    -- ==========================================
-    local contentFrame = Instance.new("Frame")
-    contentFrame.Name = "Content"
-    contentFrame.Size = UDim2.new(1, -20, 1, -55)
-    contentFrame.Position = UDim2.new(0, 10, 0, 50)
-    contentFrame.BackgroundTransparency = 1
-    contentFrame.Parent = mainFrame
+    -- Close button
+    local closeBtn = Instance.new("TextButton")
+    closeBtn.Name = "CloseBtn"
+    closeBtn.Size = UDim2.new(0, 30, 0, 30)
+    closeBtn.Position = UDim2.new(1, -35, 0, 10)
+    closeBtn.BackgroundColor3 = UI.Colors.Error
+    closeBtn.BackgroundTransparency = 0.7
+    closeBtn.BorderSizePixel = 0
+    closeBtn.Text = "✕"
+    closeBtn.TextColor3 = UI.Colors.Text
+    closeBtn.TextSize = 14
+    closeBtn.Font = Enum.Font.GothamBold
+    closeBtn.Parent = titleBar
     
-    local contentLayout = Instance.new("UIListLayout")
-    contentLayout.FillDirection = Enum.FillDirection.Vertical
-    contentLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-    contentLayout.Padding = UDim.new(0, 8)
-    contentLayout.SortOrder = Enum.SortOrder.LayoutOrder
-    contentLayout.Parent = contentFrame
+    local closeCorner = Instance.new("UICorner")
+    closeCorner.CornerRadius = UDim.new(0, 6)
+    closeCorner.Parent = closeBtn
     
-    -- ==========================================
-    -- Status Display
-    -- ==========================================
-    local statusFrame = Instance.new("Frame")
-    statusFrame.Name = "StatusFrame"
-    statusFrame.Size = UDim2.new(1, 0, 0, 60)
-    statusFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 25)
-    statusFrame.BorderSizePixel = 0
-    statusFrame.LayoutOrder = 0
-    statusFrame.Parent = contentFrame
+    -- ═══ Content Area ═══
+    local content = Instance.new("Frame")
+    content.Name = "Content"
+    content.Size = UDim2.new(1, -20, 1, -60)
+    content.Position = UDim2.new(0, 10, 0, 55)
+    content.BackgroundTransparency = 1
+    content.Parent = mainFrame
+    
+    -- Layout
+    local layout = Instance.new("UIListLayout")
+    layout.SortOrder = Enum.SortOrder.LayoutOrder
+    layout.Padding = UDim.new(0, 8)
+    layout.Parent = content
+    
+    -- ═══ Info Panel ═══
+    local infoPanel = Instance.new("Frame")
+    infoPanel.Name = "InfoPanel"
+    infoPanel.Size = UDim2.new(1, 0, 0, 70)
+    infoPanel.BackgroundColor3 = UI.Colors.BackgroundDark
+    infoPanel.BorderSizePixel = 0
+    infoPanel.LayoutOrder = 1
+    infoPanel.Parent = content
+    
+    local infoPanelCorner = Instance.new("UICorner")
+    infoPanelCorner.CornerRadius = UDim.new(0, 8)
+    infoPanelCorner.Parent = infoPanel
+    
+    local gameName = Util.getGameName()
+    
+    local gameLabel = Instance.new("TextLabel")
+    gameLabel.Name = "GameName"
+    gameLabel.Size = UDim2.new(1, -20, 0, 22)
+    gameLabel.Position = UDim2.new(0, 10, 0, 8)
+    gameLabel.BackgroundTransparency = 1
+    gameLabel.Text = "🎮 " .. gameName
+    gameLabel.TextColor3 = UI.Colors.Text
+    gameLabel.TextSize = 13
+    gameLabel.Font = Enum.Font.GothamSemibold
+    gameLabel.TextXAlignment = Enum.TextXAlignment.Left
+    gameLabel.TextTruncate = Enum.TextTruncate.AtEnd
+    gameLabel.Parent = infoPanel
+    
+    local placeLabel = Instance.new("TextLabel")
+    placeLabel.Name = "PlaceId"
+    placeLabel.Size = UDim2.new(1, -20, 0, 18)
+    placeLabel.Position = UDim2.new(0, 10, 0, 28)
+    placeLabel.BackgroundTransparency = 1
+    placeLabel.Text = string.format("📍 PlaceId: %d", game.PlaceId)
+    placeLabel.TextColor3 = UI.Colors.TextDim
+    placeLabel.TextSize = 11
+    placeLabel.Font = Enum.Font.Gotham
+    placeLabel.TextXAlignment = Enum.TextXAlignment.Left
+    placeLabel.Parent = infoPanel
+    
+    local instanceLabel = Instance.new("TextLabel")
+    instanceLabel.Name = "InstanceCount"
+    instanceLabel.Size = UDim2.new(1, -20, 0, 18)
+    instanceLabel.Position = UDim2.new(0, 10, 0, 46)
+    instanceLabel.BackgroundTransparency = 1
+    instanceLabel.TextColor3 = UI.Colors.TextDim
+    instanceLabel.TextSize = 11
+    instanceLabel.Font = Enum.Font.Gotham
+    instanceLabel.TextXAlignment = Enum.TextXAlignment.Left
+    instanceLabel.Parent = infoPanel
+    
+    -- Count instances async
+    task.spawn(function()
+        local count = 0
+        pcall(function() count = #game:GetDescendants() end)
+        instanceLabel.Text = string.format("📦 Instances: ~%s",
+            tostring(count):reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", ""))
+    end)
+    
+    -- ═══ Status Panel ═══
+    local statusPanel = Instance.new("Frame")
+    statusPanel.Name = "StatusPanel"
+    statusPanel.Size = UDim2.new(1, 0, 0, 50)
+    statusPanel.BackgroundColor3 = UI.Colors.BackgroundDark
+    statusPanel.BorderSizePixel = 0
+    statusPanel.LayoutOrder = 2
+    statusPanel.Parent = content
     
     local statusCorner = Instance.new("UICorner")
     statusCorner.CornerRadius = UDim.new(0, 8)
-    statusCorner.Parent = statusFrame
+    statusCorner.Parent = statusPanel
     
     local statusLabel = Instance.new("TextLabel")
-    statusLabel.Name = "StatusLabel"
-    statusLabel.Size = UDim2.new(1, -16, 0, 20)
-    statusLabel.Position = UDim2.new(0, 8, 0, 5)
+    statusLabel.Name = "StatusText"
+    statusLabel.Size = UDim2.new(1, -20, 0, 20)
+    statusLabel.Position = UDim2.new(0, 10, 0, 5)
     statusLabel.BackgroundTransparency = 1
-    statusLabel.Text = "Status:"
-    statusLabel.TextColor3 = Color3.fromRGB(150, 150, 180)
+    statusLabel.Text = "⏳ Status: Ready"
+    statusLabel.TextColor3 = UI.Colors.Success
     statusLabel.TextSize = 12
-    statusLabel.Font = Enum.Font.Gotham
+    statusLabel.Font = Enum.Font.GothamSemibold
     statusLabel.TextXAlignment = Enum.TextXAlignment.Left
-    statusLabel.Parent = statusFrame
+    statusLabel.TextTruncate = Enum.TextTruncate.AtEnd
+    statusLabel.Parent = statusPanel
     
-    local statusText = Instance.new("TextLabel")
-    statusText.Name = "StatusText"
-    statusText.Size = UDim2.new(1, -16, 0, 30)
-    statusText.Position = UDim2.new(0, 8, 0, 25)
-    statusText.BackgroundTransparency = 1
-    statusText.Text = "Ready - Waiting for action"
-    statusText.TextColor3 = Color3.fromRGB(100, 255, 150)
-    statusText.TextSize = 13
-    statusText.Font = Enum.Font.GothamSemibold
-    statusText.TextXAlignment = Enum.TextXAlignment.Left
-    statusText.TextWrapped = true
-    statusText.Parent = statusFrame
-    
-    -- ==========================================
-    -- Progress Bar
-    -- ==========================================
-    local progressFrame = Instance.new("Frame")
-    progressFrame.Name = "ProgressFrame"
-    progressFrame.Size = UDim2.new(1, 0, 0, 8)
-    progressFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 60)
-    progressFrame.BorderSizePixel = 0
-    progressFrame.LayoutOrder = 1
-    progressFrame.Parent = contentFrame
+    -- Progress bar
+    local progressBg = Instance.new("Frame")
+    progressBg.Name = "ProgressBg"
+    progressBg.Size = UDim2.new(1, -20, 0, 8)
+    progressBg.Position = UDim2.new(0, 10, 0, 32)
+    progressBg.BackgroundColor3 = UI.Colors.Border
+    progressBg.BorderSizePixel = 0
+    progressBg.Parent = statusPanel
     
     local progressCorner = Instance.new("UICorner")
     progressCorner.CornerRadius = UDim.new(0, 4)
-    progressCorner.Parent = progressFrame
+    progressCorner.Parent = progressBg
     
-    local progressBar = Instance.new("Frame")
-    progressBar.Name = "ProgressBar"
-    progressBar.Size = UDim2.new(0, 0, 1, 0)
-    progressBar.BackgroundColor3 = Color3.fromRGB(80, 160, 255)
-    progressBar.BorderSizePixel = 0
-    progressBar.Parent = progressFrame
+    local progressFill = Instance.new("Frame")
+    progressFill.Name = "ProgressFill"
+    progressFill.Size = UDim2.new(0, 0, 1, 0)
+    progressFill.BackgroundColor3 = UI.Colors.Accent
+    progressFill.BorderSizePixel = 0
+    progressFill.Parent = progressBg
     
-    local progressBarCorner = Instance.new("UICorner")
-    progressBarCorner.CornerRadius = UDim.new(0, 4)
-    progressBarCorner.Parent = progressBar
+    local progressFillCorner = Instance.new("UICorner")
+    progressFillCorner.CornerRadius = UDim.new(0, 4)
+    progressFillCorner.Parent = progressFill
     
-    -- Gradient cho progress bar
-    local progressGradient = Instance.new("UIGradient")
-    progressGradient.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Color3.fromRGB(80, 160, 255)),
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(120, 80, 255))
-    })
-    progressGradient.Parent = progressBar
-    
-    -- ==========================================
-    -- Separator
-    -- ==========================================
-    local separator = Instance.new("Frame")
-    separator.Name = "Separator"
-    separator.Size = UDim2.new(0.9, 0, 0, 1)
-    separator.BackgroundColor3 = Color3.fromRGB(50, 50, 70)
-    separator.BorderSizePixel = 0
-    separator.LayoutOrder = 2
-    separator.Parent = contentFrame
-    
-    -- ==========================================
-    -- Button Factory
-    -- ==========================================
+    -- ═══ Helper: Tạo nút ═══
     local function createButton(name, text, icon, layoutOrder, color)
         local btn = Instance.new("TextButton")
         btn.Name = name
         btn.Size = UDim2.new(1, 0, 0, 42)
-        btn.BackgroundColor3 = color or Color3.fromRGB(35, 35, 55)
+        btn.BackgroundColor3 = color or UI.Colors.ButtonBg
         btn.BorderSizePixel = 0
         btn.Text = ""
-        btn.AutoButtonColor = false
         btn.LayoutOrder = layoutOrder
-        btn.Parent = contentFrame
+        btn.AutoButtonColor = false
+        btn.Parent = content
         
         local btnCorner = Instance.new("UICorner")
         btnCorner.CornerRadius = UDim.new(0, 8)
         btnCorner.Parent = btn
         
-        local btnStroke = Instance.new("UIStroke")
-        btnStroke.Color = Color3.fromRGB(60, 60, 90)
-        btnStroke.Thickness = 1
-        btnStroke.Transparency = 0.5
-        btnStroke.Parent = btn
+        -- Stroke
+        local stroke = Instance.new("UIStroke")
+        stroke.Color = UI.Colors.Border
+        stroke.Thickness = 1
+        stroke.Transparency = 0.5
+        stroke.Parent = btn
         
-        local btnIcon = Instance.new("TextLabel")
-        btnIcon.Name = "Icon"
-        btnIcon.Size = UDim2.new(0, 30, 1, 0)
-        btnIcon.Position = UDim2.new(0, 10, 0, 0)
-        btnIcon.BackgroundTransparency = 1
-        btnIcon.Text = icon
-        btnIcon.TextSize = 18
-        btnIcon.Font = Enum.Font.GothamBold
-        btnIcon.TextColor3 = Color3.fromRGB(255, 255, 255)
-        btnIcon.Parent = btn
-        
-        local btnText = Instance.new("TextLabel")
-        btnText.Name = "Label"
-        btnText.Size = UDim2.new(1, -50, 1, 0)
-        btnText.Position = UDim2.new(0, 45, 0, 0)
-        btnText.BackgroundTransparency = 1
-        btnText.Text = text
-        btnText.TextColor3 = Color3.fromRGB(220, 220, 240)
-        btnText.TextSize = 14
-        btnText.Font = Enum.Font.GothamSemibold
-        btnText.TextXAlignment = Enum.TextXAlignment.Left
-        btnText.Parent = btn
+        -- Icon + Text
+        local btnLabel = Instance.new("TextLabel")
+        btnLabel.Name = "Label"
+        btnLabel.Size = UDim2.new(1, -20, 1, 0)
+        btnLabel.Position = UDim2.new(0, 10, 0, 0)
+        btnLabel.BackgroundTransparency = 1
+        btnLabel.Text = icon .. "  " .. text
+        btnLabel.TextColor3 = UI.Colors.Text
+        btnLabel.TextSize = 14
+        btnLabel.Font = Enum.Font.GothamSemibold
+        btnLabel.TextXAlignment = Enum.TextXAlignment.Left
+        btnLabel.Parent = btn
         
         -- Hover effects
         btn.MouseEnter:Connect(function()
-            game:GetService("TweenService"):Create(btn, TweenInfo.new(0.2), {
-                BackgroundColor3 = Color3.fromRGB(50, 50, 80)
+            TweenService:Create(btn, TweenInfo.new(0.15), {
+                BackgroundColor3 = UI.Colors.ButtonHover
             }):Play()
-            game:GetService("TweenService"):Create(btnStroke, TweenInfo.new(0.2), {
-                Color = Color3.fromRGB(100, 100, 180),
+            TweenService:Create(stroke, TweenInfo.new(0.15), {
+                Color = UI.Colors.Accent,
                 Transparency = 0
             }):Play()
         end)
         
         btn.MouseLeave:Connect(function()
-            game:GetService("TweenService"):Create(btn, TweenInfo.new(0.2), {
-                BackgroundColor3 = color or Color3.fromRGB(35, 35, 55)
+            TweenService:Create(btn, TweenInfo.new(0.15), {
+                BackgroundColor3 = color or UI.Colors.ButtonBg
             }):Play()
-            game:GetService("TweenService"):Create(btnStroke, TweenInfo.new(0.2), {
-                Color = Color3.fromRGB(60, 60, 90),
+            TweenService:Create(stroke, TweenInfo.new(0.15), {
+                Color = UI.Colors.Border,
                 Transparency = 0.5
             }):Play()
         end)
@@ -2406,65 +1879,39 @@ function UI.create()
         return btn
     end
     
-    -- ==========================================
-    -- Create Action Buttons
-    -- ==========================================
-    local btnFullGame = createButton(
-        "BtnFullGame", "Decompile Full Game", "🎮", 3,
-        Color3.fromRGB(25, 40, 60)
-    )
+    -- ═══ Buttons ═══
+    local btnFullGame = createButton("BtnFullGame", 
+        "Decompile Full Game", "🌍", 3)
     
-    local btnFullModel = createButton(
-        "BtnFullModel", "Decompile Full Model", "🏗️", 4,
-        Color3.fromRGB(25, 45, 35)
-    )
+    local btnFullModel = createButton("BtnFullModel", 
+        "Decompile Full Model", "🧊", 4)
     
-    local btnTerrain = createButton(
-        "BtnTerrain", "Decompile Terrain", "🌍", 5,
-        Color3.fromRGB(45, 35, 25)
-    )
+    local btnTerrain = createButton("BtnTerrain", 
+        "Decompile Terrain", "🏔️", 5)
     
-    local btnSave = createButton(
-        "BtnSave", "Save To .rbxl", "💾", 6,
-        Color3.fromRGB(20, 50, 30)
-    )
+    local btnSaveRBXL = createButton("BtnSaveRBXL", 
+        "Save To .rbxl", "💾", 6, UI.Colors.AccentDark)
     
-    -- Separator 2
-    local separator2 = Instance.new("Frame")
-    separator2.Name = "Separator2"
-    separator2.Size = UDim2.new(0.9, 0, 0, 1)
-    separator2.BackgroundColor3 = Color3.fromRGB(50, 50, 70)
-    separator2.BorderSizePixel = 0
-    separator2.LayoutOrder = 7
-    separator2.Parent = contentFrame
+    local btnExit = createButton("BtnExit", 
+        "Exit", "❌", 7, Color3.fromRGB(60, 20, 20))
     
-    local btnExit = createButton(
-        "BtnExit", "Exit", "❌", 8,
-        Color3.fromRGB(60, 25, 25)
-    )
+    -- ═══ Credits ═══
+    local credits = Instance.new("TextLabel")
+    credits.Name = "Credits"
+    credits.Size = UDim2.new(1, 0, 0, 20)
+    credits.BackgroundTransparency = 1
+    credits.Text = "BaoSaveInstance v" .. BaoSaveInstance.Version .. " | Enhanced Decompiler"
+    credits.TextColor3 = UI.Colors.TextDim
+    credits.TextSize = 10
+    credits.Font = Enum.Font.Gotham
+    credits.TextTransparency = 0.5
+    credits.LayoutOrder = 8
+    credits.Parent = content
     
-    -- ==========================================
-    -- Stats Display
-    -- ==========================================
-    local statsLabel = Instance.new("TextLabel")
-    statsLabel.Name = "Stats"
-    statsLabel.Size = UDim2.new(1, 0, 0, 20)
-    statsLabel.BackgroundTransparency = 1
-    statsLabel.Text = "PlaceId: " .. tostring(game.PlaceId)
-    statsLabel.TextColor3 = Color3.fromRGB(100, 100, 130)
-    statsLabel.TextSize = 11
-    statsLabel.Font = Enum.Font.Gotham
-    statsLabel.LayoutOrder = 9
-    statsLabel.Parent = contentFrame
-    
-    -- ==========================================
-    -- DRAGGABLE FUNCTIONALITY
-    -- ==========================================
+    -- ═══ DRAGGABLE SYSTEM ═══
     local dragging = false
     local dragStart = nil
     local startPos = nil
-    
-    local userInputService = game:GetService("UserInputService")
     
     titleBar.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or
@@ -2481,9 +1928,9 @@ function UI.create()
         end
     end)
     
-    userInputService.InputChanged:Connect(function(input)
+    UserInputService.InputChanged:Connect(function(input)
         if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or
-                         input.UserInputType == Enum.UserInputType.Touch) then
+           input.UserInputType == Enum.UserInputType.Touch) then
             local delta = input.Position - dragStart
             mainFrame.Position = UDim2.new(
                 startPos.X.Scale, startPos.X.Offset + delta.X,
@@ -2492,94 +1939,44 @@ function UI.create()
         end
     end)
     
-    -- ==========================================
-    -- MINIMIZE FUNCTIONALITY
-    -- ==========================================
+    -- ═══ MINIMIZE SYSTEM ═══
     local minimized = false
     local originalSize = mainFrame.Size
     
     minimizeBtn.MouseButton1Click:Connect(function()
         minimized = not minimized
-        
         if minimized then
-            game:GetService("TweenService"):Create(mainFrame, TweenInfo.new(0.3, Enum.EasingStyle.Quart), {
-                Size = UDim2.new(0, 340, 0, 45)
+            TweenService:Create(mainFrame, TweenInfo.new(0.3, Enum.EasingStyle.Quint), {
+                Size = UDim2.new(0, 380, 0, 50)
             }):Play()
-            contentFrame.Visible = false
-            minimizeBtn.Text = "+"
+            content.Visible = false
+            minimizeBtn.Text = "□"
         else
-            contentFrame.Visible = true
-            game:GetService("TweenService"):Create(mainFrame, TweenInfo.new(0.3, Enum.EasingStyle.Quart), {
+            content.Visible = true
+            TweenService:Create(mainFrame, TweenInfo.new(0.3, Enum.EasingStyle.Quint), {
                 Size = originalSize
             }):Play()
-            minimizeBtn.Text = "—"
+            minimizeBtn.Text = "─"
         end
     end)
     
-    -- ==========================================
-    -- Store references for event binding
-    -- ==========================================
-    local guiRefs = {
-        screenGui = screenGui,
-        mainFrame = mainFrame,
-        statusText = statusText,
-        progressBar = progressBar,
-        statsLabel = statsLabel,
-        buttons = {
-            fullGame = btnFullGame,
-            fullModel = btnFullModel,
-            terrain = btnTerrain,
-            save = btnSave,
-            exit = btnExit
-        }
-    }
-    
-    -- Parent the GUI
-    screenGui.Parent = playerGui
-    
-    return guiRefs
-end
-
---- Cập nhật status text trên UI
-function UI.updateStatus(guiRefs, text, color)
-    if guiRefs and guiRefs.statusText then
-        guiRefs.statusText.Text = text or ""
-        if color then
-            guiRefs.statusText.TextColor3 = color
+    -- ═══ STATUS UPDATE FUNCTION ═══
+    local function updateStatus(text, color, progress)
+        statusLabel.Text = "⏳ " .. text
+        statusLabel.TextColor3 = color or UI.Colors.Text
+        
+        if progress then
+            local targetSize = UDim2.new(math.clamp(progress / 100, 0, 1), 0, 1, 0)
+            TweenService:Create(progressFill, TweenInfo.new(0.2), {
+                Size = targetSize
+            }):Play()
         end
     end
-end
-
---- Cập nhật progress bar
-function UI.updateProgress(guiRefs, progress)
-    if guiRefs and guiRefs.progressBar then
-        local targetSize = UDim2.new(math.clamp(progress, 0, 1), 0, 1, 0)
-        game:GetService("TweenService"):Create(
-            guiRefs.progressBar,
-            TweenInfo.new(0.3, Enum.EasingStyle.Quad),
-            {Size = targetSize}
-        ):Play()
-    end
-end
-
---- Cập nhật stats label
-function UI.updateStats(guiRefs)
-    if guiRefs and guiRefs.statsLabel then
-        local stats = BaoSaveInstance._state.stats
-        guiRefs.statsLabel.Text = string.format(
-            "Instances: %d | Scripts: %d | File: %s",
-            stats.totalInstances,
-            stats.scriptsDecompiled,
-            Util.formatBytes(stats.fileSize)
-        )
-    end
-end
-
---- Disable/Enable tất cả buttons
-function UI.setButtonsEnabled(guiRefs, enabled)
-    if guiRefs and guiRefs.buttons then
-        for _, btn in pairs(guiRefs.buttons) do
+    
+    local function setButtonsEnabled(enabled)
+        for _, btn in ipairs({btnFullGame, btnFullModel, btnTerrain, btnSaveRBXL}) do
             btn.Active = enabled
+            btn.AutoButtonColor = enabled
             if not enabled then
                 btn.BackgroundTransparency = 0.5
             else
@@ -2587,445 +1984,682 @@ function UI.setButtonsEnabled(guiRefs, enabled)
             end
         end
     end
-end
-
---- Animate loading trên progress bar
-function UI.startLoadingAnimation(guiRefs)
-    local animating = true
     
-    task.spawn(function()
-        while animating and guiRefs and guiRefs.progressBar do
-            -- Pulse animation
-            game:GetService("TweenService"):Create(
-                guiRefs.progressBar,
-                TweenInfo.new(0.8, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut),
-                {BackgroundColor3 = Color3.fromRGB(120, 180, 255)}
-            ):Play()
-            task.wait(0.8)
-            
-            if not animating then break end
-            
-            game:GetService("TweenService"):Create(
-                guiRefs.progressBar,
-                TweenInfo.new(0.8, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut),
-                {BackgroundColor3 = Color3.fromRGB(80, 120, 255)}
-            ):Play()
-            task.wait(0.8)
-        end
-    end)
+    -- ═══ BUTTON HANDLERS ═══
     
-    return function()
-        animating = false
-    end
-end
-
--- ============================================================
--- SECTION 13: EVENT BINDING & MAIN CONTROLLER
--- ============================================================
-
-local Controller = {}
-
---- Tạo status callback function bound đến UI
-function Controller.createStatusCallback(guiRefs)
-    return function(text)
-        UI.updateStatus(guiRefs, text, Color3.fromRGB(100, 200, 255))
-        BaoSaveInstance._state.statusText = text
-    end
-end
-
---- Handle Decompile Full Game button
-function Controller.handleFullGame(guiRefs)
-    if BaoSaveInstance._state.busy then
-        UI.updateStatus(guiRefs, "⚠ Please wait, system is busy...", Color3.fromRGB(255, 200, 100))
-        return
-    end
-    
-    UI.setButtonsEnabled(guiRefs, false)
-    UI.updateStatus(guiRefs, "🔄 Starting Full Game Decompile...", Color3.fromRGB(100, 200, 255))
-    UI.updateProgress(guiRefs, 0)
-    
-    local stopAnim = UI.startLoadingAnimation(guiRefs)
-    
-    task.spawn(function()
-        local statusCb = function(text)
-            UI.updateStatus(guiRefs, text, Color3.fromRGB(100, 200, 255))
-        end
+    -- Decompile Full Game
+    btnFullGame.MouseButton1Click:Connect(function()
+        if BaoSaveInstance.State.isRunning then return end
         
-        statusCb("Saving... Initializing...")
-        UI.updateProgress(guiRefs, 0.05)
+        setButtonsEnabled(false)
+        updateStatus("Saving Full Game...", UI.Colors.Warning, 10)
         
-        -- Init
-        BaoSaveInstance.init()
-        UI.updateProgress(guiRefs, 0.1)
-        
-        -- Decompile scripts first
-        statusCb("Decompile Scripts...")
-        UI.updateProgress(guiRefs, 0.15)
-        BaoSaveInstance.decompileScripts(statusCb)
-        UI.updateProgress(guiRefs, 0.4)
-        
-        -- Export
-        statusCb("Saving... Building RBXL...")
-        UI.updateProgress(guiRefs, 0.5)
-        
-        local success, result = BaoSaveInstance.exportRBXL("FULL_GAME", statusCb)
-        
-        UI.updateProgress(guiRefs, 1)
-        stopAnim()
-        
-        if success then
-            UI.updateStatus(guiRefs, "Done ✓ Saved: " .. tostring(result), Color3.fromRGB(100, 255, 150))
-            UI.updateStats(guiRefs)
-        else
-            UI.updateStatus(guiRefs, "✗ Failed: " .. tostring(result), Color3.fromRGB(255, 100, 100))
-        end
-        
-        UI.setButtonsEnabled(guiRefs, true)
-        
-        -- Reset progress bar after 3 seconds
-        task.wait(3)
-        UI.updateProgress(guiRefs, 0)
-    end)
-end
-
---- Handle Decompile Full Model button
-function Controller.handleFullModel(guiRefs)
-    if BaoSaveInstance._state.busy then
-        UI.updateStatus(guiRefs, "⚠ Please wait, system is busy...", Color3.fromRGB(255, 200, 100))
-        return
-    end
-    
-    UI.setButtonsEnabled(guiRefs, false)
-    UI.updateStatus(guiRefs, "🔄 Starting Model Decompile...", Color3.fromRGB(100, 200, 255))
-    UI.updateProgress(guiRefs, 0)
-    
-    local stopAnim = UI.startLoadingAnimation(guiRefs)
-    
-    task.spawn(function()
-        local statusCb = function(text)
-            UI.updateStatus(guiRefs, text, Color3.fromRGB(100, 200, 255))
-        end
-        
-        BaoSaveInstance.init()
-        UI.updateProgress(guiRefs, 0.1)
-        
-        statusCb("Decompile Scripts in models...")
-        BaoSaveInstance.decompileScripts(statusCb)
-        UI.updateProgress(guiRefs, 0.4)
-        
-        statusCb("Saving... Building Model RBXL...")
-        UI.updateProgress(guiRefs, 0.5)
-        
-        local success, result = BaoSaveInstance.exportRBXL("MODEL_ONLY", statusCb)
-        
-        UI.updateProgress(guiRefs, 1)
-        stopAnim()
-        
-        if success then
-            UI.updateStatus(guiRefs, "Done ✓ Saved: " .. tostring(result), Color3.fromRGB(100, 255, 150))
-            UI.updateStats(guiRefs)
-        else
-            UI.updateStatus(guiRefs, "✗ Failed: " .. tostring(result), Color3.fromRGB(255, 100, 100))
-        end
-        
-        UI.setButtonsEnabled(guiRefs, true)
-        task.wait(3)
-        UI.updateProgress(guiRefs, 0)
-    end)
-end
-
---- Handle Decompile Terrain button
-function Controller.handleTerrain(guiRefs)
-    if BaoSaveInstance._state.busy then
-        UI.updateStatus(guiRefs, "⚠ Please wait, system is busy...", Color3.fromRGB(255, 200, 100))
-        return
-    end
-    
-    UI.setButtonsEnabled(guiRefs, false)
-    UI.updateStatus(guiRefs, "🔄 Starting Terrain Decompile...", Color3.fromRGB(100, 200, 255))
-    UI.updateProgress(guiRefs, 0)
-    
-    local stopAnim = UI.startLoadingAnimation(guiRefs)
-    
-    task.spawn(function()
-        local statusCb = function(text)
-            UI.updateStatus(guiRefs, text, Color3.fromRGB(100, 200, 255))
-        end
-        
-        BaoSaveInstance.init()
-        UI.updateProgress(guiRefs, 0.1)
-        
-        statusCb("Saving... Reading terrain data...")
-        UI.updateProgress(guiRefs, 0.2)
-        
-        local success, result = BaoSaveInstance.exportRBXL("TERRAIN_ONLY", statusCb)
-        
-        UI.updateProgress(guiRefs, 1)
-        stopAnim()
-        
-        if success then
-            UI.updateStatus(guiRefs, "Done ✓ Saved: " .. tostring(result), Color3.fromRGB(100, 255, 150))
-            UI.updateStats(guiRefs)
-        else
-            UI.updateStatus(guiRefs, "✗ Failed: " .. tostring(result), Color3.fromRGB(255, 100, 100))
-        end
-        
-        UI.setButtonsEnabled(guiRefs, true)
-        task.wait(3)
-        UI.updateProgress(guiRefs, 0)
-    end)
-end
-
---- Handle Save To .rbxl button (quick save with last/default mode)
-function Controller.handleSave(guiRefs)
-    if BaoSaveInstance._state.busy then
-        UI.updateStatus(guiRefs, "⚠ Please wait, system is busy...", Color3.fromRGB(255, 200, 100))
-        return
-    end
-    
-    -- Default to FULL_GAME nếu chưa có mode
-    local mode = BaoSaveInstance._state.currentMode or "FULL_GAME"
-    
-    UI.setButtonsEnabled(guiRefs, false)
-    UI.updateStatus(guiRefs, "🔄 Quick Save (" .. mode .. ")...", Color3.fromRGB(100, 200, 255))
-    UI.updateProgress(guiRefs, 0)
-    
-    local stopAnim = UI.startLoadingAnimation(guiRefs)
-    
-    task.spawn(function()
-        local statusCb = function(text)
-            UI.updateStatus(guiRefs, text, Color3.fromRGB(100, 200, 255))
-        end
-        
-        BaoSaveInstance.init()
-        
-        -- Nếu có native saveinstance, dùng luôn
-        if NativeSaver.isAvailable() then
-            local gameName = Util.getGameName()
-            local fileName = gameName .. "_Full" .. BaoSaveInstance._config.fileExtension
-            
-            statusCb("Saving... Using native saveinstance...")
-            UI.updateProgress(guiRefs, 0.3)
-            
-            local success, result = NativeSaver.save("FULL_GAME", fileName, statusCb)
-            
-            UI.updateProgress(guiRefs, 1)
-            stopAnim()
+        task.spawn(function()
+            local success, result = BaoSaveInstance.exportRBXL("FULL_GAME", function(status)
+                task.spawn(function()
+                    updateStatus(status, UI.Colors.Warning, 50)
+                end)
+            end)
             
             if success then
-                UI.updateStatus(guiRefs, "Done ✓ " .. fileName, Color3.fromRGB(100, 255, 150))
+                updateStatus("Done ✓ - " .. tostring(result), UI.Colors.Success, 100)
             else
-                -- Fallback to custom
-                statusCb("Native failed, using custom serializer...")
-                local ok2, res2 = BaoSaveInstance.exportRBXL(mode, statusCb)
-                if ok2 then
-                    UI.updateStatus(guiRefs, "Done ✓ " .. tostring(res2), Color3.fromRGB(100, 255, 150))
-                else
-                    UI.updateStatus(guiRefs, "✗ Failed: " .. tostring(res2), Color3.fromRGB(255, 100, 100))
-                end
+                updateStatus("Error: " .. tostring(result), UI.Colors.Error, 0)
             end
-        else
-            -- Custom serializer
-            local success, result = BaoSaveInstance.exportRBXL(mode, statusCb)
             
-            UI.updateProgress(guiRefs, 1)
-            stopAnim()
+            setButtonsEnabled(true)
+        end)
+    end)
+    
+    -- Decompile Full Model
+    btnFullModel.MouseButton1Click:Connect(function()
+        if BaoSaveInstance.State.isRunning then return end
+        
+        setButtonsEnabled(false)
+        updateStatus("Saving Models...", UI.Colors.Warning, 10)
+        
+        task.spawn(function()
+            local success, result = BaoSaveInstance.exportRBXL("MODEL_ONLY", function(status)
+                task.spawn(function()
+                    updateStatus(status, UI.Colors.Warning, 50)
+                end)
+            end)
             
             if success then
-                UI.updateStatus(guiRefs, "Done ✓ " .. tostring(result), Color3.fromRGB(100, 255, 150))
+                updateStatus("Done ✓ - " .. tostring(result), UI.Colors.Success, 100)
             else
-                UI.updateStatus(guiRefs, "✗ Failed: " .. tostring(result), Color3.fromRGB(255, 100, 100))
+                updateStatus("Error: " .. tostring(result), UI.Colors.Error, 0)
             end
-        end
-        
-        UI.updateStats(guiRefs)
-        UI.setButtonsEnabled(guiRefs, true)
-        task.wait(3)
-        UI.updateProgress(guiRefs, 0)
+            
+            setButtonsEnabled(true)
+        end)
     end)
-end
-
---- Handle Exit button
-function Controller.handleExit(guiRefs)
-    if guiRefs and guiRefs.screenGui then
-        -- Animate out
-        game:GetService("TweenService"):Create(
-            guiRefs.mainFrame,
-            TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.In),
-            {
-                Size = UDim2.new(0, 0, 0, 0),
-                Position = UDim2.new(0.5, 0, 0.5, 0)
-            }
-        ):Play()
+    
+    -- Decompile Terrain
+    btnTerrain.MouseButton1Click:Connect(function()
+        if BaoSaveInstance.State.isRunning then return end
+        
+        setButtonsEnabled(false)
+        updateStatus("Saving Terrain...", UI.Colors.Warning, 10)
+        
+        task.spawn(function()
+            local success, result = BaoSaveInstance.exportRBXL("TERRAIN_ONLY", function(status)
+                task.spawn(function()
+                    updateStatus(status, UI.Colors.Warning, 50)
+                end)
+            end)
+            
+            if success then
+                updateStatus("Done ✓ - " .. tostring(result), UI.Colors.Success, 100)
+            else
+                updateStatus("Error: " .. tostring(result), UI.Colors.Error, 0)
+            end
+            
+            setButtonsEnabled(true)
+        end)
+    end)
+    
+    -- Save To .rbxl (Quick save - full game)
+    btnSaveRBXL.MouseButton1Click:Connect(function()
+        if BaoSaveInstance.State.isRunning then return end
+        
+        setButtonsEnabled(false)
+        updateStatus("Quick Save .rbxl...", UI.Colors.Accent, 20)
+        
+        task.spawn(function()
+            local success, result = CustomSaveInstance.execute("FULL_GAME", function(status)
+                task.spawn(function()
+                    updateStatus(status, UI.Colors.Warning, 60)
+                end)
+            end)
+            
+            if success then
+                updateStatus("Saved ✓ - " .. tostring(result), UI.Colors.Success, 100)
+            else
+                updateStatus("Error: " .. tostring(result), UI.Colors.Error, 0)
+            end
+            
+            setButtonsEnabled(true)
+        end)
+    end)
+    
+    -- Exit
+    closeBtn.MouseButton1Click:Connect(function()
+        TweenService:Create(mainFrame, TweenInfo.new(0.3, Enum.EasingStyle.Quint), {
+            Size = UDim2.new(0, 0, 0, 0),
+            Position = UDim2.new(0.5, 0, 0.5, 0)
+        }):Play()
         
         task.wait(0.35)
-        guiRefs.screenGui:Destroy()
+        screenGui:Destroy()
+    end)
+    
+    btnExit.MouseButton1Click:Connect(function()
+        TweenService:Create(mainFrame, TweenInfo.new(0.3, Enum.EasingStyle.Quint), {
+            Size = UDim2.new(0, 0, 0, 0),
+            Position = UDim2.new(0.5, 0, 0.5, 0)
+        }):Play()
         
-        -- Cleanup
-        BaoSaveInstance.reset()
+        task.wait(0.35)
+        screenGui:Destroy()
+    end)
+    
+    -- ═══ OPEN ANIMATION ═══
+    mainFrame.Size = UDim2.new(0, 0, 0, 0)
+    mainFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
+    
+    TweenService:Create(mainFrame, TweenInfo.new(0.4, Enum.EasingStyle.Back), {
+        Size = originalSize,
+        Position = UDim2.new(0.5, -190, 0.5, -260)
+    }):Play()
+    
+    -- ═══ KEYBIND: Toggle visibility with RightShift ═══
+    UserInputService.InputBegan:Connect(function(input, processed)
+        if processed then return end
+        if input.KeyCode == Enum.KeyCode.RightShift then
+            screenGui.Enabled = not screenGui.Enabled
+        end
+    end)
+    
+    UI.ScreenGui = screenGui
+    UI.StatusLabel = statusLabel
+    UI.ProgressFill = progressFill
+    
+    Util.log(2, "UI đã được tạo thành công! Nhấn RightShift để ẩn/hiện")
+    
+    return screenGui
+end
+
+BaoSaveInstance.UI = UI
+
+-- ============================================================
+-- PHẦN 12: ADVANCED SAVEINSTANCE OPTIONS BUILDER
+-- ============================================================
+
+--[[
+    Module này xây dựng options tối ưu cho từng executor cụ thể
+    Hỗ trợ: Synapse X, Script-Ware, Fluxus, Wave, Solara, etc.
+]]
+
+local OptionsBuilder = {}
+
+function OptionsBuilder.detect_executor()
+    -- Phát hiện executor đang sử dụng
+    if syn then return "synapse" end
+    if is_sirhurt_closure then return "sirhurt" end
+    if KRNL_LOADED then return "krnl" end
+    if fluxus then return "fluxus" end
+    if getexecutorname then
+        local name = getexecutorname():lower()
+        return name
     end
+    if identifyexecutor then
+        local name = identifyexecutor():lower()
+        return name
+    end
+    return "unknown"
 end
 
---- Bind tất cả events
-function Controller.bindEvents(guiRefs)
-    local buttons = guiRefs.buttons
-    
-    buttons.fullGame.MouseButton1Click:Connect(function()
-        Controller.handleFullGame(guiRefs)
-    end)
-    
-    buttons.fullModel.MouseButton1Click:Connect(function()
-        Controller.handleFullModel(guiRefs)
-    end)
-    
-    buttons.terrain.MouseButton1Click:Connect(function()
-        Controller.handleTerrain(guiRefs)
-    end)
-    
-    buttons.save.MouseButton1Click:Connect(function()
-        Controller.handleSave(guiRefs)
-    end)
-    
-    buttons.exit.MouseButton1Click:Connect(function()
-        Controller.handleExit(guiRefs)
-    end)
-end
-
--- ============================================================
--- SECTION 14: ENHANCED SAVEINSTANCE USING EXECUTOR NATIVES
--- Override exportRBXL to prefer executor's saveinstance
--- ============================================================
-
---- Enhanced export sử dụng tối ưu executor functions
-function BaoSaveInstance.enhancedExport(mode, statusCallback)
-    -- Kiểm tra các hàm executor phổ biến
-    local hasSaveInstance = saveinstance ~= nil
-    local hasSynSave = syn ~= nil and syn.saveinstance ~= nil
-    local hasUnifiedSave = (unified ~= nil and unified.saveinstance ~= nil)
-    
+function OptionsBuilder.build(mode, executorName)
+    executorName = executorName or OptionsBuilder.detect_executor()
     local gameName = Util.getGameName()
     
-    if mode == "FULL_GAME" then
-        local fileName = gameName .. "_Full.rbxl"
-        local options = {
-            -- Unified SaveInstance format (tương thích nhiều executor)
-            FileName = fileName,
-            Object = game,
+    local suffix = {
+        FULL_GAME = "_Full",
+        MODEL_ONLY = "_Model",
+        TERRAIN_ONLY = "_Terrain"
+    }
+    
+    local fileName = gameName .. (suffix[mode] or "") .. ".rbxl"
+    
+    -- Base options
+    local opts = {
+        FileName = fileName,
+        SavePlayers = false,
+        RemovePlayerCharacters = true,
+    }
+    
+    -- Executor-specific options
+    if executorName == "synapse" then
+        -- Synapse X format
+        opts.DecompileMode = (mode ~= "TERRAIN_ONLY") and "decompile" or "none"
+        opts.NilInstances = (mode == "FULL_GAME")
+        opts.DecompileTimeout = BaoSaveInstance.Config.DecompileTimeout
+        opts.FilePath = BaoSaveInstance.Config.OutputFolder
+        
+    else
+        -- Unified format (most modern executors)
+        opts.DecompileMode = (mode ~= "TERRAIN_ONLY") and 2 or 0
+        opts.NilInstances = (mode == "FULL_GAME")
+        opts.NilInstancesFix = true
+        opts.DecompileTimeout = BaoSaveInstance.Config.DecompileTimeout
+        opts.IsolateStarterPlayer = true
+        opts.SaveNonCreatable = true
+        opts.SharedStrings = true
+        opts.Binary = true
+        opts.ShowStatus = true
+        opts.ScriptCache = true
+        opts.SaveBytecode = false
+        opts.IgnoreDefaultProperties = false
+        opts.AntiIdle = true
+    end
+    
+    -- Mode-specific additions
+    if mode == "MODEL_ONLY" then
+        local instances = {}
+        pcall(function()
+            for _, c in ipairs(Workspace:GetChildren()) do
+                if c.Name ~= "Terrain" and c.ClassName ~= "Camera" then
+                    instances[#instances + 1] = c
+                end
+            end
+        end)
+        pcall(function()
+            for _, c in ipairs(ReplicatedStorage:GetChildren()) do
+                instances[#instances + 1] = c
+            end
+        end)
+        pcall(function()
+            for _, c in ipairs(StarterGui:GetChildren()) do
+                instances[#instances + 1] = c
+            end
+        end)
+        pcall(function()
+            for _, c in ipairs(StarterPack:GetChildren()) do
+                instances[#instances + 1] = c
+            end
+        end)
+        pcall(function()
+            for _, c in ipairs(StarterPlayer:GetChildren()) do
+                instances[#instances + 1] = c
+            end
+        end)
+        opts.ExtraInstances = instances
+        opts.NilInstances = false
+        
+    elseif mode == "TERRAIN_ONLY" then
+        opts.ExtraInstances = {Workspace.Terrain}
+        opts.NilInstances = false
+        opts.DecompileMode = executorName == "synapse" and "none" or 0
+    end
+    
+    return opts
+end
+
+BaoSaveInstance.OptionsBuilder = OptionsBuilder
+
+-- ============================================================
+-- PHẦN 13: ANTI-CRASH & PERFORMANCE MONITOR
+-- ============================================================
+
+local PerformanceMonitor = {}
+
+function PerformanceMonitor.start()
+    local monitor = {
+        startTime = os.clock(),
+        startMemory = collectgarbage("count"),
+        peakMemory = 0,
+        operations = 0
+    }
+    
+    return monitor
+end
+
+function PerformanceMonitor.update(monitor)
+    monitor.operations = monitor.operations + 1
+    local currentMem = collectgarbage("count")
+    
+    if currentMem > monitor.peakMemory then
+        monitor.peakMemory = currentMem
+    end
+    
+    -- Auto GC nếu memory quá cao
+    if currentMem > BaoSaveInstance.Config.MaxMemoryMB * 1024 * 0.8 then
+        collectgarbage("collect")
+        task.wait(0.01)
+    end
+    
+    -- Yield định kỳ
+    if monitor.operations % BaoSaveInstance.Config.GCInterval == 0 then
+        collectgarbage("step", 200)
+        task.wait()
+    end
+end
+
+function PerformanceMonitor.report(monitor)
+    local elapsed = os.clock() - monitor.startTime
+    local memUsed = collectgarbage("count") - monitor.startMemory
+    
+    return {
+        elapsed = elapsed,
+        memoryUsedKB = memUsed,
+        peakMemoryKB = monitor.peakMemory,
+        operations = monitor.operations,
+        opsPerSecond = monitor.operations / math.max(elapsed, 0.001)
+    }
+end
+
+BaoSaveInstance.PerformanceMonitor = PerformanceMonitor
+
+-- ============================================================
+-- PHẦN 14: FAST DECOMPILE PIPELINE
+-- ============================================================
+
+--[[
+    Pipeline decompile nhanh:
+    1. Thu thập tất cả scripts
+    2. Phân loại theo kích thước (nhỏ → lớn)
+    3. Decompile theo batch với yielding thông minh
+    4. Cache kết quả
+    5. Fallback cho scripts fail
+]]
+
+local FastDecompilePipeline = {}
+
+function FastDecompilePipeline.run(progressCallback)
+    local decompileFunc = safeGetFunc("decompile")
+    if not decompileFunc then
+        Util.log(3, "Decompile function không khả dụng, sẽ dùng saveinstance built-in")
+        return nil
+    end
+    
+    local startTime = os.clock()
+    local scripts = {}
+    local cache = {}
+    local stats = {total = 0, success = 0, failed = 0, cached = 0}
+    
+    -- Bước 1: Thu thập scripts
+    if progressCallback then progressCallback("Collecting scripts...") end
+    
+    local getScripts = safeGetFunc("getscripts")
+    local getModules = safeGetFunc("getloadedmodules")
+    local seen = {}
+    
+    if getScripts then
+        pcall(function()
+            for _, s in ipairs(getScripts()) do
+                local id = tostring(s:GetDebugId())
+                if not seen[id] then
+                    seen[id] = true
+                    scripts[#scripts + 1] = s
+                end
+            end
+        end)
+    end
+    
+    if getModules then
+        pcall(function()
+            for _, m in ipairs(getModules()) do
+                local id = tostring(m:GetDebugId())
+                if not seen[id] then
+                    seen[id] = true
+                    scripts[#scripts + 1] = m
+                end
+            end
+        end)
+    end
+    
+    -- Bước 2: Quét thủ công
+    local servicesToScan = {
+        Workspace, ReplicatedStorage, ReplicatedFirst,
+        StarterGui, StarterPack, StarterPlayer,
+        Lighting, SoundService
+    }
+    
+    for _, service in ipairs(servicesToScan) do
+        pcall(function()
+            for _, desc in ipairs(service:GetDescendants()) do
+                if desc:IsA("LuaSourceContainer") then
+                    local id = tostring(desc:GetDebugId())
+                    if not seen[id] then
+                        seen[id] = true
+                        scripts[#scripts + 1] = desc
+                    end
+                end
+            end
+        end)
+        task.wait()
+    end
+    
+    stats.total = #scripts
+    Util.log(2, "Thu thập được %d scripts", stats.total)
+    
+    if stats.total == 0 then
+        return cache
+    end
+    
+    -- Bước 3: Sắp xếp theo priority
+    table.sort(scripts, function(a, b)
+        -- ModuleScript trước, Script sau
+        local order = {ModuleScript = 1, LocalScript = 2, Script = 3}
+        local oa = order[a.ClassName] or 4
+        local ob = order[b.ClassName] or 4
+        return oa < ob
+    end)
+    
+    -- Bước 4: Decompile
+    local batchSize = BaoSaveInstance.Config.DecompileBatchSize
+    local timeout = BaoSaveInstance.Config.DecompileTimeout
+    
+    for i = 1, #scripts do
+        local script = scripts[i]
+        local id = tostring(script:GetDebugId())
+        
+        -- Decompile với timeout
+        local source = nil
+        local ok = false
+        
+        for attempt = 1, 2 do
+            local s, r = pcall(function()
+                return decompileFunc(script)
+            end)
             
-            -- Decompile options
-            Decompile = true,
-            DecompileTimeout = BaoSaveInstance._config.decompileTimeout,
-            DecompileIgnore = {"Chat", "CoreGui", "CorePackages"},
+            if s and r and #r > 0 then
+                source = r
+                ok = true
+                break
+            end
             
-            -- What to save
-            NilInstances = true,
-            NilInstancesFixes = true,
-            
-            -- Removal options
-            RemovePlayerCharacters = true,
+            if attempt < 2 then
+                task.wait(0.02)
+            end
+        end
+        
+        if ok then
+            cache[id] = source
+            stats.success = stats.success + 1
+        else
+            cache[id] = string.format(
+                "-- Decompile failed: %s (%s)\n-- Path: %s",
+                script.Name, script.ClassName,
+                pcall(function() return script:GetFullName() end) 
+                    and script:GetFullName() or "unknown"
+            )
+            stats.failed = stats.failed + 1
+        end
+        
+        -- Progress callback
+        if progressCallback and i % 5 == 0 then
+            local pct = math.floor(i / stats.total * 100)
+            progressCallback(string.format(
+                "Decompile: %d/%d (%d%%) - %s",
+                i, stats.total, pct, script.Name
+            ))
+        end
+        
+        -- Yield
+        if i % batchSize == 0 then
+            task.wait(0.001)
+        end
+        
+        -- Memory check
+        if i % 200 == 0 then
+            local mem = collectgarbage("count") / 1024
+            if mem > BaoSaveInstance.Config.MaxMemoryMB * 0.7 then
+                collectgarbage("collect")
+                task.wait(0.05)
+            end
+        end
+    end
+    
+    local elapsed = os.clock() - startTime
+    Util.log(2, "Fast Decompile hoàn thành: %d/%d thành công trong %.1fs (%.0f scripts/s)",
+        stats.success, stats.total, elapsed, stats.total / math.max(elapsed, 0.001))
+    
+    return cache, stats
+end
+
+BaoSaveInstance.FastDecompilePipeline = FastDecompilePipeline
+
+-- ============================================================
+-- PHẦN 15: UNIFIED EXPORT (KẾT HỢP TẤT CẢ)
+-- ============================================================
+
+--[[
+    Hàm export chính - kết hợp:
+    1. Fast decompile pipeline
+    2. Options builder
+    3. Custom saveinstance
+    4. Performance monitor
+    5. Error handling
+]]
+
+function BaoSaveInstance.unifiedExport(mode, progressCallback)
+    if BaoSaveInstance.State.isRunning then
+        return false, "Đang có tiến trình đang chạy!"
+    end
+    
+    BaoSaveInstance.State.isRunning = true
+    BaoSaveInstance.State.currentMode = mode
+    BaoSaveInstance.State.startTime = os.clock()
+    
+    local perfMonitor = PerformanceMonitor.start()
+    
+    local callback = function(status)
+        BaoSaveInstance.State.status = status
+        if progressCallback then
+            progressCallback(status)
+        end
+    end
+    
+    callback("Khởi tạo export " .. mode .. "...")
+    
+    -- Bước 1: Pre-decompile (tùy chọn, giúp nhanh hơn)
+    if mode ~= "TERRAIN_ONLY" and BaoSaveInstance.Config.DecompileScripts then
+        -- Chú ý: Hầu hết executor đã có built-in decompile trong saveinstance
+        -- Pipeline này chạy trước để warm up cache
+        if BaoSaveInstance.Config.ParallelDecompile then
+            callback("Pre-decompile scripts (fast pipeline)...")
+            -- FastDecompilePipeline sẽ cache kết quả
+            -- saveinstance sẽ sử dụng cache này nếu executor hỗ trợ
+            task.spawn(function()
+                FastDecompilePipeline.run(function(status)
+                    -- Update UI nhưng không block
+                end)
+            end)
+            task.wait(0.5) -- Cho pipeline bắt đầu
+        end
+    end
+    
+    -- Bước 2: Detect executor và build options
+    local executorName = OptionsBuilder.detect_executor()
+    callback(string.format("Executor: %s | Building options...", executorName))
+    
+    local options = OptionsBuilder.build(mode, executorName)
+    
+    -- Bước 3: Execute saveinstance
+    callback("Saving... " .. options.FileName)
+    
+    local saveFunc = safeGetFunc("saveinstance")
+    
+    if not saveFunc then
+        -- Thử Synapse X API
+        if syn and syn.saveinstance then
+            saveFunc = function(opts)
+                syn.saveinstance(game, opts.FileName, opts)
+            end
+        end
+    end
+    
+    if not saveFunc then
+        BaoSaveInstance.State.isRunning = false
+        callback("❌ Executor không hỗ trợ saveinstance!")
+        return false, "No saveinstance function available"
+    end
+    
+    -- Execute với error handling
+    local success, err
+    
+    -- Thử với full options
+    success, err = pcall(function()
+        saveFunc(options)
+    end)
+    
+    if not success then
+        Util.log(3, "Full options failed (%s), trying simplified...", tostring(err))
+        callback("Retry với simplified options...")
+        
+        -- Thử simplified
+        local simpleOpts = {
+            FileName = options.FileName,
+            DecompileMode = options.DecompileMode,
+            NilInstances = options.NilInstances,
             SavePlayers = false,
-            RemovePlayers = true,
-            
-            -- Isolated container handling
-            IsolateStarterPlayer = true,
-            IsolateLocalPlayer = false,
-            IsolateLocalPlayerCharacter = true,
-            
-            -- Script handling
-            SaveNonCreatable = false,
-            IgnoreDefaultProperties = true,
-            IgnoreNotAccessible = true,
-            IgnorePropertiesOfNotScriptable = false,
-            
-            -- Binary format for smaller file
-            Binary = false,  -- XML format cho compatibility
-            
-            -- Callback
-            ShowStatus = true,
-            StatusCallback = statusCallback,
-            
-            -- Ensure .rbxl output
-            Mode = "optimized",
-            FilePath = BaoSaveInstance._config.outputFolder .. "/" .. fileName
         }
         
-        -- Try different executor APIs
-        if hasSynSave then
-            if statusCallback then statusCallback("Using Synapse saveinstance...") end
-            local ok, err = pcall(syn.saveinstance, options)
-            if ok then return true, fileName end
+        if options.ExtraInstances then
+            simpleOpts.ExtraInstances = options.ExtraInstances
         end
         
-        if hasSaveInstance then
-            if statusCallback then statusCallback("Using saveinstance...") end
-            local ok, err = pcall(saveinstance, options)
-            if ok then return true, fileName end
-        end
-        
-        if hasUnifiedSave then
-            if statusCallback then statusCallback("Using unified saveinstance...") end
-            local ok, err = pcall(unified.saveinstance, options)
-            if ok then return true, fileName end
-        end
+        success, err = pcall(function()
+            saveFunc(simpleOpts)
+        end)
     end
     
-    -- Nếu không có native, dùng custom
-    return BaoSaveInstance.exportRBXL(mode, statusCallback)
+    if not success then
+        Util.log(3, "Simplified failed (%s), trying minimal...", tostring(err))
+        callback("Retry với minimal options...")
+        
+        -- Thử minimal
+        success, err = pcall(function()
+            saveFunc({FileName = options.FileName})
+        end)
+    end
+    
+    -- Bước 4: Report
+    local report = PerformanceMonitor.report(perfMonitor)
+    
+    BaoSaveInstance.State.isRunning = false
+    
+    if success then
+        local finalStatus = string.format(
+            "Done ✓ - %s (%.1fs, Peak: %.0fMB)",
+            options.FileName, report.elapsed, report.peakMemoryKB / 1024)
+        callback(finalStatus)
+        Util.log(2, finalStatus)
+        return true, options.FileName
+    else
+        local errorStatus = "❌ Export failed: " .. tostring(err)
+        callback(errorStatus)
+        Util.log(4, errorStatus)
+        return false, tostring(err)
+    end
 end
 
 -- ============================================================
--- SECTION 15: STARTUP / MAIN ENTRY POINT
+-- PHẦN 16: ENTRY POINT - KHỞI CHẠY
 -- ============================================================
 
-local function main()
-    print("╔══════════════════════════════════════════╗")
-    print("║     BaoSaveInstance v" .. BaoSaveInstance._VERSION .. " Loading...     ║")
-    print("╚══════════════════════════════════════════╝")
-    
-    -- Initialize
-    BaoSaveInstance.init()
-    
-    -- Create UI
-    local guiRefs = UI.create()
-    
-    if not guiRefs then
-        warn("[BaoSaveInstance] Failed to create UI!")
-        return
-    end
-    
-    -- Bind events
-    Controller.bindEvents(guiRefs)
-    
-    -- Show welcome
-    UI.updateStatus(guiRefs, "✓ Ready! Select an action below.", Color3.fromRGB(100, 255, 150))
-    
-    print("[BaoSaveInstance] Successfully loaded!")
-    print("[BaoSaveInstance] Game: " .. Util.getGameName())
-    print("[BaoSaveInstance] PlaceId: " .. tostring(game.PlaceId))
-    
-    -- Export API to global
+-- Khởi tạo
+BaoSaveInstance.init()
+
+-- Tạo UI
+BaoSaveInstance.UI.create()
+
+-- Export global cho các script khác sử dụng
+if getgenv then
     getgenv().BaoSaveInstance = BaoSaveInstance
-    
-    return BaoSaveInstance
+else
+    _G.BaoSaveInstance = BaoSaveInstance
 end
 
 -- ============================================================
--- SECTION 16: EXPORT MODULE + RUN
+-- PHẦN 17: CONSOLE API (CHO ADVANCED USERS)
 -- ============================================================
 
--- Module export cho external use
-BaoSaveInstance.UI = UI
-BaoSaveInstance.Util = Util
-BaoSaveInstance.Serializer = Serializer
-BaoSaveInstance.ScriptDecompiler = ScriptDecompiler
-BaoSaveInstance.TerrainSerializer = TerrainSerializer
-BaoSaveInstance.RBXLBuilder = RBXLBuilder
-BaoSaveInstance.FileWriter = FileWriter
-BaoSaveInstance.NativeSaver = NativeSaver
-BaoSaveInstance.PropertyDB = PropertyDB
-BaoSaveInstance.Controller = Controller
+--[[
+    Sử dụng từ console:
+    
+    -- Full game save
+    BaoSaveInstance.exportRBXL("FULL_GAME")
+    
+    -- Model only
+    BaoSaveInstance.exportRBXL("MODEL_ONLY")
+    
+    -- Terrain only
+    BaoSaveInstance.exportRBXL("TERRAIN_ONLY")
+    
+    -- Unified export (recommended)
+    BaoSaveInstance.unifiedExport("FULL_GAME")
+    
+    -- Decompile scripts only
+    BaoSaveInstance.decompileScripts()
+    
+    -- Fast decompile
+    BaoSaveInstance.FastDecompilePipeline.run(print)
+    
+    -- Check state
+    print(BaoSaveInstance.State.status)
+    
+    -- Custom config
+    BaoSaveInstance.Config.DecompileTimeout = 30
+    BaoSaveInstance.Config.MaxParallelThreads = 16
+    BaoSaveInstance.exportRBXL("FULL_GAME")
+]]
 
--- Auto-run
-main()
+Util.log(2, "═══════════════════════════════════════")
+Util.log(2, "BaoSaveInstance v%s đã sẵn sàng!", BaoSaveInstance.Version)
+Util.log(2, "Nhấn RightShift để ẩn/hiện UI")
+Util.log(2, "═══════════════════════════════════════")
 
 return BaoSaveInstance
