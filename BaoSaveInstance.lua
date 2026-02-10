@@ -14,12 +14,6 @@ do -- Encapsulate the script to prevent environment leakage
 -- BaoSaveInstance v1.1 - Maximum Fidelity & Stealth
 --=============================================================================
 
-local getService = game.GetService
-local function GetService(name)
-    local cloneref = (getfenv().cloneref or getfenv().cloneref_old or function(i) return i end)
-    return cloneref(getService(game, name))
-end
-
 -- Namecall-Safe Method Caching
 local isA = game.IsA
 local getChildren = game.GetChildren
@@ -30,20 +24,37 @@ local destroy = game.Destroy
 local clone = game.Clone
 local getFullName = game.GetFullName
 local readVoxels = game.ReadVoxels
-local getMinExtents = game.GetMinExtents -- Standard Terrain methods
+local getMinExtents = game.GetMinExtents
 local getMaxExtents = game.GetMaxExtents
 local expandToGrid = Region3.new().ExpandToGrid
 local connect = game.ChildAdded.Connect
 local wait = game.ChildAdded.Wait
 local getComponents = CFrame.new().GetComponents
 
+-- Executor Detection & Function Normalization
+local identifyExecutor = Utils.GetFunction("identifyexecutor") or Utils.GetFunction("getexecutorname") or function() return "Unknown" end
+local executorName = identifyExecutor()
+
+-- Optimized play method caching
+local playTween = nil
+pcall(function()
+    local dummyFrame = Instance.new("Frame")
+    local dummyTween = GetService("TweenService"):Create(dummyFrame, TweenInfo.new(0), {})
+    playTween = dummyTween.Play
+    destroy(dummyTween)
+    destroy(dummyFrame)
+end)
+
+local playSound = Instance.new("Sound").Play
+local stopSound = Instance.new("Sound").Stop
+
+-- Stealth Service Access
 local Players = GetService("Players")
 local Workspace = GetService("Workspace")
 local CoreGui = GetService("CoreGui")
 local TweenService = GetService("TweenService")
-
+local HttpService = GetService("HttpService")
 local createTween = TweenService.Create
-local play = Instance.new("Sound").Play -- Generic Play method
 
 local HttpService = GetService("HttpService")
 local Debris = GetService("Debris")
@@ -1203,10 +1214,11 @@ local UI = {}
 UI.Connections = {}
 
 --- Clean up all UI connections
+local disconnect = game.ChildAdded.Connect(game.ChildAdded, function() end).Disconnect
 function UI.Cleanup()
     for _, conn in ipairs(UI.Connections) do
-        if conn and conn.Disconnect then
-            conn:Disconnect()
+        if conn then
+            pcall(disconnect, conn)
         end
     end
     UI.Connections = {}
@@ -1270,7 +1282,7 @@ function UI.MakeDraggable(frame, handle)
         )
     end
     
-    local conn1 = handle.InputBegan:Connect(function(input)
+    local conn1 = connect(handle.InputBegan, function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or
            input.UserInputType == Enum.UserInputType.Touch then
             dragging = true
@@ -1279,14 +1291,14 @@ function UI.MakeDraggable(frame, handle)
         end
     end)
     
-    local conn2 = handle.InputEnded:Connect(function(input)
+    local conn2 = connect(handle.InputEnded, function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or
            input.UserInputType == Enum.UserInputType.Touch then
             dragging = false
         end
     end)
     
-    local conn3 = UserInputService.InputChanged:Connect(function(input)
+    local conn3 = connect(UserInputService.InputChanged, function(input)
         if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or
                          input.UserInputType == Enum.UserInputType.Touch) then
             updateDrag(input)
@@ -1321,23 +1333,25 @@ function UI.Button(props)
     local defaultColor = button.BackgroundColor3
     local hoverColor = props.HoverColor or Config.Colors.Accent
     
-    local conn1 = button.MouseEnter:Connect(function()
-        TweenService:Create(button, TweenInfo.new(0.2), {
+    local conn1 = connect(button.MouseEnter, function()
+        local tween = createTween(TweenService, button, TweenInfo.new(0.2), {
             BackgroundColor3 = hoverColor
-        }):Play()
+        })
+        playTween(tween)
     end)
     
-    local conn2 = button.MouseLeave:Connect(function()
-        TweenService:Create(button, TweenInfo.new(0.2), {
+    local conn2 = connect(button.MouseLeave, function()
+        local tween = createTween(TweenService, button, TweenInfo.new(0.2), {
             BackgroundColor3 = defaultColor
-        }):Play()
+        })
+        playTween(tween)
     end)
     
     table.insert(UI.Connections, conn1)
     table.insert(UI.Connections, conn2)
     
     if props.Callback then
-        local conn3 = button.MouseButton1Click:Connect(props.Callback)
+        local conn3 = connect(button.MouseButton1Click, props.Callback)
         table.insert(UI.Connections, conn3)
     end
     
@@ -1574,21 +1588,23 @@ function UI.Dropdown(props)
         optBtn.ZIndex = 10
         optBtn.Parent = dropFrame
         
-        local conn = optBtn.MouseButton1Click:Connect(function()
+        local conn = connect(optBtn.MouseButton1Click, function()
             selectedValue.Value = option
             mainButton.Text = "  " .. option
             
             -- Close dropdown
             isOpen = false
-            TweenService:Create(dropFrame, TweenInfo.new(0.2), {
+            local tween = createTween(TweenService, dropFrame, TweenInfo.new(0.2), {
                 Size = UDim2.new(1, 0, 0, 0)
-            }):Play()
+            })
+            playTween(tween)
             task.delay(0.2, function()
                 dropFrame.Visible = false
             end)
-            TweenService:Create(arrow, TweenInfo.new(0.2), {
+            local tweenRot = createTween(TweenService, arrow, TweenInfo.new(0.2), {
                 Rotation = 0
-            }):Play()
+            })
+            playTween(tweenRot)
             
             if props.Callback then
                 props.Callback(option)
@@ -1603,22 +1619,26 @@ function UI.Dropdown(props)
         
         if isOpen then
             dropFrame.Visible = true
-            TweenService:Create(dropFrame, TweenInfo.new(0.2), {
+            local tweenSize = createTween(TweenService, dropFrame, TweenInfo.new(0.2), {
                 Size = UDim2.new(1, 0, 0, math.min(#(props.Options or {}) * 26, 130))
-            }):Play()
-            TweenService:Create(arrow, TweenInfo.new(0.2), {
+            })
+            playTween(tweenSize)
+            local tweenRot = createTween(TweenService, arrow, TweenInfo.new(0.2), {
                 Rotation = 180
-            }):Play()
+            })
+            playTween(tweenRot)
         else
-            TweenService:Create(dropFrame, TweenInfo.new(0.2), {
+            local tweenSize = createTween(TweenService, dropFrame, TweenInfo.new(0.2), {
                 Size = UDim2.new(1, 0, 0, 0)
-            }):Play()
+            })
+            playTween(tweenSize)
             task.delay(0.2, function()
                 dropFrame.Visible = false
             end)
-            TweenService:Create(arrow, TweenInfo.new(0.2), {
+            local tweenRot = createTween(TweenService, arrow, TweenInfo.new(0.2), {
                 Rotation = 0
-            }):Play()
+            })
+            playTween(tweenRot)
         end
     end)
     table.insert(UI.Connections, conn)
@@ -1785,7 +1805,7 @@ function App.CreateMainWindow()
     closeBtn.Parent = titleBar
     UI.Corner(6).Parent = closeBtn
     
-    local conn = closeBtn.MouseButton1Click:Connect(function()
+    local conn = connect(closeBtn.MouseButton1Click, function()
         App.Destroy()
     end)
     table.insert(UI.Connections, conn)
@@ -2358,14 +2378,22 @@ function App.Destroy()
             Position = UDim2.new(0.5, -190, 0.5, -200),
             BackgroundTransparency = 1
         })
-        play(tween)
+        playTween(tween)
         
         task.delay(0.2, function()
             UI.Cleanup()
             if App.GUI then
-                App.GUI:Destroy()
+                destroy(App.GUI)
             end
+            App.GUI = nil
+            App.MainFrame = nil
         end)
+    else
+        UI.Cleanup()
+        if App.GUI then
+            destroy(App.GUI)
+        end
+        App.GUI = nil
     end
 end
 
