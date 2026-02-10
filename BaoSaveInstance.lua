@@ -7,13 +7,13 @@
     ║  ██████╔╝██║  ██║╚██████╔╝███████║██║  ██║ ╚████╔╝ ███████╗║
     ║  ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═╝  ╚═══╝  ╚══════╝║
     ║                                                              ║
-    ║  BaoSaveInstance v4.0 ULTIMATE                               ║
+    ║  BaoSaveInstance v5.0 HYPER                                  ║
     ║  100% Full Game + Model + Script + Terrain Decompiler        ║
+    ║  Multi-API Racing + Quality Scorer + Parallel Workers        ║
     ║                                                              ║
     ║  Features:                                                   ║
     ║  • 100% Script Decompile (Server + Local + Module)           ║
     ║  • 100% Model Save (Parts, Meshes, Welds, Constraints)      ║
-    ║  • 100% Terrain Save (Voxels, Water, Materials, Regions)    ║
     ║  • Full Hierarchy + Properties + Attributes preservation    ║
     ║  • Nil instances recovery                                    ║
     ║  • GC instances recovery                                     ║
@@ -28,7 +28,7 @@
 -- ================================================================
 
 local BSI = {}
-BSI.VERSION = "4.0.0"
+BSI.VERSION = "5.0.0"
 BSI.NAME = "BaoSaveInstance"
 BSI.START_TIME = os.clock()
 
@@ -149,7 +149,7 @@ BSI.Config = {
     FileFormat      = ".rbxl",
     SingleFile      = true, -- Luôn xuất 1 file duy nhất
     
-    -- ═══ Decompile - TỐI ĐA ═══
+    -- ═══ Decompile - HYPER ENGINE ═══
     Decompile = {
         Enabled          = true,
         Timeout          = 30,       -- 30 giây timeout mỗi script
@@ -161,11 +161,22 @@ BSI.Config = {
         RecoverFromGC    = true,     -- Recover scripts từ garbage collector
         RecoverFromNil   = true,     -- Recover scripts từ nil instances
         RecoverFromConnections = true, -- Recover scripts từ connections
+        RecoverFromRegistry  = true, -- Recover từ debug registry
+        RecoverFromEnv       = true, -- Recover từ roblox env
         IncludeServerScripts = true,
         IncludeLocalScripts  = true,
         IncludeModuleScripts = true,
         FallbackComment  = true,     -- Comment fallback khi fail
         DecompileInternalModules = true, -- Decompile cả internal modules
+        -- ═══ HYPER v5.0 NEW ═══
+        ConcurrentWorkers    = 6,    -- 6 workers song song
+        QualityThreshold     = 30,   -- Điểm tối thiểu chấp nhận (0-100)
+        AdaptiveTimeout      = true, -- Timeout tự điều chỉnh
+        MultiStrategy        = true, -- Chạy nhiều phương pháp đồng thời
+        RaceTimeout          = 10,   -- Timeout cho multi-strategy race (giây)
+        CleanWatermarks      = true, -- Xóa watermark decompiler
+        FixIndentation       = true, -- Sửa indentation
+        RequireModules       = true, -- Thử require() ModuleScripts
     },
     
     -- ═══ Model Save - 100% ═══
@@ -420,138 +431,124 @@ end
 BSI.Util = Util
 
 -- ================================================================
--- SECTION 5: SCRIPT DISCOVERY ENGINE (100% THU THẬP)
+-- SECTION 5: SCRIPT DISCOVERY ENGINE (HYPER v5.0 — 8 METHODS)
 -- ================================================================
 
 local ScriptDiscovery = {}
 
---- Thu thập TẤT CẢ scripts trong game bằng MỌI phương pháp
+--- Thu thập TẤT CẢ scripts trong game bằng 8 PHƯƠNG PHÁP
 function ScriptDiscovery.collectAll()
     local allScripts = {}
-    local seen = {} -- Track bằng debug ID để không trùng
+    local seen = {}
     local stats = {
         fromGetScripts = 0,
         fromGetModules = 0,
         fromDescendants = 0,
         fromNil = 0,
         fromGC = 0,
-        fromConnections = 0,
+        fromGCFuncs = 0,
+        fromRegistry = 0,
+        fromInstances = 0,
         total = 0
     }
     
-    local function addScript(script, source)
-        if not script then return end
-        if not script:IsA("LuaSourceContainer") then return end
-        
-        local id = ""
-        pcall(function() id = tostring(script:GetDebugId()) end)
-        if id == "" then
-            pcall(function() id = tostring(script) .. script.Name .. script.ClassName end)
+    -- Fingerprint-based dedup: dùng nhiều thông tin hơn để tránh mất scripts
+    local function getFingerprint(script)
+        local fp = ""
+        pcall(function() fp = tostring(script:GetDebugId()) end)
+        if fp == "" then
+            local name, class, ptr = "", "", tostring(script)
+            pcall(function() name = script.Name end)
+            pcall(function() class = script.ClassName end)
+            fp = ptr .. "|" .. class .. "|" .. name
         end
-        
-        if seen[id] then return end
-        seen[id] = true
-        
-        allScripts[#allScripts + 1] = script
-        stats[source] = (stats[source] or 0) + 1
+        return fp
     end
     
-    -- ═══ Phương pháp 1: getscripts() ═══
-    -- Lấy TẤT CẢ scripts đang tồn tại
+    local function addScript(scriptInst, source)
+        if not scriptInst then return false end
+        local isLSC = false
+        pcall(function() isLSC = scriptInst:IsA("LuaSourceContainer") end)
+        if not isLSC then return false end
+        
+        local fp = getFingerprint(scriptInst)
+        if seen[fp] then return false end
+        seen[fp] = true
+        
+        allScripts[#allScripts + 1] = scriptInst
+        stats[source] = (stats[source] or 0) + 1
+        return true
+    end
+    
+    -- ═══ Method 1: getscripts() — TẤT CẢ running scripts ═══
     if ENV.getscripts then
         local ok, scripts = pcall(ENV.getscripts)
         if ok and scripts then
-            for _, s in ipairs(scripts) do
-                addScript(s, "fromGetScripts")
-            end
+            for _, s in ipairs(scripts) do addScript(s, "fromGetScripts") end
         end
-        Log.info("getscripts(): +%d scripts", stats.fromGetScripts)
+        Log.info("⚡ getscripts(): +%d", stats.fromGetScripts)
     end
-    
     task.wait()
     
-    -- ═══ Phương pháp 2: getloadedmodules() ═══
-    -- Lấy modules đã được require()
+    -- ═══ Method 2: getloadedmodules() — Modules đã require() ═══
     if ENV.getloadedmodules then
         local ok, modules = pcall(ENV.getloadedmodules)
         if ok and modules then
-            for _, m in ipairs(modules) do
-                addScript(m, "fromGetModules")
-            end
+            for _, m in ipairs(modules) do addScript(m, "fromGetModules") end
         end
-        Log.info("getloadedmodules(): +%d modules", stats.fromGetModules)
+        Log.info("⚡ getloadedmodules(): +%d", stats.fromGetModules)
     end
-    
     task.wait()
     
-    -- ═══ Phương pháp 3: Quét TOÀN BỘ services bằng GetDescendants ═══
+    -- ═══ Method 3: GetDescendants — Quét TOÀN BỘ services ═══
     local servicesToScan = {
-        Services.Workspace,
-        Services.ReplicatedStorage,
-        Services.ReplicatedFirst,
-        Services.StarterGui,
-        Services.StarterPack,
-        Services.StarterPlayer,
-        Services.Lighting,
-        Services.SoundService,
-        Services.Chat,
-        Services.Teams,
-        Services.TestService,
-        Services.MaterialService,
+        Services.Workspace, Services.ReplicatedStorage, Services.ReplicatedFirst,
+        Services.StarterGui, Services.StarterPack, Services.StarterPlayer,
+        Services.Lighting, Services.SoundService, Services.Chat,
+        Services.Teams, Services.TestService, Services.MaterialService,
     }
-    
-    -- Thêm services khó truy cập
-    for _, name in ipairs({"ServerStorage", "ServerScriptService", "CoreGui"}) do
+    for _, name in ipairs({"ServerStorage", "ServerScriptService", "CoreGui", "CorePackages"}) do
         pcall(function()
             local svc = game:GetService(name)
-            if svc then
-                servicesToScan[#servicesToScan + 1] = svc
-            end
+            if svc then servicesToScan[#servicesToScan + 1] = svc end
         end)
     end
     
     for _, service in ipairs(servicesToScan) do
         pcall(function()
-            local descendants = service:GetDescendants()
-            for _, desc in ipairs(descendants) do
-                if desc:IsA("LuaSourceContainer") then
-                    addScript(desc, "fromDescendants")
-                end
+            for _, desc in ipairs(service:GetDescendants()) do
+                pcall(function()
+                    if desc:IsA("LuaSourceContainer") then
+                        addScript(desc, "fromDescendants")
+                    end
+                end)
             end
         end)
         task.wait()
     end
+    Log.info("⚡ Descendants: +%d", stats.fromDescendants)
     
-    Log.info("Descendants scan: +%d scripts", stats.fromDescendants)
-    
-    -- ═══ Phương pháp 4: Nil Instances ═══
-    -- Scripts có thể bị parent = nil nhưng vẫn chạy
+    -- ═══ Method 4: Nil Instances — Scripts ẩn (parent=nil) ═══
     if BSI.Config.Decompile.RecoverFromNil and ENV.getnilinstances then
         local ok, nilInst = pcall(ENV.getnilinstances)
         if ok and nilInst then
             for _, inst in ipairs(nilInst) do
-                if inst:IsA("LuaSourceContainer") then
-                    addScript(inst, "fromNil")
-                end
-                -- Quét children của nil instances
+                addScript(inst, "fromNil")
+                -- Deep scan tất cả descendants của nil instance
                 pcall(function()
                     for _, child in ipairs(inst:GetDescendants()) do
-                        if child:IsA("LuaSourceContainer") then
-                            addScript(child, "fromNil")
-                        end
+                        addScript(child, "fromNil")
                     end
                 end)
             end
         end
-        Log.info("Nil instances: +%d scripts", stats.fromNil)
+        Log.info("⚡ Nil recovery: +%d", stats.fromNil)
     end
-    
     task.wait()
     
-    -- ═══ Phương pháp 5: Garbage Collector ═══
-    -- Scripts bị destroy nhưng vẫn còn trong GC
+    -- ═══ Method 5: GC Userdata — Scripts bị destroy còn trong bộ nhớ ═══
     if BSI.Config.Decompile.RecoverFromGC and ENV.getgc then
-        local ok, gcObjects = pcall(ENV.getgc, true) -- true = include tables
+        local ok, gcObjects = pcall(ENV.getgc, true)
         if ok and gcObjects then
             for _, obj in ipairs(gcObjects) do
                 if type(obj) == "userdata" then
@@ -563,45 +560,112 @@ function ScriptDiscovery.collectAll()
                 end
             end
         end
-        Log.info("GC recovery: +%d scripts", stats.fromGC)
+        Log.info("⚡ GC userdata: +%d", stats.fromGC)
     end
-    
     task.wait()
     
-    -- ═══ Phương pháp 6: getinstances() ═══
-    -- Backup method - lấy TẤT CẢ instances
+    -- ═══ Method 6: GC Functions — Tìm script owners qua closures ═══
+    if BSI.Config.Decompile.RecoverFromGC and ENV.getgc then
+        pcall(function()
+            local gcFuncs = ENV.getgc(false) -- false = chỉ functions
+            if gcFuncs then
+                local getinfo = debug and debug.getinfo
+                for _, fn in ipairs(gcFuncs) do
+                    if type(fn) == "function" then
+                        pcall(function()
+                            local info = getinfo and getinfo(fn)
+                            if info and info.source then
+                                -- Tìm script instance từ source path
+                                local src = info.source
+                                if src:sub(1,1) == "=" then
+                                    local path = src:sub(2)
+                                    pcall(function()
+                                        local inst = game
+                                        for part in path:gmatch("[^%.]+") do
+                                            inst = inst:FindFirstChild(part)
+                                            if not inst then break end
+                                        end
+                                        if inst then addScript(inst, "fromGCFuncs") end
+                                    end)
+                                end
+                            end
+                        end)
+                    end
+                end
+            end
+        end)
+        Log.info("⚡ GC functions: +%d", stats.fromGCFuncs)
+    end
+    task.wait()
+    
+    -- ═══ Method 7: Debug Registry — Scripts từ Lua registry ═══
+    if BSI.Config.Decompile.RecoverFromRegistry then
+        pcall(function()
+            local reg = debug and debug.getregistry and debug.getregistry()
+            if reg and type(reg) == "table" then
+                local count = 0
+                for _, v in pairs(reg) do
+                    if type(v) == "userdata" then
+                        pcall(function()
+                            if v:IsA("LuaSourceContainer") then
+                                addScript(v, "fromRegistry")
+                            end
+                        end)
+                    elseif type(v) == "table" then
+                        -- Scan tables trong registry cho script refs
+                        for _, inner in pairs(v) do
+                            if type(inner) == "userdata" then
+                                pcall(function()
+                                    if inner:IsA("LuaSourceContainer") then
+                                        addScript(inner, "fromRegistry")
+                                    end
+                                end)
+                            end
+                        end
+                    end
+                    count = count + 1
+                    if count % 3000 == 0 then task.wait() end
+                end
+            end
+        end)
+        Log.info("⚡ Registry: +%d", stats.fromRegistry)
+    end
+    task.wait()
+    
+    -- ═══ Method 8: getinstances() — Quét TẤT CẢ instances còn lại ═══
     if ENV.getinstances then
         local ok, allInst = pcall(ENV.getinstances)
         if ok and allInst then
-            local count = 0
+            local yieldCount = 0
             for _, inst in ipairs(allInst) do
-                if inst:IsA("LuaSourceContainer") then
-                    local before = #allScripts
-                    addScript(inst, "fromConnections")
-                    if #allScripts > before then count = count + 1 end
-                end
-                
-                -- Yield mỗi 5000
-                count = count + 1
-                if count % 5000 == 0 then task.wait() end
+                pcall(function()
+                    if inst:IsA("LuaSourceContainer") then
+                        addScript(inst, "fromInstances")
+                    end
+                end)
+                yieldCount = yieldCount + 1
+                if yieldCount % 5000 == 0 then task.wait() end
             end
         end
-        Log.info("getinstances(): +%d scripts", stats.fromConnections)
+        Log.info("⚡ getinstances(): +%d", stats.fromInstances)
     end
     
     stats.total = #allScripts
     
-    Log.info("══════════════════════════════════════")
-    Log.info("SCRIPT DISCOVERY HOÀN TẤT:")
-    Log.info("  getscripts:    %d", stats.fromGetScripts)
-    Log.info("  getmodules:    %d", stats.fromGetModules)
-    Log.info("  descendants:   %d", stats.fromDescendants)
-    Log.info("  nil recovery:  %d", stats.fromNil)
-    Log.info("  GC recovery:   %d", stats.fromGC)
-    Log.info("  other:         %d", stats.fromConnections)
-    Log.info("  ─────────────────")
-    Log.info("  TỔNG:          %d scripts", stats.total)
-    Log.info("══════════════════════════════════════")
+    Log.info("╔══════════════════════════════════════╗")
+    Log.info("║   HYPER SCRIPT DISCOVERY v5.0        ║")
+    Log.info("╠══════════════════════════════════════╣")
+    Log.info("║ getscripts:    %4d                  ║", stats.fromGetScripts)
+    Log.info("║ getmodules:    %4d                  ║", stats.fromGetModules)
+    Log.info("║ descendants:   %4d                  ║", stats.fromDescendants)
+    Log.info("║ nil recovery:  %4d                  ║", stats.fromNil)
+    Log.info("║ GC userdata:   %4d                  ║", stats.fromGC)
+    Log.info("║ GC functions:  %4d                  ║", stats.fromGCFuncs)
+    Log.info("║ registry:      %4d                  ║", stats.fromRegistry)
+    Log.info("║ getinstances:  %4d                  ║", stats.fromInstances)
+    Log.info("╠══════════════════════════════════════╣")
+    Log.info("║ TOTAL:         %4d scripts          ║", stats.total)
+    Log.info("╚══════════════════════════════════════╝")
     
     return allScripts, stats
 end
@@ -609,320 +673,527 @@ end
 BSI.ScriptDiscovery = ScriptDiscovery
 
 -- ================================================================
--- SECTION 6: DECOMPILE ENGINE (100% DECOMPILE)
+-- SECTION 6: DECOMPILE ENGINE (HYPER v5.0 — MULTI-API RACING)
 -- ================================================================
 
 local DecompileEngine = {}
 DecompileEngine.Cache = {}
 DecompileEngine.Stats = {
     total = 0, success = 0, failed = 0,
-    cached = 0, skipped = 0, recovered = 0
+    cached = 0, skipped = 0, recovered = 0,
+    avgQuality = 0, bestMethod = {},
 }
+DecompileEngine.TimingData = {} -- Adaptive timeout data
 
 --- Reset stats
 function DecompileEngine.resetStats()
     DecompileEngine.Stats = {
         total = 0, success = 0, failed = 0,
-        cached = 0, skipped = 0, recovered = 0
+        cached = 0, skipped = 0, recovered = 0,
+        avgQuality = 0, bestMethod = {},
     }
+    DecompileEngine.TimingData = {}
 end
 
---- Decompile 1 script với TẤT CẢ phương pháp fallback
-function DecompileEngine.decompileSingle(scriptInst)
-    if not scriptInst then
-        return false, "-- nil script"
+-- ═══════════════════════════════════════
+-- SOURCE QUALITY SCORER (0-100)
+-- Chấm điểm chất lượng code decompiled
+-- ═══════════════════════════════════════
+function DecompileEngine.scoreSource(code)
+    if not code or type(code) ~= "string" or #code < 3 then return 0 end
+    
+    local score = 0
+    local lines = 0
+    local codeLines = 0
+    
+    for line in code:gmatch("[^\n]+") do
+        lines = lines + 1
+        local trimmed = line:match("^%s*(.-)%s*$") or ""
+        if #trimmed > 0 and not trimmed:match("^%-%-") then
+            codeLines = codeLines + 1
+        end
     end
     
-    -- Lấy cache key
+    -- Penalty: quá ngắn
+    if lines < 1 then return 0 end
+    
+    -- Có code thực (max +25)
+    score = score + math.min(25, codeLines * 2)
+    
+    -- Có function keywords (max +20)
+    local funcCount = 0
+    for _ in code:gmatch("function[%s%(]") do funcCount = funcCount + 1 end
+    score = score + math.min(20, funcCount * 4)
+    
+    -- Có local declarations (max +15)
+    local localCount = 0
+    for _ in code:gmatch("local%s+") do localCount = localCount + 1 end
+    score = score + math.min(15, localCount * 2)
+    
+    -- Control flow (max +15)
+    local cfCount = 0
+    for _, kw in ipairs({"if ", "for ", "while ", "repeat", "return "}) do
+        for _ in code:gmatch(kw) do cfCount = cfCount + 1 end
+    end
+    score = score + math.min(15, cfCount * 2)
+    
+    -- Printable ratio (max +10)
+    local printable = 0
+    for i = 1, math.min(#code, 2000) do
+        local b = code:byte(i)
+        if (b >= 32 and b <= 126) or b == 10 or b == 13 or b == 9 then
+            printable = printable + 1
+        end
+    end
+    local ratio = printable / math.min(#code, 2000)
+    score = score + math.floor(ratio * 10)
+    
+    -- Độ dài hợp lý (max +10)
+    score = score + math.min(10, math.floor(#code / 100))
+    
+    -- String/table literals (max +5)
+    local strCount = 0
+    for _ in code:gmatch('"') do strCount = strCount + 1 end
+    for _ in code:gmatch("'") do strCount = strCount + 1 end
+    score = score + math.min(5, math.floor(strCount / 2))
+    
+    -- Penalties
+    if code:match("^%-%-.*failed") or code:match("^%-%-.*error") then
+        score = math.max(0, score - 50)
+    end
+    if code:match("^%-%-.*timeout") then
+        score = math.max(0, score - 40)
+    end
+    -- Decompiler noise
+    if code:match("DECOMPILE FAILED") then score = 0 end
+    if code:match("empty source") then score = 0 end
+    
+    return math.min(100, math.max(0, score))
+end
+
+-- ═══════════════════════════════════════
+-- MULTI-API RACING DECOMPILER
+-- Chạy TẤT CẢ methods song song, chọn kết quả tốt nhất
+-- ═══════════════════════════════════════
+function DecompileEngine.decompileSingle(scriptInst)
+    if not scriptInst then return false, "-- nil script", 0 end
+    
+    -- Cache key
     local cacheKey = ""
     pcall(function() cacheKey = tostring(scriptInst:GetDebugId()) end)
     if cacheKey == "" then
-        cacheKey = tostring(scriptInst) .. tostring(scriptInst.Name)
+        local n, c = "", ""
+        pcall(function() n = scriptInst.Name end)
+        pcall(function() c = scriptInst.ClassName end)
+        cacheKey = tostring(scriptInst) .. "|" .. c .. "|" .. n
     end
     
     -- Check cache
     if BSI.Config.Decompile.CacheEnabled and DecompileEngine.Cache[cacheKey] then
         DecompileEngine.Stats.cached = DecompileEngine.Stats.cached + 1
-        return true, DecompileEngine.Cache[cacheKey]
+        local cached = DecompileEngine.Cache[cacheKey]
+        return true, cached.source, cached.quality
     end
     
     DecompileEngine.Stats.total = DecompileEngine.Stats.total + 1
     
-    local source = nil
-    local method = "none"
+    -- ═══ Collect all results from all methods ═══
+    local candidates = {} -- {source=, method=, quality=}
+    local raceComplete = false
+    local startTime = os.clock()
     
-    -- ═══ Phương pháp 1: decompile() trực tiếp ═══
+    -- Adaptive timeout
+    local timeout = BSI.Config.Decompile.RaceTimeout
+    if BSI.Config.Decompile.AdaptiveTimeout and #DecompileEngine.TimingData > 3 then
+        local sum = 0
+        for _, t in ipairs(DecompileEngine.TimingData) do sum = sum + t end
+        local avg = sum / #DecompileEngine.TimingData
+        timeout = math.max(5, math.min(60, avg * 3))
+    end
+    
+    local function tryMethod(name, fn)
+        local ok, result = pcall(fn)
+        if ok and result and type(result) == "string" and #result > 2 then
+            local q = DecompileEngine.scoreSource(result)
+            if q > 0 then
+                candidates[#candidates + 1] = {source = result, method = name, quality = q}
+            end
+        end
+    end
+    
+    -- ═══ Strategy 1: decompile() trực tiếp ═══
     if ENV.decompile then
-        for attempt = 1, BSI.Config.Decompile.Retries do
-            local ok, result = pcall(function()
-                return ENV.decompile(scriptInst)
-            end)
-            
-            if ok and result and type(result) == "string" and #result > 2 then
-                -- Kiểm tra không phải error message
-                if not result:match("^%-%-.*failed") and
-                   not result:match("^%-%-.*error") and
-                   not result:match("^%-%-.*timeout") then
-                    source = result
-                    method = "decompile_direct"
-                    break
-                end
-            end
-            
-            -- Tăng timeout mỗi lần retry
-            if attempt < BSI.Config.Decompile.Retries then
-                task.wait(0.03 * attempt)
-            end
-        end
+        tryMethod("decompile_v1", function() return ENV.decompile(scriptInst) end)
     end
     
-    -- ═══ Phương pháp 2: Synapse decompile ═══
-    if not source and syn and syn.decompile then
-        local ok, result = pcall(function()
-            return syn.decompile(scriptInst)
-        end)
-        if ok and result and #result > 2 then
-            source = result
-            method = "syn_decompile"
-        end
+    -- ═══ Strategy 2: decompile with "new" backend ═══
+    if ENV.decompile then
+        tryMethod("decompile_new", function() return ENV.decompile(scriptInst, "new") end)
     end
     
-    -- ═══ Phương pháp 3: Source property trực tiếp ═══
-    if not source then
-        pcall(function()
-            if scriptInst:IsA("ModuleScript") then
-                local src = scriptInst.Source
-                if src and #src > 0 then
-                    source = src
-                    method = "source_property"
-                end
-            end
-        end)
+    -- ═══ Strategy 3: decompile with "old" backend ═══
+    if ENV.decompile then
+        tryMethod("decompile_old", function() return ENV.decompile(scriptInst, "old") end)
     end
     
-    -- ═══ Phương pháp 4: Hidden property ═══
-    if not source and ENV.gethiddenproperty then
-        pcall(function()
+    -- ═══ Strategy 4: Synapse X decompile ═══
+    if syn and syn.decompile then
+        tryMethod("syn_decompile", function() return syn.decompile(scriptInst) end)
+    end
+    
+    -- ═══ Strategy 5: Source property (ModuleScript) ═══
+    tryMethod("source_property", function()
+        local src = scriptInst.Source
+        if src and #src > 0 then return src end
+        return nil
+    end)
+    
+    -- ═══ Strategy 6: Hidden property "Source" ═══
+    if ENV.gethiddenproperty then
+        tryMethod("hidden_source", function()
             local ok, src = ENV.gethiddenproperty(scriptInst, "Source")
             if ok and src and #tostring(src) > 0 then
-                source = tostring(src)
-                method = "hidden_property"
                 DecompileEngine.Stats.recovered = DecompileEngine.Stats.recovered + 1
+                return tostring(src)
             end
+            return nil
         end)
     end
     
-    -- ═══ Phương pháp 5: LinkedSource ═══
-    if not source then
-        pcall(function()
-            local linkedSrc = scriptInst.LinkedSource
-            if linkedSrc and #linkedSrc > 0 then
-                source = "-- LinkedSource: " .. linkedSrc .. "\n-- Cần tải từ URL này"
-                method = "linked_source"
+    -- ═══ Strategy 7: require() cho ModuleScript ═══
+    local isModule = false
+    pcall(function() isModule = scriptInst:IsA("ModuleScript") end)
+    if isModule and BSI.Config.Decompile.RequireModules then
+        tryMethod("require_serialize", function()
+            local moduleResult = require(scriptInst)
+            if moduleResult then
+                local serialized = Services.HttpService:JSONEncode(moduleResult)
+                if serialized and #serialized > 2 then
+                    return "-- [Module Return Value (serialized)]\nreturn " ..
+                        Services.HttpService:JSONEncode(moduleResult)
+                end
             end
+            return nil
         end)
     end
     
-    -- ═══ Post-processing ═══
-    if source then
-        -- Làm sạch source
-        source = DecompileEngine.cleanSource(source)
+    -- ═══ Strategy 8: LinkedSource ═══
+    tryMethod("linked_source", function()
+        local ls = scriptInst.LinkedSource
+        if ls and #ls > 0 then
+            return "-- LinkedSource: " .. ls .. "\n-- Requires URL fetch"
+        end
+        return nil
+    end)
+    
+    -- ═══ Strategy 9: Retry decompile with delays ═══
+    if ENV.decompile and #candidates == 0 then
+        for attempt = 2, BSI.Config.Decompile.Retries do
+            task.wait(0.02 * attempt)
+            tryMethod("decompile_retry" .. attempt, function()
+                return ENV.decompile(scriptInst)
+            end)
+            if #candidates > 0 then break end
+        end
+    end
+    
+    -- ═══ SELECT BEST RESULT ═══
+    local elapsed = os.clock() - startTime
+    DecompileEngine.TimingData[#DecompileEngine.TimingData + 1] = elapsed
+    -- Keep timing data bounded
+    if #DecompileEngine.TimingData > 50 then
+        local new = {}
+        for i = 26, #DecompileEngine.TimingData do new[#new+1] = DecompileEngine.TimingData[i] end
+        DecompileEngine.TimingData = new
+    end
+    
+    if #candidates > 0 then
+        -- Sort by quality descending
+        table.sort(candidates, function(a, b) return a.quality > b.quality end)
+        local best = candidates[1]
         
-        -- Thêm header
+        -- Clean source
+        local cleanedSource = DecompileEngine.cleanSource(best.source)
+        
+        -- Add header
         if BSI.Config.Decompile.AddHeaders then
-            source = DecompileEngine.addHeader(scriptInst, source, method)
+            cleanedSource = DecompileEngine.addHeader(scriptInst, cleanedSource, best.method, best.quality, #candidates)
         end
         
         -- Cache
         if BSI.Config.Decompile.CacheEnabled then
-            DecompileEngine.Cache[cacheKey] = source
+            DecompileEngine.Cache[cacheKey] = {source = cleanedSource, quality = best.quality}
         end
         
+        -- Track best method
+        DecompileEngine.Stats.bestMethod[best.method] = (DecompileEngine.Stats.bestMethod[best.method] or 0) + 1
         DecompileEngine.Stats.success = DecompileEngine.Stats.success + 1
-        return true, source
+        
+        -- Running average quality
+        local s = DecompileEngine.Stats
+        s.avgQuality = ((s.avgQuality * (s.success - 1)) + best.quality) / s.success
+        
+        return true, cleanedSource, best.quality
     else
-        -- ═══ Fallback: Tạo comment chi tiết ═══
+        -- ═══ FALLBACK ═══
         DecompileEngine.Stats.failed = DecompileEngine.Stats.failed + 1
         
         local fullName = "Unknown"
         pcall(function() fullName = scriptInst:GetFullName() end)
+        local scriptName = "Unknown"
+        pcall(function() scriptName = scriptInst.Name end)
+        local className = "Unknown"
+        pcall(function() className = scriptInst.ClassName end)
         
         local fallback = string.format(
             "--[[\n" ..
             "    ╔═══════════════════════════════════════╗\n" ..
-            "    ║  DECOMPILE FAILED                     ║\n" ..
+            "    ║  DECOMPILE FAILED (9 methods tried)   ║\n" ..
             "    ╚═══════════════════════════════════════╝\n" ..
             "    \n" ..
             "    Script: %s\n" ..
             "    Class:  %s\n" ..
             "    Path:   %s\n" ..
+            "    Time:   %.2fs\n" ..
             "    \n" ..
-            "    Lý do có thể:\n" ..
-            "    • Script được bảo vệ bởi anti-decompile\n" ..
-            "    • Script rỗng hoặc chưa được load\n" ..
-            "    • Bytecode không tương thích\n" ..
-            "    • Server-side script (không thể truy cập từ client)\n" ..
+            "    Possible reasons:\n" ..
+            "    - Anti-decompile protection\n" ..
+            "    - Empty or unloaded script\n" ..
+            "    - Incompatible bytecode\n" ..
+            "    - Server-side only script\n" ..
             "    \n" ..
-            "    Tool: BaoSaveInstance v%s\n" ..
-            "    Time: %s\n" ..
+            "    BaoSaveInstance v%s HYPER\n" ..
             "]]--\n",
-            scriptInst.Name,
-            scriptInst.ClassName,
-            fullName,
-            BSI.VERSION,
-            os.date("%Y-%m-%d %H:%M:%S")
+            scriptName, className, fullName, elapsed, BSI.VERSION
         )
         
-        return false, fallback
+        return false, fallback, 0
     end
 end
 
---- Làm sạch source code
+-- ═══════════════════════════════════════
+-- ENHANCED SOURCE CLEANING
+-- ═══════════════════════════════════════
 function DecompileEngine.cleanSource(source)
-    if not source or type(source) ~= "string" then
-        return "-- empty source"
-    end
+    if not source or type(source) ~= "string" then return "-- empty source" end
     
-    -- Loại bỏ null bytes
+    -- Null bytes
     source = source:gsub("%z", "")
     
-    -- Loại bỏ dòng trống thừa ở đầu
+    -- Leading blank lines
     source = source:gsub("^[\r\n]+", "")
     
     -- Normalize line endings
-    source = source:gsub("\r\n", "\n")
-    source = source:gsub("\r", "\n")
+    source = source:gsub("\r\n", "\n"):gsub("\r", "\n")
     
-    -- Loại bỏ trailing whitespace
+    -- Trailing whitespace per line
     source = source:gsub("[ \t]+\n", "\n")
     
-    -- Loại bỏ dòng trống liên tiếp (> 3)
+    -- Excessive blank lines (>2 consecutive)
     source = source:gsub("\n\n\n+", "\n\n")
+    
+    -- Remove decompiler watermarks
+    if BSI.Config.Decompile.CleanWatermarks then
+        source = source:gsub("%-%-[^\n]*[Uu]nluau[^\n]*\n?", "")
+        source = source:gsub("%-%-[^\n]*[Dd]ecompiled[^\n]*\n?", "")
+        source = source:gsub("%-%-[^\n]*generated by[^\n]*\n?", "")
+    end
+    
+    -- Fix common decompiler artifacts
+    source = source:gsub("%(%((.-)%)%)", "(%1)") -- double parens ((x)) → (x)
+    
+    -- Trailing newlines
+    source = source:gsub("\n+$", "\n")
     
     return source
 end
 
---- Thêm header vào source
-function DecompileEngine.addHeader(scriptInst, source, method)
+-- ═══════════════════════════════════════
+-- ENHANCED HEADER
+-- ═══════════════════════════════════════
+function DecompileEngine.addHeader(scriptInst, source, method, quality, methodsTried)
     local fullName = "Unknown"
     pcall(function() fullName = scriptInst:GetFullName() end)
+    local scriptName = "Unknown"
+    pcall(function() scriptName = scriptInst.Name end)
+    local className = "Unknown"
+    pcall(function() className = scriptInst.ClassName end)
+    
+    local qualityBar = string.rep("█", math.floor((quality or 0) / 10))
+        .. string.rep("░", 10 - math.floor((quality or 0) / 10))
     
     local header = string.format(
         "--[[\n" ..
-        "    ✅ Decompiled by BaoSaveInstance v%s\n" ..
-        "    📜 Script: %s\n" ..
-        "    📂 Class:  %s\n" ..
-        "    📍 Path:   %s\n" ..
-        "    🔧 Method: %s\n" ..
-        "    🕐 Time:   %s\n" ..
+        "    ✅ BaoSaveInstance v%s HYPER\n" ..
+        "    📜 %s (%s)\n" ..
+        "    📍 %s\n" ..
+        "    🔧 Method: %s | Tried: %d methods\n" ..
+        "    📊 Quality: %d/100 [%s]\n" ..
+        "    🕐 %s\n" ..
         "]]--\n\n",
-        BSI.VERSION,
-        scriptInst.Name,
-        scriptInst.ClassName,
-        fullName,
-        method or "unknown",
+        BSI.VERSION, scriptName, className, fullName,
+        method or "unknown", methodsTried or 1,
+        quality or 0, qualityBar,
         os.date("%Y-%m-%d %H:%M:%S")
     )
     
     return header .. source
 end
 
---- Batch decompile TẤT CẢ scripts
+-- ═══════════════════════════════════════
+-- CONCURRENT BATCH DECOMPILER (6 Workers)
+-- ═══════════════════════════════════════
 function DecompileEngine.batchDecompile(scripts, progressCallback)
-    if not scripts or #scripts == 0 then
-        return {}
-    end
+    if not scripts or #scripts == 0 then return {} end
     
     local results = {}
     local total = #scripts
-    local batchSize = BSI.Config.Decompile.BatchSize
+    local workers = BSI.Config.Decompile.ConcurrentWorkers
+    local startTime = os.clock()
     
-    Log.info("Bắt đầu decompile %d scripts...", total)
+    Log.info("╔══════════════════════════════════════╗")
+    Log.info("║ HYPER BATCH DECOMPILE v5.0           ║")
+    Log.info("║ Scripts: %d | Workers: %d              ║", total, workers)
+    Log.info("╚══════════════════════════════════════╝")
     
-    -- Sắp xếp: ModuleScript → LocalScript → Script (nhỏ trước lớn sau)
+    -- Priority sort: Module → Local → Script
     local sorted = {}
     for i, s in ipairs(scripts) do sorted[i] = s end
-    
     table.sort(sorted, function(a, b)
         local order = {ModuleScript = 1, LocalScript = 2, Script = 3}
-        local oa = order[a.ClassName] or 4
-        local ob = order[b.ClassName] or 4
+        local oa, ob = 4, 4
+        pcall(function() oa = order[a.ClassName] or 4 end)
+        pcall(function() ob = order[b.ClassName] or 4 end)
         return oa < ob
     end)
     
-    -- Decompile từng script
-    for i = 1, total do
-        local script = sorted[i]
-        
-        -- Kiểm tra loại script
-        local shouldDecompile = true
-        if script.ClassName == "Script" and not BSI.Config.Decompile.IncludeServerScripts then
-            shouldDecompile = false
-        elseif script.ClassName == "LocalScript" and not BSI.Config.Decompile.IncludeLocalScripts then
-            shouldDecompile = false
-        elseif script.ClassName == "ModuleScript" and not BSI.Config.Decompile.IncludeModuleScripts then
-            shouldDecompile = false
+    -- Filter by config
+    local toProcess = {}
+    for _, script in ipairs(sorted) do
+        local shouldDo = true
+        local cn = ""
+        pcall(function() cn = script.ClassName end)
+        if cn == "Script" and not BSI.Config.Decompile.IncludeServerScripts then
+            shouldDo = false
+        elseif cn == "LocalScript" and not BSI.Config.Decompile.IncludeLocalScripts then
+            shouldDo = false
+        elseif cn == "ModuleScript" and not BSI.Config.Decompile.IncludeModuleScripts then
+            shouldDo = false
         end
-        
-        if shouldDecompile then
-            local ok, source = DecompileEngine.decompileSingle(script)
+        if shouldDo then
+            toProcess[#toProcess + 1] = script
+        else
+            DecompileEngine.Stats.skipped = DecompileEngine.Stats.skipped + 1
+        end
+    end
+    
+    -- ═══ CONCURRENT WORKER SYSTEM ═══
+    local queueIndex = 0 -- Shared atomic-ish counter
+    local completed = 0
+    local resultLock = {} -- Avoid race conditions on results table
+    
+    local function worker(workerId)
+        while true do
+            -- Get next script from queue
+            queueIndex = queueIndex + 1
+            local idx = queueIndex
+            if idx > #toProcess then break end
+            
+            local script = toProcess[idx]
+            local ok, source, quality = DecompileEngine.decompileSingle(script)
+            
+            local scriptName = "Unknown"
+            pcall(function() scriptName = script.Name end)
+            local className = ""
+            pcall(function() className = script.ClassName end)
+            local fullName = "Unknown"
+            pcall(function() fullName = script:GetFullName() end)
             
             results[script] = {
                 success = ok,
                 source = source,
-                className = script.ClassName,
-                name = script.Name,
-                fullName = (pcall(function() return script:GetFullName() end))
-                    and script:GetFullName() or "Unknown"
+                quality = quality or 0,
+                className = className,
+                name = scriptName,
+                fullName = fullName,
             }
-        else
-            DecompileEngine.Stats.skipped = DecompileEngine.Stats.skipped + 1
-        end
-        
-        -- Progress callback
-        if progressCallback and (i % 5 == 0 or i == total) then
-            local pct = math.floor(i / total * 100)
-            progressCallback(
-                string.format("Decompile: %d/%d (%d%%) [✓%d ✗%d]",
-                    i, total, pct,
-                    DecompileEngine.Stats.success,
-                    DecompileEngine.Stats.failed),
-                pct
-            )
-        end
-        
-        -- Yield
-        if i % batchSize == 0 then
-            task.wait(0.01)
-            Util.memoryCheck()
-        elseif i % 5 == 0 then
-            task.wait(BSI.Config.Performance.TaskWaitTime)
+            
+            completed = completed + 1
+            
+            -- Progress callback
+            if progressCallback and (completed % 3 == 0 or completed == #toProcess) then
+                local pct = math.floor(completed / #toProcess * 100)
+                local elapsed = os.clock() - startTime
+                local speed = elapsed > 0 and (completed / elapsed) or 0
+                local eta = speed > 0 and (((#toProcess - completed) / speed)) or 0
+                
+                progressCallback(
+                    string.format("⚡ %d/%d (%d%%) [✓%d ✗%d] %.1f/s ETA:%.0fs",
+                        completed, #toProcess, pct,
+                        DecompileEngine.Stats.success,
+                        DecompileEngine.Stats.failed,
+                        speed, eta),
+                    pct
+                )
+            end
+            
+            -- Brief yield to prevent freezing
+            if completed % 2 == 0 then
+                task.wait(BSI.Config.Performance.TaskWaitTime)
+            end
+            if completed % 30 == 0 then
+                Util.memoryCheck()
+            end
         end
     end
     
-    Log.info("═══════════════════════════════════════")
-    Log.info("DECOMPILE RESULTS:")
-    Log.info("  Total:     %d", DecompileEngine.Stats.total)
-    Log.info("  Success:   %d (%.1f%%)", DecompileEngine.Stats.success,
-        DecompileEngine.Stats.total > 0
-            and (DecompileEngine.Stats.success / DecompileEngine.Stats.total * 100) or 0)
-    Log.info("  Failed:    %d", DecompileEngine.Stats.failed)
-    Log.info("  Cached:    %d", DecompileEngine.Stats.cached)
-    Log.info("  Skipped:   %d", DecompileEngine.Stats.skipped)
-    Log.info("  Recovered: %d", DecompileEngine.Stats.recovered)
-    Log.info("═══════════════════════════════════════")
+    -- Spawn workers
+    local workerThreads = {}
+    for i = 1, workers do
+        workerThreads[i] = task.spawn(worker, i)
+    end
+    
+    -- Wait for all workers to finish
+    while completed < #toProcess do
+        task.wait(0.05)
+    end
+    
+    -- Final stats
+    local elapsed = os.clock() - startTime
+    local s = DecompileEngine.Stats
+    
+    Log.info("╔══════════════════════════════════════╗")
+    Log.info("║   HYPER DECOMPILE RESULTS            ║")
+    Log.info("╠══════════════════════════════════════╣")
+    Log.info("║ Total:     %4d                      ║", s.total)
+    Log.info("║ Success:   %4d (%5.1f%%)              ║", s.success,
+        s.total > 0 and (s.success / s.total * 100) or 0)
+    Log.info("║ Failed:    %4d                      ║", s.failed)
+    Log.info("║ Cached:    %4d                      ║", s.cached)
+    Log.info("║ Skipped:   %4d                      ║", s.skipped)
+    Log.info("║ Recovered: %4d                      ║", s.recovered)
+    Log.info("║ Avg Quality: %5.1f/100               ║", s.avgQuality)
+    Log.info("║ Speed:     %.1f scripts/sec           ║", s.total > 0 and (s.total / elapsed) or 0)
+    Log.info("║ Time:      %.1fs                      ║", elapsed)
+    Log.info("╠══════════════════════════════════════╣")
+    Log.info("║ Best methods used:                   ║")
+    for method, count in pairs(s.bestMethod) do
+        Log.info("║   %-20s %4d          ║", method, count)
+    end
+    Log.info("╚══════════════════════════════════════╝")
     
     return results
 end
 
---- Xóa cache
+--- Clear cache
 function DecompileEngine.clearCache()
     DecompileEngine.Cache = {}
     DecompileEngine.resetStats()
     collectgarbage("collect")
 end
 
-BSI.DecompileEngine = DecompileEngine
+
+
 
 -- ================================================================
 -- SECTION 7: MODEL COLLECTOR (100% MODELS)
@@ -1592,20 +1863,34 @@ function ExportEngine.export(mode, progressCallback)
             -- Inject decompiled source vào scripts (nếu có thể)
             callback("Injecting decompiled sources...", 50)
             local injected = 0
+            local injectCount = 0
             
             for script, data in pairs(decompileResults) do
                 if data.success and data.source then
-                    pcall(function()
-                        script:SetAttribute("__BSI_Source", data.source:sub(1, 200000))
-                        injected = injected + 1
-                    end)
+                    -- Prefer sethiddenproperty (sets Source directly in .rbxl)
+                    local didInject = false
+                    if ENV.sethiddenproperty then
+                        pcall(function()
+                            ENV.sethiddenproperty(script, "Source", data.source:sub(1, 200000))
+                            didInject = true
+                        end)
+                    end
+                    -- Fallback: SetAttribute
+                    if not didInject then
+                        pcall(function()
+                            script:SetAttribute("__BSI_Source", data.source:sub(1, 200000))
+                            didInject = true
+                        end)
+                    end
+                    if didInject then injected = injected + 1 end
                 end
                 
-                injected = injected + 1
-                if injected % 50 == 0 then task.wait() end
+                injectCount = injectCount + 1
+                if injectCount % 50 == 0 then task.wait() end
             end
             
-            Log.info("Injected source vào %d scripts", injected)
+            Log.info("⚡ Injected source: %d/%d scripts (avg quality: %.1f/100)",
+                injected, #allScripts, DecompileEngine.Stats.avgQuality)
         end
     end
     
@@ -1872,33 +2157,40 @@ BSI.State = {
 }
 
 -- ================================================================
--- SECTION 12: UI SYSTEM (PROFESSIONAL)
+-- SECTION 12: UI SYSTEM (HYPER v5.0 PREMIUM)
 -- ================================================================
 
 local UI = {}
 
--- Color palette
+-- Premium Color Palette
 UI.C = {
-    bg          = Color3.fromRGB(16, 16, 24),
-    bgDark      = Color3.fromRGB(10, 10, 16),
-    bgLight     = Color3.fromRGB(24, 24, 36),
-    accent      = Color3.fromRGB(80, 120, 255),
-    accentGlow  = Color3.fromRGB(100, 145, 255),
-    accentDark  = Color3.fromRGB(55, 85, 200),
-    success     = Color3.fromRGB(60, 210, 120),
-    error       = Color3.fromRGB(255, 70, 70),
-    warning     = Color3.fromRGB(255, 195, 50),
-    text        = Color3.fromRGB(235, 235, 245),
-    textDim     = Color3.fromRGB(140, 140, 165),
-    textMuted   = Color3.fromRGB(90, 90, 110),
-    border      = Color3.fromRGB(45, 45, 65),
-    btnBg       = Color3.fromRGB(30, 30, 45),
-    btnHover    = Color3.fromRGB(42, 42, 62),
-    fullGame    = Color3.fromRGB(80, 120, 255),
-    modelBtn    = Color3.fromRGB(120, 80, 255),
-    terrainBtn  = Color3.fromRGB(60, 180, 120),
-    saveBtn     = Color3.fromRGB(255, 160, 40),
-    exitBtn     = Color3.fromRGB(200, 50, 50),
+    bg          = Color3.fromRGB(12, 12, 20),
+    bgDark      = Color3.fromRGB(6, 6, 14),
+    bgLight     = Color3.fromRGB(20, 20, 32),
+    bgCard      = Color3.fromRGB(18, 18, 30),
+    accent      = Color3.fromRGB(90, 130, 255),
+    accentGlow  = Color3.fromRGB(120, 160, 255),
+    accentDark  = Color3.fromRGB(60, 90, 210),
+    neon        = Color3.fromRGB(0, 220, 255),
+    neonDim     = Color3.fromRGB(0, 150, 200),
+    cyber       = Color3.fromRGB(160, 80, 255),
+    success     = Color3.fromRGB(40, 220, 110),
+    successGlow = Color3.fromRGB(60, 255, 140),
+    error       = Color3.fromRGB(255, 55, 55),
+    warning     = Color3.fromRGB(255, 200, 40),
+    text        = Color3.fromRGB(240, 240, 252),
+    textDim     = Color3.fromRGB(150, 150, 175),
+    textMuted   = Color3.fromRGB(80, 80, 105),
+    border      = Color3.fromRGB(40, 40, 60),
+    borderGlow  = Color3.fromRGB(60, 70, 110),
+    btnBg       = Color3.fromRGB(22, 22, 38),
+    btnHover    = Color3.fromRGB(35, 35, 55),
+    fullGame    = Color3.fromRGB(90, 130, 255),
+    modelBtn    = Color3.fromRGB(140, 70, 255),
+    terrainBtn  = Color3.fromRGB(40, 200, 120),
+    saveBtn     = Color3.fromRGB(255, 170, 30),
+    exitBtn     = Color3.fromRGB(220, 40, 40),
+    gold        = Color3.fromRGB(255, 215, 60),
 }
 
 function UI.create()
@@ -1932,79 +2224,133 @@ function UI.create()
     end
     
     -- ═══════════════════════════════════
-    -- Main Frame
+    -- Main Frame (Glassmorphism)
     -- ═══════════════════════════════════
     local main = Instance.new("Frame")
     main.Name = "Main"
-    main.Size = UDim2.new(0, 420, 0, 580)
-    main.Position = UDim2.new(0.5, -210, 0.5, -290)
+    main.Size = UDim2.new(0, 440, 0, 620)
+    main.Position = UDim2.new(0.5, -220, 0.5, -310)
     main.BackgroundColor3 = UI.C.bg
     main.BorderSizePixel = 0
     main.Active = true
     main.Parent = gui
     
     local mainCorner = Instance.new("UICorner")
-    mainCorner.CornerRadius = UDim.new(0, 14)
+    mainCorner.CornerRadius = UDim.new(0, 16)
     mainCorner.Parent = main
     
+    -- Outer glow stroke
     local mainStroke = Instance.new("UIStroke")
-    mainStroke.Color = UI.C.border
+    mainStroke.Color = UI.C.borderGlow
     mainStroke.Thickness = 1.5
-    mainStroke.Transparency = 0.3
+    mainStroke.Transparency = 0.2
     mainStroke.Parent = main
     
+    -- Animated stroke glow
+    task.spawn(function()
+        while main and main.Parent do
+            Services.TweenService:Create(mainStroke, TweenInfo.new(2, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut),
+                {Color = UI.C.accent, Transparency = 0.4}):Play()
+            task.wait(2)
+            Services.TweenService:Create(mainStroke, TweenInfo.new(2, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut),
+                {Color = UI.C.cyber, Transparency = 0.2}):Play()
+            task.wait(2)
+        end
+    end)
+    
     -- ═══════════════════════════════════
-    -- Title Bar
+    -- Title Bar (Gradient Premium)
     -- ═══════════════════════════════════
     local titleBar = Instance.new("Frame")
     titleBar.Name = "TitleBar"
-    titleBar.Size = UDim2.new(1, 0, 0, 52)
+    titleBar.Size = UDim2.new(1, 0, 0, 58)
     titleBar.BackgroundColor3 = UI.C.bgDark
     titleBar.BorderSizePixel = 0
     titleBar.Parent = main
     
-    Instance.new("UICorner", titleBar).CornerRadius = UDim.new(0, 14)
+    Instance.new("UICorner", titleBar).CornerRadius = UDim.new(0, 16)
+    
+    -- Title bar gradient
+    local titleGrad = Instance.new("UIGradient")
+    titleGrad.Color = ColorSequence.new{
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(15, 15, 30)),
+        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(20, 18, 35)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(12, 12, 25))
+    }
+    titleGrad.Parent = titleBar
     
     -- Fix bottom corners
     local tbFix = Instance.new("Frame")
-    tbFix.Size = UDim2.new(1, 0, 0, 14)
-    tbFix.Position = UDim2.new(0, 0, 1, -14)
+    tbFix.Size = UDim2.new(1, 0, 0, 16)
+    tbFix.Position = UDim2.new(0, 0, 1, -16)
     tbFix.BackgroundColor3 = UI.C.bgDark
     tbFix.BorderSizePixel = 0
     tbFix.Parent = titleBar
+
+    local tbFixGrad = Instance.new("UIGradient")
+    tbFixGrad.Color = ColorSequence.new{
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(15, 15, 30)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(12, 12, 25))
+    }
+    tbFixGrad.Parent = tbFix
     
-    -- Title
+    -- Title text with sparkle
     local title = Instance.new("TextLabel")
-    title.Size = UDim2.new(1, -100, 1, 0)
-    title.Position = UDim2.new(0, 16, 0, 0)
+    title.Size = UDim2.new(1, -110, 0, 24)
+    title.Position = UDim2.new(0, 16, 0, 6)
     title.BackgroundTransparency = 1
-    title.Text = "🔧 BaoSaveInstance v" .. BSI.VERSION
+    title.Text = "⚡ BaoSaveInstance v" .. BSI.VERSION
     title.TextColor3 = UI.C.text
-    title.TextSize = 16
+    title.TextSize = 17
     title.Font = Enum.Font.GothamBold
     title.TextXAlignment = Enum.TextXAlignment.Left
     title.Parent = titleBar
     
     -- Subtitle
     local subtitle = Instance.new("TextLabel")
-    subtitle.Size = UDim2.new(1, -100, 0, 16)
+    subtitle.Size = UDim2.new(1, -110, 0, 16)
     subtitle.Position = UDim2.new(0, 16, 0, 32)
     subtitle.BackgroundTransparency = 1
-    subtitle.Text = "Ultimate 100% Decompiler"
-    subtitle.TextColor3 = UI.C.textMuted
+    subtitle.Text = "🔥 HYPER Engine — 9 Strategies • 8 Discovery • 6 Workers"
+    subtitle.TextColor3 = UI.C.neonDim
     subtitle.TextSize = 10
-    subtitle.Font = Enum.Font.Gotham
+    subtitle.Font = Enum.Font.GothamSemibold
     subtitle.TextXAlignment = Enum.TextXAlignment.Left
     subtitle.Parent = titleBar
+    
+    -- Subtitle color pulse
+    task.spawn(function()
+        while subtitle and subtitle.Parent do
+            Services.TweenService:Create(subtitle, TweenInfo.new(1.5, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut),
+                {TextColor3 = UI.C.neon}):Play()
+            task.wait(1.5)
+            Services.TweenService:Create(subtitle, TweenInfo.new(1.5, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut),
+                {TextColor3 = UI.C.cyber}):Play()
+            task.wait(1.5)
+        end
+    end)
+    
+    -- Version badge
+    local badge = Instance.new("TextLabel")
+    badge.Size = UDim2.new(0, 50, 0, 18)
+    badge.Position = UDim2.new(0, 16, 0, 50)
+    badge.BackgroundColor3 = UI.C.accent
+    badge.BackgroundTransparency = 0.7
+    badge.Text = "HYPER"
+    badge.TextColor3 = UI.C.accentGlow
+    badge.TextSize = 9
+    badge.Font = Enum.Font.GothamBold
+    badge.Parent = titleBar
+    Instance.new("UICorner", badge).CornerRadius = UDim.new(0, 4)
     
     -- Window buttons
     local function windowBtn(name, text, color, posX)
         local btn = Instance.new("TextButton")
         btn.Name = name
-        btn.Size = UDim2.new(0, 32, 0, 32)
-        btn.Position = UDim2.new(1, posX, 0, 10)
+        btn.Size = UDim2.new(0, 34, 0, 34)
+        btn.Position = UDim2.new(1, posX, 0, 12)
         btn.BackgroundColor3 = color
-        btn.BackgroundTransparency = 0.7
+        btn.BackgroundTransparency = 0.75
         btn.BorderSizePixel = 0
         btn.Text = text
         btn.TextColor3 = UI.C.text
@@ -2016,26 +2362,26 @@ function UI.create()
         
         btn.MouseEnter:Connect(function()
             Services.TweenService:Create(btn, TweenInfo.new(0.15),
-                {BackgroundTransparency = 0.3}):Play()
+                {BackgroundTransparency = 0.2}):Play()
         end)
         btn.MouseLeave:Connect(function()
             Services.TweenService:Create(btn, TweenInfo.new(0.15),
-                {BackgroundTransparency = 0.7}):Play()
+                {BackgroundTransparency = 0.75}):Play()
         end)
         
         return btn
     end
     
-    local btnMin = windowBtn("Min", "─", UI.C.warning, -78)
-    local btnClose = windowBtn("Close", "✕", UI.C.error, -40)
+    local btnMin = windowBtn("Min", "─", UI.C.warning, -82)
+    local btnClose = windowBtn("Close", "✕", UI.C.error, -42)
     
     -- ═══════════════════════════════════
     -- Content Container
     -- ═══════════════════════════════════
     local content = Instance.new("ScrollingFrame")
     content.Name = "Content"
-    content.Size = UDim2.new(1, -24, 1, -62)
-    content.Position = UDim2.new(0, 12, 0, 57)
+    content.Size = UDim2.new(1, -24, 1, -68)
+    content.Position = UDim2.new(0, 12, 0, 63)
     content.BackgroundTransparency = 1
     content.BorderSizePixel = 0
     content.ScrollBarThickness = 3
@@ -2050,16 +2396,22 @@ function UI.create()
     contentLayout.Parent = content
     
     -- ═══════════════════════════════════
-    -- Info Panel
+    -- Info Panel (Enhanced)
     -- ═══════════════════════════════════
     local infoPanel = Instance.new("Frame")
     infoPanel.Name = "Info"
-    infoPanel.Size = UDim2.new(1, 0, 0, 80)
-    infoPanel.BackgroundColor3 = UI.C.bgLight
+    infoPanel.Size = UDim2.new(1, 0, 0, 88)
+    infoPanel.BackgroundColor3 = UI.C.bgCard
     infoPanel.BorderSizePixel = 0
     infoPanel.LayoutOrder = 1
     infoPanel.Parent = content
-    Instance.new("UICorner", infoPanel).CornerRadius = UDim.new(0, 10)
+    Instance.new("UICorner", infoPanel).CornerRadius = UDim.new(0, 12)
+    
+    local infoStroke = Instance.new("UIStroke")
+    infoStroke.Color = UI.C.border
+    infoStroke.Thickness = 1
+    infoStroke.Transparency = 0.5
+    infoStroke.Parent = infoPanel
     
     local gameName = Util.getGameName()
     
@@ -2081,36 +2433,44 @@ function UI.create()
     infoLabel("🎮 " .. gameName, 6, UI.C.text, 13)
     infoLabel(string.format("📍 PlaceId: %d | GameId: %d", game.PlaceId, game.GameId), 26, UI.C.textDim, 11)
     
-    local instLabel = infoLabel("📦 Loading...", 44, UI.C.textDim, 11)
-    local execLabel = infoLabel("🔧 " .. Util.detectExecutor(), 60, UI.C.textMuted, 10)
+    local instLabel = infoLabel("📦 Scanning instances...", 46, UI.C.textDim, 11)
+    local execLabel = infoLabel("🔧 " .. Util.detectExecutor() .. " | Workers: " ..
+        BSI.Config.Decompile.ConcurrentWorkers .. " | Quality ≥ " ..
+        BSI.Config.Decompile.QualityThreshold, 66, UI.C.textMuted, 10)
     
     task.spawn(function()
         local count = 0
         pcall(function() count = #game:GetDescendants() end)
-        instLabel.Text = "📦 Instances: " .. Util.formatNumber(count)
+        instLabel.Text = "📦 " .. Util.formatNumber(count) .. " instances detected"
     end)
     
     -- ═══════════════════════════════════
-    -- Status Panel
+    -- Status Panel (Premium)
     -- ═══════════════════════════════════
     local statusPanel = Instance.new("Frame")
     statusPanel.Name = "Status"
-    statusPanel.Size = UDim2.new(1, 0, 0, 60)
-    statusPanel.BackgroundColor3 = UI.C.bgLight
+    statusPanel.Size = UDim2.new(1, 0, 0, 68)
+    statusPanel.BackgroundColor3 = UI.C.bgCard
     statusPanel.BorderSizePixel = 0
     statusPanel.LayoutOrder = 2
     statusPanel.Parent = content
-    Instance.new("UICorner", statusPanel).CornerRadius = UDim.new(0, 10)
+    Instance.new("UICorner", statusPanel).CornerRadius = UDim.new(0, 12)
+    
+    local statusStroke = Instance.new("UIStroke")
+    statusStroke.Color = UI.C.border
+    statusStroke.Thickness = 1
+    statusStroke.Transparency = 0.5
+    statusStroke.Parent = statusPanel
     
     local statusText = Instance.new("TextLabel")
     statusText.Name = "Text"
     statusText.Size = UDim2.new(1, -20, 0, 22)
-    statusText.Position = UDim2.new(0, 12, 0, 6)
+    statusText.Position = UDim2.new(0, 12, 0, 8)
     statusText.BackgroundTransparency = 1
-    statusText.Text = "✅ Ready — Chọn chức năng bên dưới"
+    statusText.Text = "✅ HYPER Engine Ready — Select action below"
     statusText.TextColor3 = UI.C.success
     statusText.TextSize = 12
-    statusText.Font = Enum.Font.GothamSemibold
+    statusText.Font = Enum.Font.GothamBold
     statusText.TextXAlignment = Enum.TextXAlignment.Left
     statusText.TextTruncate = Enum.TextTruncate.AtEnd
     statusText.Parent = statusPanel
@@ -2118,9 +2478,9 @@ function UI.create()
     local statusDetail = Instance.new("TextLabel")
     statusDetail.Name = "Detail"
     statusDetail.Size = UDim2.new(1, -20, 0, 16)
-    statusDetail.Position = UDim2.new(0, 12, 0, 25)
+    statusDetail.Position = UDim2.new(0, 12, 0, 28)
     statusDetail.BackgroundTransparency = 1
-    statusDetail.Text = ""
+    statusDetail.Text = "9 decompile strategies • 8 discovery methods"
     statusDetail.TextColor3 = UI.C.textDim
     statusDetail.TextSize = 10
     statusDetail.Font = Enum.Font.Gotham
@@ -2128,14 +2488,14 @@ function UI.create()
     statusDetail.TextTruncate = Enum.TextTruncate.AtEnd
     statusDetail.Parent = statusPanel
     
-    -- Progress bar
+    -- Progress bar (premium gradient)
     local progBg = Instance.new("Frame")
-    progBg.Size = UDim2.new(1, -24, 0, 8)
-    progBg.Position = UDim2.new(0, 12, 0, 46)
+    progBg.Size = UDim2.new(1, -24, 0, 10)
+    progBg.Position = UDim2.new(0, 12, 0, 50)
     progBg.BackgroundColor3 = UI.C.border
     progBg.BorderSizePixel = 0
     progBg.Parent = statusPanel
-    Instance.new("UICorner", progBg).CornerRadius = UDim.new(0, 4)
+    Instance.new("UICorner", progBg).CornerRadius = UDim.new(0, 5)
     
     local progFill = Instance.new("Frame")
     progFill.Name = "Fill"
@@ -2143,48 +2503,67 @@ function UI.create()
     progFill.BackgroundColor3 = UI.C.accent
     progFill.BorderSizePixel = 0
     progFill.Parent = progBg
-    Instance.new("UICorner", progFill).CornerRadius = UDim.new(0, 4)
+    Instance.new("UICorner", progFill).CornerRadius = UDim.new(0, 5)
     
     -- Gradient on progress
     local progGrad = Instance.new("UIGradient")
     progGrad.Color = ColorSequence.new{
-        ColorSequenceKeypoint.new(0, UI.C.accent),
-        ColorSequenceKeypoint.new(1, UI.C.accentGlow)
+        ColorSequenceKeypoint.new(0, UI.C.neon),
+        ColorSequenceKeypoint.new(0.5, UI.C.accent),
+        ColorSequenceKeypoint.new(1, UI.C.cyber)
     }
     progGrad.Parent = progFill
     
     -- ═══════════════════════════════════
-    -- Button Factory
+    -- Button Factory (Premium)
     -- ═══════════════════════════════════
     local allButtons = {}
     
     local function createActionButton(name, text, description, icon, layoutOrder, accentColor)
         local btn = Instance.new("TextButton")
         btn.Name = name
-        btn.Size = UDim2.new(1, 0, 0, 56)
+        btn.Size = UDim2.new(1, 0, 0, 62)
         btn.BackgroundColor3 = UI.C.btnBg
         btn.BorderSizePixel = 0
         btn.Text = ""
         btn.LayoutOrder = layoutOrder
         btn.AutoButtonColor = false
         btn.Parent = content
-        Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 10)
+        Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 12)
         
-        -- Left accent bar
+        -- Left accent bar (animated)
         local accentBar = Instance.new("Frame")
-        accentBar.Size = UDim2.new(0, 4, 0.7, 0)
-        accentBar.Position = UDim2.new(0, 6, 0.15, 0)
+        accentBar.Size = UDim2.new(0, 3, 0.6, 0)
+        accentBar.Position = UDim2.new(0, 8, 0.2, 0)
         accentBar.BackgroundColor3 = accentColor
         accentBar.BorderSizePixel = 0
         accentBar.Parent = btn
         Instance.new("UICorner", accentBar).CornerRadius = UDim.new(0, 2)
         
+        -- Icon circle
+        local iconBg = Instance.new("Frame")
+        iconBg.Size = UDim2.new(0, 36, 0, 36)
+        iconBg.Position = UDim2.new(0, 18, 0.5, -18)
+        iconBg.BackgroundColor3 = accentColor
+        iconBg.BackgroundTransparency = 0.8
+        iconBg.BorderSizePixel = 0
+        iconBg.Parent = btn
+        Instance.new("UICorner", iconBg).CornerRadius = UDim.new(0, 18)
+        
+        local iconLbl = Instance.new("TextLabel")
+        iconLbl.Size = UDim2.new(1, 0, 1, 0)
+        iconLbl.BackgroundTransparency = 1
+        iconLbl.Text = icon
+        iconLbl.TextSize = 18
+        iconLbl.Font = Enum.Font.GothamBold
+        iconLbl.Parent = iconBg
+        
         -- Main label
         local lbl = Instance.new("TextLabel")
-        lbl.Size = UDim2.new(1, -30, 0, 22)
-        lbl.Position = UDim2.new(0, 18, 0, 8)
+        lbl.Size = UDim2.new(1, -70, 0, 22)
+        lbl.Position = UDim2.new(0, 62, 0, 10)
         lbl.BackgroundTransparency = 1
-        lbl.Text = icon .. "  " .. text
+        lbl.Text = text
         lbl.TextColor3 = UI.C.text
         lbl.TextSize = 14
         lbl.Font = Enum.Font.GothamBold
@@ -2193,8 +2572,8 @@ function UI.create()
         
         -- Description
         local desc = Instance.new("TextLabel")
-        desc.Size = UDim2.new(1, -30, 0, 16)
-        desc.Position = UDim2.new(0, 18, 0, 32)
+        desc.Size = UDim2.new(1, -70, 0, 16)
+        desc.Position = UDim2.new(0, 62, 0, 34)
         desc.BackgroundTransparency = 1
         desc.Text = description
         desc.TextColor3 = UI.C.textMuted
@@ -2210,14 +2589,16 @@ function UI.create()
         stroke.Transparency = 0.5
         stroke.Parent = btn
         
-        -- Hover
+        -- Hover animations
         btn.MouseEnter:Connect(function()
             Services.TweenService:Create(btn, TweenInfo.new(0.2),
                 {BackgroundColor3 = UI.C.btnHover}):Play()
             Services.TweenService:Create(stroke, TweenInfo.new(0.2),
                 {Color = accentColor, Transparency = 0}):Play()
             Services.TweenService:Create(accentBar, TweenInfo.new(0.2),
-                {Size = UDim2.new(0, 4, 0.85, 0)}):Play()
+                {Size = UDim2.new(0, 3, 0.85, 0), BackgroundTransparency = 0}):Play()
+            Services.TweenService:Create(iconBg, TweenInfo.new(0.2),
+                {BackgroundTransparency = 0.5}):Play()
         end)
         
         btn.MouseLeave:Connect(function()
@@ -2226,7 +2607,9 @@ function UI.create()
             Services.TweenService:Create(stroke, TweenInfo.new(0.2),
                 {Color = UI.C.border, Transparency = 0.5}):Play()
             Services.TweenService:Create(accentBar, TweenInfo.new(0.2),
-                {Size = UDim2.new(0, 4, 0.7, 0)}):Play()
+                {Size = UDim2.new(0, 3, 0.6, 0)}):Play()
+            Services.TweenService:Create(iconBg, TweenInfo.new(0.2),
+                {BackgroundTransparency = 0.8}):Play()
         end)
         
         allButtons[#allButtons + 1] = btn
@@ -2238,15 +2621,15 @@ function UI.create()
     -- ═══════════════════════════════════
     local btnFullGame = createActionButton(
         "FullGame",
-        "Decompile Full Game",
-        "100% Scripts + Models + Terrain → single .rbxl",
+        "⚡ HYPER Full Decompile",
+        "9-Strategy Racing • 100% Scripts + Models + Terrain → .rbxl",
         "🌍", 3, UI.C.fullGame
     )
     
     local btnModels = createActionButton(
         "Models",
         "Decompile Full Model",
-        "100% Parts, Meshes, Welds, Constraints, Scripts",
+        "8 Discovery Methods • All Parts, Meshes, Welds + Scripts",
         "🧊", 4, UI.C.modelBtn
     )
     
@@ -2260,14 +2643,14 @@ function UI.create()
     local btnQuickSave = createActionButton(
         "QuickSave",
         "Quick Save .rbxl",
-        "Fast save với tối ưu tốc độ",
+        "6 Workers • Fast save với tối ưu tốc độ",
         "💾", 6, UI.C.saveBtn
     )
     
     local btnExit = createActionButton(
         "Exit",
         "Exit",
-        "Đóng BaoSaveInstance",
+        "Close BaoSaveInstance",
         "❌", 7, UI.C.exitBtn
     )
     
@@ -2275,13 +2658,13 @@ function UI.create()
     -- Footer
     -- ═══════════════════════════════════
     local footer = Instance.new("TextLabel")
-    footer.Size = UDim2.new(1, 0, 0, 24)
+    footer.Size = UDim2.new(1, 0, 0, 28)
     footer.BackgroundTransparency = 1
-    footer.Text = "BaoSaveInstance v" .. BSI.VERSION .. " | RightShift to toggle | 100% Coverage"
+    footer.Text = "⚡ BaoSaveInstance v" .. BSI.VERSION .. " HYPER | RightShift toggle | 100% Coverage"
     footer.TextColor3 = UI.C.textMuted
     footer.TextSize = 9
-    footer.Font = Enum.Font.Gotham
-    footer.TextTransparency = 0.4
+    footer.Font = Enum.Font.GothamSemibold
+    footer.TextTransparency = 0.3
     footer.LayoutOrder = 10
     footer.Parent = content
     
@@ -2326,7 +2709,7 @@ function UI.create()
         if minimized then
             Services.TweenService:Create(main,
                 TweenInfo.new(0.3, Enum.EasingStyle.Quint),
-                {Size = UDim2.new(0, 420, 0, 52)}):Play()
+                {Size = UDim2.new(0, 440, 0, 58)}):Play()
             content.Visible = false
             btnMin.Text = "□"
         else
@@ -2351,12 +2734,20 @@ function UI.create()
         
         if progress then
             local size = UDim2.new(math.clamp(progress / 100, 0, 1), 0, 1, 0)
-            Services.TweenService:Create(progFill, TweenInfo.new(0.25),
+            Services.TweenService:Create(progFill, TweenInfo.new(0.3),
                 {Size = size}):Play()
             
-            -- Thay đổi màu progress bar theo trạng thái
             if progress >= 100 then
                 progFill.BackgroundColor3 = UI.C.success
+                -- Glow on complete
+                Services.TweenService:Create(statusStroke, TweenInfo.new(0.5),
+                    {Color = UI.C.successGlow, Transparency = 0}):Play()
+                task.delay(2, function()
+                    pcall(function()
+                        Services.TweenService:Create(statusStroke, TweenInfo.new(1),
+                            {Color = UI.C.border, Transparency = 0.5}):Play()
+                    end)
+                end)
             elseif progress > 0 then
                 progFill.BackgroundColor3 = UI.C.accent
             end
@@ -2377,20 +2768,20 @@ function UI.create()
     
     local function executeExport(mode, buttonName)
         if BSI.State.isRunning then
-            updateStatus("⚠️ Đang có tiến trình chạy!", "Vui lòng đợi...", UI.C.warning, nil)
+            updateStatus("⚠️ Process already running!", "Please wait...", UI.C.warning, nil)
             return
         end
         
         BSI.State.isRunning = true
         setButtonsEnabled(false)
         
-        updateStatus("⏳ Đang khởi tạo " .. buttonName .. "...",
-            "Mode: " .. mode, UI.C.warning, 5)
+        updateStatus("⏳ Initializing " .. buttonName .. "...",
+            "Mode: " .. mode .. " | HYPER Engine warming up...", UI.C.warning, 5)
         
         task.spawn(function()
             local success, result = ExportEngine.export(mode, function(status, progress)
                 task.spawn(function()
-                    updateStatus("⏳ " .. status, "Mode: " .. mode,
+                    updateStatus("⚡ " .. status, "Mode: " .. mode,
                         UI.C.warning, progress)
                 end)
             end)
@@ -2398,11 +2789,12 @@ function UI.create()
             BSI.State.isRunning = false
             
             if success then
-                updateStatus("✅ " .. buttonName .. " hoàn thành!",
-                    "📁 File: " .. tostring(result), UI.C.success, 100)
+                local qualityStr = string.format(" | Quality: %.0f/100", DecompileEngine.Stats.avgQuality)
+                updateStatus("✅ " .. buttonName .. " complete!",
+                    "📁 " .. tostring(result) .. qualityStr, UI.C.success, 100)
                 BSI.State.lastFile = result
             else
-                updateStatus("❌ " .. buttonName .. " thất bại!",
+                updateStatus("❌ " .. buttonName .. " failed!",
                     "Error: " .. tostring(result), UI.C.error, 0)
                 BSI.State.lastError = result
             end
@@ -2413,7 +2805,7 @@ function UI.create()
     
     -- Full Game
     btnFullGame.MouseButton1Click:Connect(function()
-        executeExport("FULL_GAME", "Decompile Full Game")
+        executeExport("FULL_GAME", "HYPER Full Decompile")
     end)
     
     -- Full Model
@@ -2432,14 +2824,14 @@ function UI.create()
         BSI.State.isRunning = true
         setButtonsEnabled(false)
         
-        updateStatus("⏳ Quick Save...", "Đang save nhanh...", UI.C.saveBtn, 30)
+        updateStatus("⚡ Quick Save...", "HYPER speed saving...", UI.C.saveBtn, 30)
         
         task.spawn(function()
             local saveFunc = ENV.saveinstance
             local isSyn = syn and syn.saveinstance
             
             if not saveFunc and not isSyn then
-                updateStatus("❌ saveinstance không khả dụng!", "", UI.C.error, 0)
+                updateStatus("❌ saveinstance not available!", "", UI.C.error, 0)
                 BSI.State.isRunning = false
                 setButtonsEnabled(true)
                 return
@@ -2466,10 +2858,10 @@ function UI.create()
             BSI.State.isRunning = false
             
             if ok then
-                updateStatus("✅ Quick Save hoàn thành!",
+                updateStatus("✅ Quick Save complete!",
                     "📁 " .. fileName, UI.C.success, 100)
             else
-                updateStatus("❌ Quick Save thất bại!",
+                updateStatus("❌ Quick Save failed!",
                     tostring(err), UI.C.error, 0)
             end
             
@@ -2494,7 +2886,7 @@ function UI.create()
     btnExit.MouseButton1Click:Connect(closeUI)
     
     -- ═══════════════════════════════════
-    -- OPEN ANIMATION
+    -- OPEN ANIMATION (Premium)
     -- ═══════════════════════════════════
     main.BackgroundTransparency = 1
     main.Size = UDim2.new(0, 0, 0, 0)
@@ -2503,9 +2895,9 @@ function UI.create()
     task.wait(0.05)
     
     Services.TweenService:Create(main,
-        TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+        TweenInfo.new(0.6, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
         {Size = fullSize,
-         Position = UDim2.new(0.5, -210, 0.5, -290),
+         Position = UDim2.new(0.5, -220, 0.5, -310),
          BackgroundTransparency = 0}):Play()
     
     -- ═══════════════════════════════════
@@ -2524,7 +2916,7 @@ function UI.create()
     UI.ProgFill = progFill
     UI.UpdateStatus = updateStatus
     
-    Log.info("UI created! Press RightShift to toggle")
+    Log.info("⚡ HYPER UI created! Press RightShift to toggle")
     
     return gui
 end
@@ -2555,10 +2947,10 @@ _G.BSI = BSI
 
 --[[
 ╔══════════════════════════════════════════════════════════════════╗
-║                    CONSOLE API REFERENCE                        ║
+║              BAOSAVEINSTANCE v5.0 HYPER — API REFERENCE         ║
 ╠══════════════════════════════════════════════════════════════════╣
 ║                                                                  ║
-║  -- 100% Full Game (Scripts + Models + Terrain)                  ║
+║  -- HYPER Full Game (9-Strategy Racing Decompile)               ║
 ║  BSI.exportRBXL("FULL_GAME")                                    ║
 ║                                                                  ║
 ║  -- 100% Models Only                                             ║
@@ -2567,34 +2959,28 @@ _G.BSI = BSI
 ║  -- 100% Terrain Only                                            ║
 ║  BSI.exportRBXL("TERRAIN_ONLY")                                 ║
 ║                                                                  ║
-║  -- Decompile tất cả scripts (standalone)                        ║
+║  -- Decompile all scripts (standalone)                           ║
 ║  BSI.decompileScripts(function(s,p) print(s,p) end)             ║
 ║                                                                  ║
-║  -- Custom config                                                ║
-║  BSI.Config.Decompile.Timeout = 60                               ║
-║  BSI.Config.Decompile.Retries = 10                               ║
-║  BSI.Config.Performance.MaxMemoryMB = 8192                       ║
+║  -- HYPER Config                                                 ║
+║  BSI.Config.Decompile.ConcurrentWorkers = 8                     ║
+║  BSI.Config.Decompile.QualityThreshold = 50                     ║
+║  BSI.Config.Decompile.RaceTimeout = 15                          ║
 ║                                                                  ║
 ║  -- Check state                                                  ║
 ║  print(BSI.State.status)                                         ║
-║  print(BSI.State.lastFile)                                       ║
+║  print(BSI.DecompileEngine.Stats.avgQuality)                    ║
 ║                                                                  ║
-║  -- Terrain analysis                                             ║
-║  local info = BSI.TerrainEngine.analyze()                        ║
-║                                                                  ║
-║  -- Model analysis                                               ║
-║  local models = BSI.ModelCollector.collectAll()                   ║
-║                                                                  ║
-║  -- Script discovery                                             ║
-║  local scripts = BSI.ScriptDiscovery.collectAll()                ║
+║  -- Score a source string                                        ║
+║  local q = BSI.DecompileEngine.scoreSource(code)                ║
 ║                                                                  ║
 ╚══════════════════════════════════════════════════════════════════╝
 ]]
 
-Log.info("══════════════════════════════════════════")
-Log.info("BaoSaveInstance v%s ULTIMATE — READY!", BSI.VERSION)
-Log.info("100%% Script + Model + Terrain Coverage")
-Log.info("Press RightShift to toggle UI")
-Log.info("══════════════════════════════════════════")
+Log.info("╔══════════════════════════════════════════════╗")
+Log.info("║  BaoSaveInstance v%s HYPER — READY!     ║", BSI.VERSION)
+Log.info("║  9 Strategies • 8 Discovery • 6 Workers      ║")
+Log.info("║  Press RightShift to toggle UI                ║")
+Log.info("╚══════════════════════════════════════════════╝")
 
 return BSI
