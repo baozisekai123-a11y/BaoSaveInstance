@@ -11,8 +11,16 @@
 do -- Encapsulate the script to prevent environment leakage
     
 --=============================================================================
--- BaoSaveInstance v1.1 - Maximum Fidelity & Stealth
+-- BaoSaveInstance v1.1 - Ultimate Stealth Edition
 --=============================================================================
+
+-- 1. HARDENED BOOTLOADER (Define stealth early)
+local getService = game.GetService
+local cloneref = (getfenv().cloneref or getfenv().cloneref_old or function(i) return i end)
+
+local function GetService(name)
+    return cloneref(getService(game, name))
+end
 
 -- Namecall-Safe Method Caching
 local isA = game.IsA
@@ -31,31 +39,19 @@ local connect = game.ChildAdded.Connect
 local wait = game.ChildAdded.Wait
 local getComponents = CFrame.new().GetComponents
 
--- Executor Detection & Function Normalization
-local identifyExecutor = Utils.GetFunction("identifyexecutor") or Utils.GetFunction("getexecutorname") or function() return "Unknown" end
+-- Inline Executor Detection (No dependency on Utils)
+local function getGlobalFunc(name)
+    return getfenv()[name] or _G[name] or nil
+end
+
+local identifyExecutor = getGlobalFunc("identifyexecutor") or getGlobalFunc("getexecutorname") or function() return "Unknown" end
 local executorName = identifyExecutor()
-
--- Optimized play method caching
-local playTween = nil
-pcall(function()
-    local dummyFrame = Instance.new("Frame")
-    local dummyTween = GetService("TweenService"):Create(dummyFrame, TweenInfo.new(0), {})
-    playTween = dummyTween.Play
-    destroy(dummyTween)
-    destroy(dummyFrame)
-end)
-
-local playSound = Instance.new("Sound").Play
-local stopSound = Instance.new("Sound").Stop
 
 -- Stealth Service Access
 local Players = GetService("Players")
 local Workspace = GetService("Workspace")
 local CoreGui = GetService("CoreGui")
 local TweenService = GetService("TweenService")
-local HttpService = GetService("HttpService")
-local createTween = TweenService.Create
-
 local HttpService = GetService("HttpService")
 local Debris = GetService("Debris")
 local Lighting = GetService("Lighting")
@@ -71,6 +67,28 @@ local LocalizationService = GetService("LocalizationService")
 local TestService = GetService("TestService")
 local UserInputService = GetService("UserInputService")
 local RunService = GetService("RunService")
+local TextChatService = GetService("TextChatService")
+local VoiceChatService = GetService("VoiceChatService")
+local ServerScriptService = GetService("ServerScriptService")
+local ServerStorage = GetService("ServerStorage")
+local MarketplaceService = GetService("MarketplaceService")
+
+local createTween = TweenService.Create
+local getProductInfo = MarketplaceService.GetProductInfo
+
+-- Optimized play method caching
+local playTween = nil
+pcall(function()
+    local dummyFrame = Instance.new("Frame")
+    local dummyTween = createTween(TweenService, dummyFrame, TweenInfo.new(0), {})
+    playTween = dummyTween.Play
+    destroy(dummyTween)
+    destroy(dummyFrame)
+end)
+
+local playSound = Instance.new("Sound").Play
+local stopSound = Instance.new("Sound").Stop
+
 
 --=============================================================================
 -- CONFIGURATION
@@ -1975,7 +1993,7 @@ function App.CreateMainWindow()
     gameInfo.BackgroundTransparency = 1
     gameInfo.TextColor3 = Config.Colors.TextDim
     gameInfo.Text = string.format("Game: %s\nPlaceId: %s | GameId: %s",
-        game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId).Name or "Unknown",
+        getProductInfo(MarketplaceService, game.PlaceId).Name or "Unknown",
         tostring(game.PlaceId),
         tostring(game.GameId))
     gameInfo.Font = Enum.Font.Gotham
@@ -1989,10 +2007,11 @@ function App.CreateMainWindow()
     App.MainFrame.Position = UDim2.new(0.5, -190, 0.5, -200)
     App.MainFrame.BackgroundTransparency = 1
     
-    TweenService:Create(App.MainFrame, TweenInfo.new(0.3, Enum.EasingStyle.Back), {
+    local tween = createTween(TweenService, App.MainFrame, TweenInfo.new(0.3, Enum.EasingStyle.Back), {
         Position = UDim2.new(0.5, -190, 0.5, -240),
         BackgroundTransparency = 0
-    }):Play()
+    })
+    playTween(tween)
 end
 
 --- Show settings panel
@@ -2096,8 +2115,7 @@ function App.ShowSettings()
         end
     }).ZIndex = 52
     
-    -- Close button
-    UI.Button({
+        UI.Button({
         Name = "CloseSettings",
         Text = "Close",
         Size = UDim2.new(1, -20, 0, 32),
@@ -2106,16 +2124,19 @@ function App.ShowSettings()
         Parent = settingsPanel,
         Callback = function()
             -- Animate out
-            TweenService:Create(overlay, TweenInfo.new(0.2), {
+            local t1 = createTween(TweenService, overlay, TweenInfo.new(0.2), {
                 BackgroundTransparency = 1
-            }):Play()
-            TweenService:Create(settingsPanel, TweenInfo.new(0.2), {
+            })
+            playTween(t1)
+            
+            local t2 = createTween(TweenService, settingsPanel, TweenInfo.new(0.2), {
                 Position = UDim2.new(0.5, -160, 0.5, -120),
                 BackgroundTransparency = 1
-            }):Play()
+            })
+            playTween(t2)
             
             task.delay(0.2, function()
-                overlay:Destroy()
+                destroy(overlay)
             end)
         end
     }).ZIndex = 52
@@ -2127,11 +2148,15 @@ function App.ShowSettings()
     
     TweenService:Create(overlay, TweenInfo.new(0.2), {
         BackgroundTransparency = 0.5
-    }):Play()
-    TweenService:Create(settingsPanel, TweenInfo.new(0.2, Enum.EasingStyle.Back), {
+    })
+    local t1 = createTween(TweenService, overlay, TweenInfo.new(0.2), { BackgroundTransparency = 0.5 })
+    playTween(t1)
+    
+    local t2 = createTween(TweenService, settingsPanel, TweenInfo.new(0.2, Enum.EasingStyle.Back), {
         Position = UDim2.new(0.5, -160, 0.5, -140),
         BackgroundTransparency = 0
-    }):Play()
+    })
+    playTween(t2)
 end
 
 --- Update status display
@@ -2156,9 +2181,10 @@ end
 ---@param percent number Progress percentage (0-100)
 function App.UpdateProgress(percent)
     if App.ProgressBar then
-        TweenService:Create(App.ProgressBar, TweenInfo.new(0.1), {
+        local t = createTween(TweenService, App.ProgressBar, TweenInfo.new(0.1), {
             Size = UDim2.new(math.clamp(percent / 100, 0, 1), 0, 1, 0)
-        }):Play()
+        })
+        playTween(t)
     end
 end
 
@@ -2213,10 +2239,10 @@ function App.DecompileFullGame()
                 Chat,
                 LocalizationService,
                 TestService,
-                game:GetService("TextChatService"),
-                game:GetService("VoiceChatService"),
-                game:GetService("ServerScriptService"),
-                game:GetService("ServerStorage"),
+                TextChatService,
+                VoiceChatService,
+                ServerScriptService,
+                ServerStorage,
             }
             
             for _, service in ipairs(servicesToSave) do
@@ -2280,9 +2306,9 @@ function App.DecompileModels()
                 Teams,
                 SoundService,
                 Chat,
-                game:GetService("TextChatService"),
-                game:GetService("ServerScriptService"),
-                game:GetService("ServerStorage"),
+                TextChatService,
+                ServerScriptService,
+                ServerStorage,
             }
             
             for _, service in ipairs(services) do
