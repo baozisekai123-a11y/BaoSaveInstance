@@ -28,7 +28,7 @@
 -- ================================================================
 
 local BSI = {}
-BSI.VERSION = "5.0.0"
+BSI.VERSION = "5.0.1"
 BSI.NAME = "BaoSaveInstance"
 BSI.START_TIME = os.clock()
 
@@ -152,9 +152,9 @@ BSI.Config = {
     -- ═══ Decompile - HYPER ENGINE ═══
     Decompile = {
         Enabled          = true,
-        Timeout          = 30,       -- 30 giây timeout mỗi script
-        Retries          = 5,        -- 5 lần retry
-        BatchSize        = 30,       -- 30 scripts/batch
+        Timeout          = 15,       -- [OPTIMIZED] 15s timeout (was 30) for speed
+        Retries          = 3,        -- [OPTIMIZED] 3 retries (was 5)
+        BatchSize        = 50,       -- [OPTIMIZED] 50 scripts/batch (was 30)
         CacheEnabled     = true,
         AddHeaders       = true,     -- Thêm header comment vào source
         SaveBytecode     = false,    -- Không save bytecode (save readable)
@@ -169,11 +169,11 @@ BSI.Config = {
         FallbackComment  = true,     -- Comment fallback khi fail
         DecompileInternalModules = true, -- Decompile cả internal modules
         -- ═══ HYPER v5.0 NEW ═══
-        ConcurrentWorkers    = 6,    -- 6 workers song song
+        ConcurrentWorkers    = 12,   -- [SPEED] 12 workers song song (was 6)
         QualityThreshold     = 30,   -- Điểm tối thiểu chấp nhận (0-100)
         AdaptiveTimeout      = true, -- Timeout tự điều chỉnh
         MultiStrategy        = true, -- Chạy nhiều phương pháp đồng thời
-        RaceTimeout          = 10,   -- Timeout cho multi-strategy race (giây)
+        RaceTimeout          = 6,    -- [SPEED] 6s race timeout (was 10)
         CleanWatermarks      = true, -- Xóa watermark decompiler
         FixIndentation       = true, -- Sửa indentation
         RequireModules       = true, -- Thử require() ModuleScripts
@@ -812,44 +812,51 @@ function DecompileEngine.decompileSingle(scriptInst)
     end
     
     local function tryMethod(name, fn)
+        if raceComplete then return end
         local ok, result = pcall(fn)
         if ok and result and type(result) == "string" and #result > 2 then
             local q = DecompileEngine.scoreSource(result)
             if q > 0 then
                 candidates[#candidates + 1] = {source = result, method = name, quality = q}
+                -- [SPEED] Short-circuit: If quality is excellent, stop racing!
+                if q >= 85 then 
+                    raceComplete = true 
+                end
             end
         end
     end
     
     -- ═══ Strategy 1: decompile() trực tiếp ═══
-    if ENV.decompile then
+    if not raceComplete and ENV.decompile then
         tryMethod("decompile_v1", function() return ENV.decompile(scriptInst) end)
     end
     
     -- ═══ Strategy 2: decompile with "new" backend ═══
-    if ENV.decompile then
+    if not raceComplete and ENV.decompile then
         tryMethod("decompile_new", function() return ENV.decompile(scriptInst, "new") end)
     end
     
     -- ═══ Strategy 3: decompile with "old" backend ═══
-    if ENV.decompile then
+    if not raceComplete and ENV.decompile then
         tryMethod("decompile_old", function() return ENV.decompile(scriptInst, "old") end)
     end
     
     -- ═══ Strategy 4: Synapse X decompile ═══
-    if syn and syn.decompile then
+    if not raceComplete and syn and syn.decompile then
         tryMethod("syn_decompile", function() return syn.decompile(scriptInst) end)
     end
     
     -- ═══ Strategy 5: Source property (ModuleScript) ═══
-    tryMethod("source_property", function()
-        local src = scriptInst.Source
-        if src and #src > 0 then return src end
-        return nil
-    end)
+    if not raceComplete then
+        tryMethod("source_property", function()
+            local src = scriptInst.Source
+            if src and #src > 0 then return src end
+            return nil
+        end)
+    end
     
     -- ═══ Strategy 6: Hidden property "Source" ═══
-    if ENV.gethiddenproperty then
+    if not raceComplete and ENV.gethiddenproperty then
         tryMethod("hidden_source", function()
             local ok, src = ENV.gethiddenproperty(scriptInst, "Source")
             if ok and src and #tostring(src) > 0 then
@@ -863,7 +870,7 @@ function DecompileEngine.decompileSingle(scriptInst)
     -- ═══ Strategy 7: require() cho ModuleScript ═══
     local isModule = false
     pcall(function() isModule = scriptInst:IsA("ModuleScript") end)
-    if isModule and BSI.Config.Decompile.RequireModules then
+    if not raceComplete and isModule and BSI.Config.Decompile.RequireModules then
         tryMethod("require_serialize", function()
             local moduleResult = require(scriptInst)
             if moduleResult then
@@ -878,18 +885,23 @@ function DecompileEngine.decompileSingle(scriptInst)
     end
     
     -- ═══ Strategy 8: LinkedSource ═══
-    tryMethod("linked_source", function()
-        local ls = scriptInst.LinkedSource
-        if ls and #ls > 0 then
-            return "-- LinkedSource: " .. ls .. "\n-- Requires URL fetch"
-        end
-        return nil
-    end)
+    if not raceComplete then
+        tryMethod("linked_source", function()
+            local ls = scriptInst.LinkedSource
+            if ls and #ls > 0 then
+                return "-- LinkedSource: " .. ls .. "\n-- Requires URL fetch"
+            end
+            return nil
+        end)
+    end
     
     -- ═══ Strategy 9: Retry decompile with delays ═══
-    if ENV.decompile and #candidates == 0 then
+    -- Only retry if NO candidates found (strict speed optimization)
+    if not raceComplete and ENV.decompile and #candidates == 0 then
         for attempt = 2, BSI.Config.Decompile.Retries do
             task.wait(0.02 * attempt)
+            if raceComplete then break end
+            
             tryMethod("decompile_retry" .. attempt, function()
                 return ENV.decompile(scriptInst)
             end)
@@ -2311,7 +2323,7 @@ function UI.create()
     subtitle.Size = UDim2.new(1, -110, 0, 16)
     subtitle.Position = UDim2.new(0, 16, 0, 32)
     subtitle.BackgroundTransparency = 1
-    subtitle.Text = "🔥 HYPER Engine — 9 Strategies • 8 Discovery • 6 Workers"
+    subtitle.Text = "🔥 HYPER FAST — 9 Strategies • 8 Discovery • 12 Workers"
     subtitle.TextColor3 = UI.C.neonDim
     subtitle.TextSize = 10
     subtitle.Font = Enum.Font.GothamSemibold
@@ -2979,7 +2991,7 @@ _G.BSI = BSI
 
 Log.info("╔══════════════════════════════════════════════╗")
 Log.info("║  BaoSaveInstance v%s HYPER — READY!     ║", BSI.VERSION)
-Log.info("║  9 Strategies • 8 Discovery • 6 Workers      ║")
+Log.info("║  9 Strategies • 8 Discovery • 12 Workers     ║")
 Log.info("║  Press RightShift to toggle UI                ║")
 Log.info("╚══════════════════════════════════════════════╝")
 
