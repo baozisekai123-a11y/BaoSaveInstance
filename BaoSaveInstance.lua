@@ -183,6 +183,9 @@ BaoSaveInstance._config = {
     SaveAttributes = true,
     SaveScripts = true,
     SaveTerrain = true,
+    StreamingSafeMode = true,
+    StreamingRange = 5000,
+    StreamingStep = 1000,
 }
 BaoSaveInstance._callbacks = {
     OnStatusChanged = nil,
@@ -394,6 +397,104 @@ function BaoSaveInstance._CloneTerrain()
     
     return terrainClone
 end
+
+-- ============================================================
+-- STREAMING SYSTEM (For StreamingEnabled games)
+-- ============================================================
+
+function BaoSaveInstance.StreamMap()
+    if not BaoSaveInstance._initialized then return false end
+    
+    local config = BaoSaveInstance._config
+    local player = game:GetService("Players").LocalPlayer
+    if not player then return false end
+    
+    BaoSaveInstance._SetStatus("Streaming")
+    BaoSaveInstance._SetProgress(0)
+    Utility.Log("INFO", "Starting Map Streamer (Range: " .. config.StreamingRange .. ")...")
+    
+    local originalCF = nil
+    local character = player.Character
+    if character and character:FindFirstChild("HumanoidRootPart") then
+        originalCF = character.HumanoidRootPart.CFrame
+    end
+    
+    local range = config.StreamingRange
+    local step = config.StreamingStep
+    local points = {}
+    
+    for x = -range, range, step do
+        for z = -range, range, step do
+            table.insert(points, Vector3.new(x, 0, z))
+        end
+    end
+    
+    local totalPoints = #points
+    for i, point in ipairs(points) do
+        if BaoSaveInstance._status ~= "Streaming" then break end -- Cancelled
+        
+        BaoSaveInstance._SetProgress(math.floor((i / totalPoints) * 100))
+        
+        if config.StreamingSafeMode then
+            -- METHOD 1: RequestStreamAroundAsync (Safe, no movement)
+            pcall(function()
+                player:RequestStreamAroundAsync(point)
+            end)
+            task.wait(0.1) -- Small yield to let engine process
+        else
+            -- METHOD 2: Character Teleport (More aggressive)
+            if character and character:FindFirstChild("HumanoidRootPart") then
+                pcall(function()
+                    local hrp = character.HumanoidRootPart
+                    local hum = character:FindFirstChildOfClass("Humanoid")
+                    
+                    if hum then hum.PlatformStand = true end
+                    hrp.Anchored = true
+                    hrp.CFrame = CFrame.new(point + Vector3.new(0, 100, 0)) -- Fly high to avoid clipping
+                    
+                    task.wait(0.5) -- Wait for chunks
+                end)
+            end
+        end
+        
+        if i % 10 == 0 then
+             Utility.Log("INFO", string.format("Streamed: %d/%d points", i, totalPoints))
+        end
+    end
+    
+    -- Return home
+    if originalCF and character and character:FindFirstChild("HumanoidRootPart") then
+        pcall(function()
+            local hrp = character.HumanoidRootPart
+            local hum = character:FindFirstChildOfClass("Humanoid")
+            hrp.CFrame = originalCF
+            hrp.Anchored = false
+            if hum then hum.PlatformStand = false end
+        end)
+    end
+    
+    Utility.Log("INFO", "Streaming complete!")
+    BaoSaveInstance._SetProgress(100)
+    return true
+end
+
+function BaoSaveInstance.StreamAndDecompile(mode)
+    Utility.Log("INFO", "Running Stream & Decompile workflow...")
+    
+    local sSuccess = BaoSaveInstance.StreamMap()
+    if not sSuccess then
+        Utility.Log("WARN", "Streaming process interrupted or failed.")
+    end
+    
+    if mode == "FullGame" then
+        return BaoSaveInstance.DecompileFullGame()
+    elseif mode == "Models" then
+        return BaoSaveInstance.DecompileModels()
+    end
+    
+    return false
+end
+
 
 -- ============================================================
 -- DECOMPILE MODES
@@ -1560,6 +1661,7 @@ function UIBuilder.Create()
     createToggle("Save Attributes", "SaveAttributes")
     createToggle("Save Tags (CollectionService)", "SaveTags")
     createToggle("Save Scripts", "SaveScripts")
+    createToggle("Safe Stream (Stealth/No Teleport)", "StreamingSafeMode")
 
     settingsBtn.MouseButton1Click:Connect(function()
         settingsFrame.Visible = not settingsFrame.Visible
@@ -1682,22 +1784,28 @@ function UIBuilder.Create()
     sectionLabel1.ZIndex = 3
     sectionLabel1.Parent = contentFrame
     
+    -- Button 0: Stream & Decompile (New)
+    local btnStreamDecompile = createButton(
+        "BtnStreamDecompile", "Stream & Decompile", "🚀",
+        Theme.Accent1, Color3.fromRGB(245, 79, 168), 82, contentFrame
+    )
+
     -- Button 1: Decompile Full Game
     local btnFullGame = createButton(
         "BtnFullGame", "Decompile Full Game", "🎮",
-        Theme.Primary, Theme.PrimaryHover, 82, contentFrame
+        Theme.Primary, Theme.PrimaryHover, 132, contentFrame
     )
     
     -- Button 2: Decompile Full Model
     local btnFullModel = createButton(
         "BtnFullModel", "Decompile Full Model", "🏗️",
-        Color3.fromRGB(60, 75, 180), Color3.fromRGB(80, 95, 200), 132, contentFrame
+        Color3.fromRGB(60, 75, 180), Color3.fromRGB(80, 95, 200), 182, contentFrame
     )
     
     -- Button 3: Decompile Terrain
     local btnTerrain = createButton(
         "BtnTerrain", "Decompile Terrain", "🌍",
-        Color3.fromRGB(45, 130, 90), Color3.fromRGB(65, 150, 110), 182, contentFrame
+        Color3.fromRGB(45, 130, 90), Color3.fromRGB(65, 150, 110), 232, contentFrame
     )
     
     -- ================================
@@ -1706,7 +1814,7 @@ function UIBuilder.Create()
     local sectionLabel2 = Instance.new("TextLabel")
     sectionLabel2.Name = "SectionLabel2"
     sectionLabel2.Size = UDim2.new(1, 0, 0, 18)
-    sectionLabel2.Position = UDim2.new(0, 0, 0, 238)
+    sectionLabel2.Position = UDim2.new(0, 0, 0, 285)
     sectionLabel2.BackgroundTransparency = 1
     sectionLabel2.Text = "EXPORT"
     sectionLabel2.TextColor3 = Theme.TextMuted
@@ -1719,7 +1827,7 @@ function UIBuilder.Create()
     -- Button 4: Export RBXL
     local btnExport = createButton(
         "BtnExport", "Export (.rbxl)", "💾",
-        Color3.fromRGB(170, 120, 30), Color3.fromRGB(190, 140, 50), 260, contentFrame
+        Color3.fromRGB(170, 120, 30), Color3.fromRGB(190, 140, 50), 307, contentFrame
     )
     
     -- ================================
@@ -1728,7 +1836,7 @@ function UIBuilder.Create()
     local sectionLabel3 = Instance.new("TextLabel")
     sectionLabel3.Name = "SectionLabel3"
     sectionLabel3.Size = UDim2.new(1, 0, 0, 18)
-    sectionLabel3.Position = UDim2.new(0, 0, 0, 318)
+    sectionLabel3.Position = UDim2.new(0, 0, 0, 365)
     sectionLabel3.BackgroundTransparency = 1
     sectionLabel3.Text = "STATUS"
     sectionLabel3.TextColor3 = Theme.TextMuted
@@ -1742,7 +1850,7 @@ function UIBuilder.Create()
     local statusFrame = Instance.new("Frame")
     statusFrame.Name = "StatusFrame"
     statusFrame.Size = UDim2.new(1, 0, 0, 80)
-    statusFrame.Position = UDim2.new(0, 0, 0, 340)
+    statusFrame.Position = UDim2.new(0, 0, 0, 387)
     statusFrame.BackgroundColor3 = Theme.Surface
     statusFrame.BorderSizePixel = 0
     statusFrame.ZIndex = 3
@@ -1923,7 +2031,7 @@ function UIBuilder.Create()
     
     local function setButtonsEnabled(enabled)
         local alpha = enabled and 1 or 0.5
-        for _, btn in ipairs({btnFullGame, btnFullModel, btnTerrain, btnExport}) do
+        for _, btn in ipairs({btnStreamDecompile, btnFullGame, btnFullModel, btnTerrain, btnExport}) do
             btn.Active = enabled
             TweenService:Create(btn, TweenInfo.new(0.2), {
                 BackgroundTransparency = enabled and 0 or 0.4
@@ -1974,6 +2082,26 @@ function UIBuilder.Create()
     -- ================================
     
     local isProcessing = false
+    
+    btnStreamDecompile.MouseButton1Click:Connect(function()
+        if isProcessing then return end
+        isProcessing = true
+        setButtonsEnabled(false)
+        updateModeLabel("Mode: Stream & Decompile (Full Game)")
+        
+        BaoSaveInstance.Cleanup()
+        
+        task.spawn(function()
+            local success = BaoSaveInstance.StreamAndDecompile("FullGame")
+            if success then
+                updateModeLabel("✅ Stream & Decompile complete! Ready to export.")
+            else
+                updateModeLabel("❌ Process failed. Character might be dead or streaming failed.")
+            end
+            isProcessing = false
+            setButtonsEnabled(true)
+        end)
+    end)
     
     btnFullGame.MouseButton1Click:Connect(function()
         if isProcessing then return end
