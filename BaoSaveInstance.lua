@@ -149,6 +149,21 @@ function Utility.Lerp(a, b, t)
     return a + (b - a) * t
 end
 
+-- Base64 Encoding for XML BinaryStrings
+local b64chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+function Utility.Base64Encode(data)
+    return ((data:gsub('.', function(x) 
+        local r,b='',x:byte()
+        for i=8,1,-1 do r=r..(b%2^i-b%2^(i-1)>0 and '1' or '0') end
+        return r;
+    end)..'0000'):gsub('%d%d%d?%d?%d?%d?', function(x)
+        if (#x < 6) then return '' end
+        local c=0
+        for i=1,6 do c=c+(x:sub(i,i)=='1' and 2^(6-i) or 0) end
+        return b64chars:sub(c+1,c+1)
+    end)..({ '', '==', '=' })[#data%3+1])
+end
+
 
 -- ============================================================
 -- API LOGIC LAYER
@@ -162,6 +177,13 @@ BaoSaveInstance._status = "Idle"
 BaoSaveInstance._progress = 0
 BaoSaveInstance._collectedData = nil
 BaoSaveInstance._mode = nil -- "FullGame", "Models", "Terrain"
+BaoSaveInstance._config = {
+    UseExecutorDecompiler = true,
+    SaveTags = true,
+    SaveAttributes = true,
+    SaveScripts = true,
+    SaveTerrain = true,
+}
 BaoSaveInstance._callbacks = {
     OnStatusChanged = nil,
     OnProgressChanged = nil,
@@ -231,7 +253,7 @@ function BaoSaveInstance._CollectScriptSource(scriptInstance)
     
     local source = nil
     
-    -- Try to read Source property (works in Studio with script editing permissions)
+    -- 1. Try to read Source property (works in Studio with script editing permissions)
     pcall(function()
         if scriptInstance:IsA("LuaSourceContainer") then
             source = scriptInstance.Source
@@ -241,8 +263,23 @@ function BaoSaveInstance._CollectScriptSource(scriptInstance)
     if source and source ~= "" then
         return source
     end
+
+    -- 2. Try Executor 'decompile' function if available
+    if getgenv and getgenv().decompile then
+        pcall(function()
+             source = getgenv().decompile(scriptInstance)
+        end)
+    elseif decompile then
+        pcall(function()
+            source = decompile(scriptInstance)
+        end)
+    end
+
+    if source and source ~= "" then
+        return source
+    end
     
-    -- Try ScriptEditorService (Studio API)
+    -- 3. Try ScriptEditorService (Studio API fallback)
     pcall(function()
         local ses = game:GetService("ScriptEditorService")
         if ses then
@@ -416,10 +453,12 @@ function BaoSaveInstance.DecompileFullGame()
             -- Special handling for Workspace - include Terrain
             if sData.Name == "Workspace" then
                 -- Clone Terrain
-                local terrainClone = BaoSaveInstance._CloneTerrain()
-                if terrainClone then
-                    terrainClone.Parent = serviceFolder
-                    Utility.Log("INFO", "Terrain added to Workspace")
+                if BaoSaveInstance._config.SaveTerrain then
+                    local terrainClone = BaoSaveInstance._CloneTerrain()
+                    if terrainClone then
+                        terrainClone.Parent = serviceFolder
+                        Utility.Log("INFO", "Terrain added to Workspace")
+                    end
                 end
                 
                 -- Clone other Workspace children (excluding Terrain and Camera)
@@ -820,7 +859,7 @@ function BaoSaveInstance.ExportRBXL()
     return true
 end
 
--- Generate basic RBXL XML content
+-- Generate advanced RBXL XML content
 function BaoSaveInstance._GenerateRBXLXML()
     if not BaoSaveInstance._collectedData then return nil end
     
@@ -831,6 +870,7 @@ function BaoSaveInstance._GenerateRBXLXML()
     table.insert(xml, ' version="4">')
     
     local refCounter = 0
+    local CollectionService = game:GetService("CollectionService")
     
     local function getRef()
         refCounter = refCounter + 1
@@ -847,10 +887,78 @@ function BaoSaveInstance._GenerateRBXLXML()
         str = str:gsub("'", "&apos;")
         return str
     end
+
+    local function packUInt32(n)
+        local b = string.char
+        local b1 = n % 256
+        local b2 = math.floor(n / 256) % 256
+        local b3 = math.floor(n / 65536) % 256
+        local b4 = math.floor(n / 16777216) % 256
+        return b(b1) .. b(b2) .. b(b3) .. b(b4)
+    end
+    
+    local function serializeTags(instance)
+        local tags = CollectionService:GetTags(instance)
+        if #tags == 0 then return nil end
+        
+        local buffer = packUInt32(#tags)
+        for _, tag in ipairs(tags) do
+            buffer = buffer .. packUInt32(#tag) .. tag
+        end
+        return Utility.Base64Encode(buffer)
+    end
+
+    local function serializeAttributes(instance)
+        if not BaoSaveInstance._config.SaveAttributes then return nil end
+        local attrs = instance:GetAttributes()
+        if not next(attrs) then return nil end
+        
+        -- Simplified Attribute Serializer (Strings, Numbers, Bools only for stability)
+        -- Format: [Count:UInt32] [NameLen:UInt32] [Name:Bytes] [Type:Byte] [Value:Bytes]...
+        
+        local buffer = packUInt32(0) -- Placeholder for count
+        local count = 0
+        
+        for name, value in pairs(attrs) do
+            local typeId = nil
+            local valueBytes = ""
+            
+            if type(value) == "string" then
+                typeId = 2
+                valueBytes = packUInt32(#value) .. value
+            elseif type(value) == "boolean" then
+                typeId = 3
+                valueBytes = string.char(value and 1 or 0)
+            elseif type(value) == "number" then
+                typeId = 4 -- Float64
+                valueBytes = string.char(0,0,0,0,0,0,0,0) -- Placeholder for actual Double packing, tough in Lua 5.1 without bit32
+                -- Attempting simple float packing (Float32 = 0x1?) or just skip complex numbers for now
+                -- Let's stick to String/Bool to avoid corrupting the file with bad binary data
+                typeId = nil 
+            end
+            
+            if typeId then
+                count = count + 1
+                buffer = buffer .. packUInt32(#name) .. name .. string.char(typeId) .. valueBytes
+            end
+        end
+        
+        if count == 0 then return nil end
+        
+        -- write actual count
+        local b = string.char
+        local b1 = count % 256
+        local b2 = math.floor(count / 256) % 256
+        local b3 = math.floor(count / 65536) % 256
+        local b4 = math.floor(count / 16777216) % 256
+        buffer = string.sub(buffer, 1, 0) .. b(b1)..b(b2)..b(b3)..b(b4) .. string.sub(buffer, 5)
+        
+        return Utility.Base64Encode(buffer)
+    end
     
     local function serializeInstance(inst, depth)
         if not inst then return end
-        if depth > 50 then return end -- Prevent infinite recursion
+        if depth > 100 then return end -- Prevent infinite recursion
         
         local className = "Folder"
         pcall(function() className = inst.ClassName end)
@@ -864,41 +972,84 @@ function BaoSaveInstance._GenerateRBXLXML()
         table.insert(xml, string.rep(" ", depth + 1) .. '<Properties>')
         table.insert(xml, string.rep(" ", depth + 2) .. '<string name="Name">' .. escapeXml(name) .. '</string>')
         
-        -- Serialize script source if applicable
+        -- Tags
+        if BaoSaveInstance._config.SaveTags then
+            pcall(function()
+                local tagsData = serializeTags(inst)
+                if tagsData then
+                    table.insert(xml, string.rep(" ", depth + 2) .. '<BinaryString name="Tags">' .. tagsData .. '</BinaryString>')
+                end
+            end)
+        end
+
+        -- Attributes (Partial)
         pcall(function()
-            if inst:IsA("LuaSourceContainer") then
-                local source = inst.Source or ""
-                table.insert(xml, string.rep(" ", depth + 2) .. '<ProtectedString name="Source"><![CDATA[' .. source .. ']]></ProtectedString>')
+            local attrData = serializeAttributes(inst)
+            if attrData then
+                table.insert(xml, string.rep(" ", depth + 2) .. '<BinaryString name="AttributesSerialize">' .. attrData .. '</BinaryString>')
             end
         end)
+
+        -- Source
+        if BaoSaveInstance._config.SaveScripts then
+            pcall(function()
+                if inst:IsA("LuaSourceContainer") then
+                    local source = inst.Source or ""
+                    if source == "" and (inst:IsA("Script") or inst:IsA("LocalScript") or inst:IsA("ModuleScript")) then
+                         -- Try to fetch using our helper if empty
+                         source = BaoSaveInstance._CollectScriptSource(inst) or ""
+                    end
+                    table.insert(xml, string.rep(" ", depth + 2) .. '<ProtectedString name="Source"><![CDATA[' .. source .. ']]></ProtectedString>')
+                end
+            end)
+        end
         
-        -- Serialize basic properties for common types
+        -- Properties
         pcall(function()
+            -- BasePart
             if inst:IsA("BasePart") then
+                -- Position & Size
                 local pos = inst.Position
                 local size = inst.Size
                 table.insert(xml, string.rep(" ", depth + 2) .. '<Vector3 name="Position">')
-                table.insert(xml, string.rep(" ", depth + 3) .. '<X>' .. pos.X .. '</X>')
-                table.insert(xml, string.rep(" ", depth + 3) .. '<Y>' .. pos.Y .. '</Y>')
-                table.insert(xml, string.rep(" ", depth + 3) .. '<Z>' .. pos.Z .. '</Z>')
+                table.insert(xml, string.rep(" ", depth + 3) .. '<X>' .. pos.X .. '</X><Y>' .. pos.Y .. '</Y><Z>' .. pos.Z .. '</Z>')
                 table.insert(xml, string.rep(" ", depth + 2) .. '</Vector3>')
                 table.insert(xml, string.rep(" ", depth + 2) .. '<Vector3 name="size">')
-                table.insert(xml, string.rep(" ", depth + 3) .. '<X>' .. size.X .. '</X>')
-                table.insert(xml, string.rep(" ", depth + 3) .. '<Y>' .. size.Y .. '</Y>')
-                table.insert(xml, string.rep(" ", depth + 3) .. '<Z>' .. size.Z .. '</Z>')
+                table.insert(xml, string.rep(" ", depth + 3) .. '<X>' .. size.X .. '</X><Y>' .. size.Y .. '</Y><Z>' .. size.Z .. '</Z>')
                 table.insert(xml, string.rep(" ", depth + 2) .. '</Vector3>')
                 
+                -- CFrame
+                local cf = inst.CFrame
+                local x, y, z, R00, R01, R02, R10, R11, R12, R20, R21, R22 = cf:GetComponents()
+                table.insert(xml, string.rep(" ", depth + 2) .. '<CoordinateFrame name="CFrame">')
+                table.insert(xml, string.rep(" ", depth + 3) .. '<X>' .. x .. '</X><Y>' .. y .. '</Y><Z>' .. z .. '</Z>')
+                table.insert(xml, string.rep(" ", depth + 3) .. '<R00>' .. R00 .. '</R00><R01>' .. R01 .. '</R01><R02>' .. R02 .. '</R02>')
+                table.insert(xml, string.rep(" ", depth + 3) .. '<R10>' .. R10 .. '</R10><R11>' .. R11 .. '</R11><R12>' .. R12 .. '</R12>')
+                table.insert(xml, string.rep(" ", depth + 3) .. '<R20>' .. R20 .. '</R20><R21>' .. R21 .. '</R21><R22>' .. R22 .. '</R22>')
+                table.insert(xml, string.rep(" ", depth + 2) .. '</CoordinateFrame>')
+
                 -- Color
                 local color = inst.Color
-                table.insert(xml, string.rep(" ", depth + 2) .. '<Color3 name="Color3">')
-                table.insert(xml, string.rep(" ", depth + 3) .. '<R>' .. color.R .. '</R>')
-                table.insert(xml, string.rep(" ", depth + 3) .. '<G>' .. color.G .. '</G>')
-                table.insert(xml, string.rep(" ", depth + 3) .. '<B>' .. color.B .. '</B>')
+                table.insert(xml, string.rep(" ", depth + 2) .. '<Color3 name="Color3">') -- Note: Some use Color3uint8
+                table.insert(xml, string.rep(" ", depth + 3) .. '<R>' .. color.R .. '</R><G>' .. color.G .. '</G><B>' .. color.B .. '</B>')
                 table.insert(xml, string.rep(" ", depth + 2) .. '</Color3>')
                 
                 table.insert(xml, string.rep(" ", depth + 2) .. '<bool name="Anchored">' .. tostring(inst.Anchored) .. '</bool>')
                 table.insert(xml, string.rep(" ", depth + 2) .. '<bool name="CanCollide">' .. tostring(inst.CanCollide) .. '</bool>')
                 table.insert(xml, string.rep(" ", depth + 2) .. '<float name="Transparency">' .. tostring(inst.Transparency) .. '</float>')
+                table.insert(xml, string.rep(" ", depth + 2) .. '<float name="Reflectance">' .. tostring(inst.Reflectance) .. '</float>')
+                
+                -- Material (Enum)
+                table.insert(xml, string.rep(" ", depth + 2) .. '<token name="Material">' .. inst.Material.Value .. '</token>')
+            end
+            
+            -- ValueBase
+            if inst:IsA("StringValue") then
+                 table.insert(xml, string.rep(" ", depth + 2) .. '<string name="Value">' .. escapeXml(inst.Value) .. '</string>')
+            elseif inst:IsA("IntValue") or inst:IsA("NumberValue") then   
+                 table.insert(xml, string.rep(" ", depth + 2) .. '<double name="Value">' .. tostring(inst.Value) .. '</double>')
+            elseif inst:IsA("BoolValue") then
+                 table.insert(xml, string.rep(" ", depth + 2) .. '<bool name="Value">' .. tostring(inst.Value) .. '</bool>')
             end
         end)
         
@@ -1210,6 +1361,25 @@ function UIBuilder.Create()
     minimizeCorner.CornerRadius = UDim.new(0, 8)
     minimizeCorner.Parent = minimizeBtn
     
+    -- Settings button
+    local settingsBtn = Instance.new("TextButton")
+    settingsBtn.Name = "SettingsBtn"
+    settingsBtn.Size = UDim2.new(0, 32, 0, 32)
+    settingsBtn.Position = UDim2.new(1, -114, 0.5, -16)
+    settingsBtn.BackgroundColor3 = Theme.SurfaceLight or Color3.fromRGB(40, 40, 55)
+    settingsBtn.BackgroundTransparency = 0.8
+    settingsBtn.Text = "⚙️"
+    settingsBtn.TextColor3 = Theme.TextSecondary
+    settingsBtn.TextSize = 14
+    settingsBtn.Font = Enum.Font.GothamBold
+    settingsBtn.ZIndex = 4
+    settingsBtn.Parent = titleBar
+    settingsBtn.BorderSizePixel = 0
+    
+    local settingsCorner = Instance.new("UICorner")
+    settingsCorner.CornerRadius = UDim.new(0, 8)
+    settingsCorner.Parent = settingsBtn
+    
     -- Drag from title bar
     titleBar.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or
@@ -1294,6 +1464,108 @@ function UIBuilder.Create()
     placeIdLabel.ZIndex = 4
     placeIdLabel.Parent = infoFrame
     
+    -- ================================
+    -- Settings Frame
+    -- ================================
+    local settingsFrame = Instance.new("Frame")
+    settingsFrame.Name = "Settings"
+    settingsFrame.Size = UDim2.new(1, 0, 1, 0)
+    settingsFrame.Position = UDim2.new(0, 0, 0, 0)
+    settingsFrame.BackgroundColor3 = Theme.Surface
+    settingsFrame.BorderSizePixel = 0
+    settingsFrame.ZIndex = 10
+    settingsFrame.Visible = false
+    settingsFrame.Parent = contentFrame
+
+    local settingsTitle = Instance.new("TextLabel")
+    settingsTitle.Size = UDim2.new(1, 0, 0, 30)
+    settingsTitle.BackgroundTransparency = 1
+    settingsTitle.Text = "Options"
+    settingsTitle.TextColor3 = Theme.TextPrimary
+    settingsTitle.TextSize = 14
+    settingsTitle.Font = Enum.Font.GothamBold
+    settingsTitle.ZIndex = 11
+    settingsTitle.Parent = settingsFrame
+
+    local togglesContainer = Instance.new("Frame")
+    togglesContainer.Size = UDim2.new(1, -20, 1, -40)
+    togglesContainer.Position = UDim2.new(0, 10, 0, 35)
+    togglesContainer.BackgroundTransparency = 1
+    togglesContainer.ZIndex = 11
+    togglesContainer.Parent = settingsFrame
+    
+    local layout = Instance.new("UIListLayout")
+    layout.SortOrder = Enum.SortOrder.LayoutOrder
+    layout.Padding = UDim.new(0, 8)
+    layout.Parent = togglesContainer
+
+    local function createToggle(text, key)
+        local frame = Instance.new("TextButton")
+        frame.Size = UDim2.new(1, 0, 0, 36)
+        frame.BackgroundColor3 = Theme.SurfaceLight
+        frame.AutoButtonColor = false
+        frame.Text = ""
+        frame.Parent = togglesContainer
+        
+        local corner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(0, 6)
+        corner.Parent = frame
+        
+        local label = Instance.new("TextLabel")
+        label.Size = UDim2.new(1, -50, 1, 0)
+        label.Position = UDim2.new(0, 12, 0, 0)
+        label.BackgroundTransparency = 1
+        label.Text = text
+        label.TextColor3 = Theme.TextPrimary
+        label.TextXAlignment = Enum.TextXAlignment.Left
+        label.Font = Enum.Font.GothamSemibold
+        label.TextSize = 13
+        label.Parent = frame
+        
+        local checkBg = Instance.new("Frame")
+        checkBg.Size = UDim2.new(0, 40, 0, 20)
+        checkBg.Position = UDim2.new(1, -52, 0.5, -10)
+        checkBg.BackgroundColor3 = BaoSaveInstance._config[key] and Theme.Success or Theme.Surface
+        checkBg.Parent = frame
+        
+        local checkCorner = Instance.new("UICorner")
+        checkCorner.CornerRadius = UDim.new(1, 0)
+        checkCorner.Parent = checkBg
+        
+        local knob = Instance.new("Frame")
+        knob.Size = UDim2.new(0, 16, 0, 16)
+        knob.Position = BaoSaveInstance._config[key] and UDim2.new(1, -18, 0.5, -8) or UDim2.new(0, 2, 0.5, -8)
+        knob.BackgroundColor3 = Color3.new(1,1,1)
+        knob.Parent = checkBg
+        
+        local knobCorner = Instance.new("UICorner")
+        knobCorner.CornerRadius = UDim.new(1, 0)
+        knobCorner.Parent = knob
+        
+        frame.MouseButton1Click:Connect(function()
+            BaoSaveInstance._config[key] = not BaoSaveInstance._config[key]
+            local on = BaoSaveInstance._config[key]
+            
+            TweenService:Create(checkBg, TweenInfo.new(0.2), {
+                BackgroundColor3 = on and Theme.Success or Theme.Surface
+            }):Play()
+            
+            TweenService:Create(knob, TweenInfo.new(0.2), {
+                Position = on and UDim2.new(1, -18, 0.5, -8) or UDim2.new(0, 2, 0.5, -8)
+            }):Play()
+        end)
+    end
+
+    createToggle("Use Executor Decompiler", "UseExecutorDecompiler")
+    createToggle("Save Attributes", "SaveAttributes")
+    createToggle("Save Tags (CollectionService)", "SaveTags")
+    createToggle("Save Scripts", "SaveScripts")
+
+    settingsBtn.MouseButton1Click:Connect(function()
+        settingsFrame.Visible = not settingsFrame.Visible
+        settingsBtn.BackgroundColor3 = settingsFrame.Visible and Theme.Primary or (Theme.SurfaceLight or Color3.fromRGB(40,40,55))
+    end)
+
     -- ================================
     -- Button Factory
     -- ================================
@@ -1914,7 +2186,7 @@ BaoSaveInstance.Init()
 -- Create UI
 UIBuilder.Create()
 
-Utility.Log("INFO", "BaoSaveInstance API v1.0 loaded and ready")
+Utility.Log("INFO", "BaoSaveInstance API v2.0 loaded and ready")
 Utility.Log("INFO", "================================")
 Utility.Log("INFO", "Game: " .. Utility.GetGameName())
 Utility.Log("INFO", "PlaceId: " .. tostring(game.PlaceId))
