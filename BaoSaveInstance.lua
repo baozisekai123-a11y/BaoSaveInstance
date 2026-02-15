@@ -255,54 +255,102 @@ function BaoSaveInstance._SetProgress(progress)
     end
 end
 
--- Collect scripts source code where accessible
+-- Helper to find the best available decompiler
+function BaoSaveInstance._GetBestDecompiler()
+    if getgenv then
+        local env = getgenv()
+        if env.getscriptsource then return env.getscriptsource end
+        if env.decompile then return env.decompile end
+        if env.syn and env.syn.decompile then return env.syn.decompile end
+        if env.fluxus and env.fluxus.decompile then return env.fluxus.decompile end
+        if env.krnl and env.krnl.decompile then return env.krnl.decompile end
+    end
+    
+    if decompile then return decompile end
+    if getscriptsource then return getscriptsource end
+    
+    return nil
+end
+
+-- Enhanced Script Collector
 function BaoSaveInstance._CollectScriptSource(scriptInstance)
     if not scriptInstance then return nil end
     
     local source = nil
+    local success = false
+    local method = "Unknown"
     
-    -- 1. Try to read Source property (works in Studio with script editing permissions)
+    -- 1. Try to read Source property (Studio / High Permissions)
     pcall(function()
         if scriptInstance:IsA("LuaSourceContainer") then
-            source = scriptInstance.Source
-        end
-    end)
-    
-    if source and source ~= "" then
-        return source
-    end
-
-    -- 2. Try Executor 'decompile' function if available
-    if getgenv and getgenv().decompile then
-        pcall(function()
-             source = getgenv().decompile(scriptInstance)
-        end)
-    elseif decompile then
-        pcall(function()
-            source = decompile(scriptInstance)
-        end)
-    end
-
-    if source and source ~= "" then
-        return source
-    end
-    
-    -- 3. Try ScriptEditorService (Studio API fallback)
-    pcall(function()
-        local ses = game:GetService("ScriptEditorService")
-        if ses then
-            local doc = ses:FindScriptDocument(scriptInstance)
-            if doc then
-                local lines = {}
-                for i = 1, doc:GetLineCount() do
-                    table.insert(lines, doc:GetLine(i))
-                end
-                source = table.concat(lines, "\n")
+            if scriptInstance.Source and scriptInstance.Source ~= "" then
+                source = scriptInstance.Source
+                method = "SourceProperty"
+                success = true
             end
         end
     end)
     
-    return source
+    -- 2. Try Executor Decompiler
+    if not success then
+        local decompiler = BaoSaveInstance._GetBestDecompiler()
+        if decompiler then
+            pcall(function()
+                source = decompiler(scriptInstance)
+                if source and source ~= "" then
+                    method = "Decompiler"
+                    success = true
+                end
+            end)
+        end
+    end
+    
+    -- 3. Try ScriptEditorService (Studio Fallback)
+    if not success then
+        pcall(function()
+            local ses = game:GetService("ScriptEditorService")
+            if ses then
+                local doc = ses:FindScriptDocument(scriptInstance)
+                if doc then
+                    source = doc:GetText()
+                    if source and source ~= "" then
+                        method = "ScriptEditorService"
+                        success = true
+                    end
+                end
+            end
+        end)
+    end
+    
+    -- 4. Post-Process & Metadata
+    if success and source then
+        -- Add metadata header
+        local header = string.format("--[[\n\tBaoSaveInstance Decompiler v2.0\n\tSource: %s\n\tMethod: %s\n\tTime: %s\n]]\n\n",
+            scriptInstance:GetFullName(),
+            method,
+            os.date("%c")
+        )
+        return header .. source
+    elseif not success then
+        -- Failure Recovery: Try to dump bytecode if possible
+        local bytecodeMsg = ""
+        pcall(function()
+            if getscriptbytecode then
+                local bc = getscriptbytecode(scriptInstance)
+                if bc then
+                     bytecodeMsg = string.format("\n\tBytecode Size: %d bytes (Decompile failed)", #bc)
+                end
+            end
+        end)
+
+        -- Return a comment explaining failure if we know it's a script
+        if scriptInstance:IsA("Script") or scriptInstance:IsA("LocalScript") or scriptInstance:IsA("ModuleScript") then
+             return string.format("--[[\n\t[BaoSaveInstance] FAILED TO DECOMPILE\n\tSource: %s\n\tReason: No access or decompiler failed.%s\n]]", 
+                scriptInstance:GetFullName(), bytecodeMsg)
+        end
+    end
+    
+    return nil
 end
 
 -- Process scripts in a cloned tree: ensure Source is preserved
@@ -1432,11 +1480,12 @@ function BaoSaveInstance._GenerateRBXLXML()
         if BaoSaveInstance._config.SaveScripts then
             pcall(function()
                 if inst:IsA("LuaSourceContainer") then
-                    local source = inst.Source or ""
-                    if source == "" and (inst:IsA("Script") or inst:IsA("LocalScript") or inst:IsA("ModuleScript")) then
-                         -- Try to fetch using our helper if empty
-                         source = BaoSaveInstance._CollectScriptSource(inst) or ""
-                    end
+                    -- Always use _CollectScriptSource to ensure headers/metadata/decompilation
+                    local source = BaoSaveInstance._CollectScriptSource(inst) or ""
+                    
+                    -- Escape CDATA closing sequence if it appears in source (rare but possible)
+                    source = source:gsub("]]>", "]]]]><![CDATA[>")
+                    
                     table.insert(xml, string.rep(" ", depth + 2) .. '<ProtectedString name="Source"><![CDATA[' .. source .. ']]></ProtectedString>')
                 end
             end)
