@@ -6,9 +6,9 @@
     ██████╔╝██║  ██║╚██████╔╝███████║██║  ██║ ╚████╔╝ ███████╗
     ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═╝  ╚═══╝  ╚══════╝
     
-    BaoSaveInstance API v2.0
-    Roblox Studio Decompile Tool
-    Single-file complete system
+    BaoSaveInstance API v2.0 Official
+    Advanced Roblox Decompile & Export Tool
+    Single-file complete system — Enhanced Edition
 ]]
 
 -- ============================================================
@@ -18,6 +18,7 @@
 local Utility = {}
 
 Utility.Logs = {}
+Utility._timers = {}
 
 function Utility.Log(level, message)
     local entry = {
@@ -33,6 +34,31 @@ function Utility.Log(level, message)
     else
         print("[BaoSave][" .. level .. "] " .. message)
     end
+end
+
+function Utility.TimerStart(name)
+    Utility._timers[name] = os.clock()
+end
+
+function Utility.TimerEnd(name)
+    local startTime = Utility._timers[name]
+    if not startTime then return 0 end
+    local elapsed = os.clock() - startTime
+    Utility._timers[name] = nil
+    Utility.Log("PERF", string.format("%s took %.2fs", name, elapsed))
+    return elapsed
+end
+
+function Utility.FormatBytes(bytes)
+    if bytes < 1024 then return bytes .. " B" end
+    if bytes < 1048576 then return string.format("%.1f KB", bytes / 1024) end
+    return string.format("%.2f MB", bytes / 1048576)
+end
+
+function Utility.GetMemoryUsage()
+    local mem = 0
+    pcall(function() mem = gcinfo() end)
+    return mem
 end
 
 function Utility.SafeCall(func, ...)
@@ -64,7 +90,6 @@ end
 function Utility.SafeClone(instance)
     if not instance then return nil end
     if Utility.IsProtected(instance) then
-        Utility.Log("WARN", "Protected instance skipped: " .. tostring(instance))
         return nil
     end
     local success, clone = pcall(function()
@@ -72,10 +97,8 @@ function Utility.SafeClone(instance)
     end)
     if success and clone then
         return clone
-    else
-        Utility.Log("WARN", "Cannot clone: " .. tostring(instance) .. " - " .. tostring(clone))
-        return nil
     end
+    return nil
 end
 
 function Utility.GetGameName()
@@ -98,41 +121,30 @@ end
 
 function Utility.CountDescendants(instance)
     local count = 0
-    local success, err = pcall(function()
+    pcall(function()
         count = #instance:GetDescendants()
     end)
-    if not success then count = 0 end
     return count
 end
 
 function Utility.IsFilteredService(serviceName)
     local filtered = {
-        ["CoreGui"] = true,
-        ["CorePackages"] = true,
-        ["RobloxPluginGuiService"] = true,
-        ["Visit"] = true,
-        ["PluginGuiService"] = true,
-        ["PluginDebugService"] = true,
-        ["TestService"] = true,
-        ["StudioService"] = true,
-        ["StudioData"] = true,
-        ["NetworkClient"] = true,
-        ["NetworkServer"] = true,
-        ["PluginManager"] = true,
+        ["CoreGui"] = true, ["CorePackages"] = true,
+        ["RobloxPluginGuiService"] = true, ["Visit"] = true,
+        ["PluginGuiService"] = true, ["PluginDebugService"] = true,
+        ["TestService"] = true, ["StudioService"] = true,
+        ["StudioData"] = true, ["NetworkClient"] = true,
+        ["NetworkServer"] = true, ["PluginManager"] = true,
     }
     return filtered[serviceName] == true
 end
 
 function Utility.IsRuntimePlayerGui(instance)
     local success, result = pcall(function()
-        if instance:IsA("PlayerGui") then
-            return true
-        end
+        if instance:IsA("PlayerGui") then return true end
         local current = instance.Parent
         while current do
-            if current:IsA("PlayerGui") then
-                return true
-            end
+            if current:IsA("PlayerGui") then return true end
             current = current.Parent
         end
         return false
@@ -142,7 +154,8 @@ end
 
 function Utility.FormatNumber(n)
     if n < 1000 then return tostring(n) end
-    return string.format("%.1fK", n / 1000)
+    if n < 1000000 then return string.format("%.1fK", n / 1000) end
+    return string.format("%.2fM", n / 1000000)
 end
 
 function Utility.Lerp(a, b, t)
@@ -164,6 +177,33 @@ function Utility.Base64Encode(data)
     end)..({ '', '==', '=' })[#data%3+1])
 end
 
+-- Try to read a property safely (with hidden property executor support)
+function Utility.TryGetProperty(instance, propName)
+    local success, value = pcall(function()
+        return instance[propName]
+    end)
+    if success then return value end
+    if gethiddenproperty then
+        local s2, v2 = pcall(function()
+            return gethiddenproperty(instance, propName)
+        end)
+        if s2 then return v2 end
+    end
+    return nil
+end
+
+-- Safely set a property
+function Utility.TrySetProperty(instance, propName, value)
+    local ok = pcall(function()
+        instance[propName] = value
+    end)
+    if not ok and sethiddenproperty then
+        pcall(function()
+            sethiddenproperty(instance, propName, value)
+        end)
+    end
+end
+
 
 -- ============================================================
 -- API LOGIC LAYER
@@ -172,11 +212,28 @@ end
 local BaoSaveInstance = {}
 BaoSaveInstance.__index = BaoSaveInstance
 
+BaoSaveInstance.VERSION = "2.0 Official"
 BaoSaveInstance._initialized = false
 BaoSaveInstance._status = "Idle"
 BaoSaveInstance._progress = 0
 BaoSaveInstance._collectedData = nil
-BaoSaveInstance._mode = nil -- "FullGame", "Models", "Terrain"
+BaoSaveInstance._decompileCache = {} -- Hash -> Source cache
+BaoSaveInstance._mode = nil
+BaoSaveInstance._startTime = 0
+BaoSaveInstance._cancelled = false
+BaoSaveInstance._cancelled = false
+BaoSaveInstance._cancelRequested = false
+BaoSaveInstance._operationStartTime = 0
+BaoSaveInstance._stats = { 
+    Objects = 0, 
+    Scripts = 0, 
+    ScriptsCached = 0,
+    ScriptsFailed = 0, 
+    ScriptsBytecodeOnly = 0,
+    Errors = 0, 
+    NilInstances = 0 
+}
+
 BaoSaveInstance._config = {
     UseExecutorDecompiler = true,
     SaveTags = true,
@@ -189,15 +246,87 @@ BaoSaveInstance._config = {
     StreamingSafeMode = true,
     StreamingRange = 5000,
     StreamingStep = 1000,
+    WriteSourceToClone = true,
+    AdaptiveStreaming = true,
+    -- Max Power Decompiler Config
+    DecompileTimeout = 6,          -- Seconds before giving up on a specific decompile call
+    DecompileMaxRetries = 2,       -- Retries per decompiler function
+    SaveBytecodeOnFail = true,     -- Dump bytecode if source recovery fails
+    DecompileNilScripts = true,     -- Capture scripts from getnilinstances()
+    ObfuscationCheck = true,        -- Analyze source for obfuscation/junk
 }
+
 BaoSaveInstance._callbacks = {
     OnStatusChanged = nil,
     OnProgressChanged = nil,
     OnLogAdded = nil,
 }
 
+-- Capabilities detected at runtime
+BaoSaveInstance._capabilities = {
+    ExecutorName = "Unknown",
+    HasDecompile = false,
+    HasSaveinstance = false,
+    HasGetScriptBytecode = false,
+    HasGetHiddenProperty = false,
+    HasGetNilInstances = false,
+    HasGetLoadedModules = false,
+    HasWriteFile = false,
+    HasGetScriptHash = false,
+    HasFireSignal = false,
+    IsStudio = false,
+}
+
 -- Services references
 local Services = {}
+
+function BaoSaveInstance._DetectCapabilities()
+    local cap = BaoSaveInstance._capabilities
+
+    -- Detect environment
+    pcall(function() cap.IsStudio = game:GetService("RunService"):IsStudio() end)
+
+    -- Detect executor
+    local executorChecks = {
+        {"Synapse", function() return syn and syn.protect_gui end},
+        {"ScriptWare", function() return isscriptware and isscriptware() end},
+        {"Fluxus", function() return fluxus and fluxus.decompile end},
+        {"Krnl", function() return krnl and krnl.decompile end},
+        {"Wave", function() return Wave and Wave.decompile end},
+        {"Solara", function() return Solara ~= nil end},
+        {"Delta", function() return Delta ~= nil end},
+    }
+    for _, check in ipairs(executorChecks) do
+        local ok, result = pcall(check[2])
+        if ok and result then
+            cap.ExecutorName = check[1]
+            break
+        end
+    end
+
+    -- Detect functions
+    local fnChecks = {
+        {"HasDecompile", function() return decompile ~= nil or (getgenv and getgenv().decompile ~= nil) end},
+        {"HasSaveinstance", function() return saveinstance ~= nil end},
+        {"HasGetScriptBytecode", function() return getscriptbytecode ~= nil end},
+        {"HasGetHiddenProperty", function() return gethiddenproperty ~= nil end},
+        {"HasGetNilInstances", function() return getnilinstances ~= nil end},
+        {"HasGetLoadedModules", function() return getloadedmodules ~= nil end},
+        {"HasWriteFile", function() return writefile ~= nil end},
+        {"HasGetScriptHash", function() return getscripthash ~= nil end},
+        {"HasFireSignal", function() return firesignal ~= nil end},
+    }
+    for _, check in ipairs(fnChecks) do
+        local ok, result = pcall(check[2])
+        cap[check[1]] = ok and result == true
+    end
+
+    Utility.Log("INFO", string.format("Environment: %s | Studio: %s", cap.ExecutorName, tostring(cap.IsStudio)))
+    Utility.Log("INFO", string.format("Caps: Decompile=%s, HiddenProp=%s, NilInst=%s, WriteFile=%s, Bytecode=%s",
+        tostring(cap.HasDecompile), tostring(cap.HasGetHiddenProperty),
+        tostring(cap.HasGetNilInstances), tostring(cap.HasWriteFile),
+        tostring(cap.HasGetScriptBytecode)))
+end
 
 function BaoSaveInstance.Init()
     if BaoSaveInstance._initialized then
@@ -205,7 +334,11 @@ function BaoSaveInstance.Init()
         return true
     end
     
-    Utility.Log("INFO", "Initializing BaoSaveInstance API v2.0...")
+    Utility.Log("INFO", "Initializing BaoSaveInstance API " .. BaoSaveInstance.VERSION .. "...")
+    Utility.TimerStart("Init")
+    
+    -- Detect capabilities first
+    BaoSaveInstance._DetectCapabilities()
     
     -- Cache services
     local serviceNames = {
@@ -228,21 +361,26 @@ function BaoSaveInstance.Init()
         end)
         if success and service then
             Services[name] = service
-        else
-            Utility.Log("WARN", "Service not available: " .. name)
         end
     end
     
     BaoSaveInstance._initialized = true
     BaoSaveInstance._status = "Idle"
     BaoSaveInstance._progress = 0
+    BaoSaveInstance._stats = { Objects = 0, Scripts = 0, Errors = 0, NilInstances = 0 }
     
-    Utility.Log("INFO", "BaoSaveInstance initialized successfully")
+    Utility.TimerEnd("Init")
+    Utility.Log("INFO", "BaoSaveInstance " .. BaoSaveInstance.VERSION .. " initialized (Mem: " .. Utility.FormatBytes(Utility.GetMemoryUsage() * 1024) .. ")")
     return true
 end
 
 function BaoSaveInstance._SetStatus(status)
     BaoSaveInstance._status = status
+    -- V2: track elapsed time for operations
+    if status == "Processing" or status == "Exporting" then
+        BaoSaveInstance._operationStartTime = os.clock()
+        BaoSaveInstance._cancelRequested = false
+    end
     if BaoSaveInstance._callbacks.OnStatusChanged then
         BaoSaveInstance._callbacks.OnStatusChanged(status)
     end
@@ -256,65 +394,229 @@ function BaoSaveInstance._SetProgress(progress)
 end
 
 -- Helper to find the best available decompiler
-function BaoSaveInstance._GetBestDecompiler()
-    if getgenv then
-        local env = getgenv()
-        if env.getscriptsource then return env.getscriptsource end
-        if env.decompile then return env.decompile end
-        if env.syn and env.syn.decompile then return env.syn.decompile end
-        if env.fluxus and env.fluxus.decompile then return env.fluxus.decompile end
-        if env.krnl and env.krnl.decompile then return env.krnl.decompile end
+-- Helper to get ALL available decompilers in priority order
+function BaoSaveInstance._GetAllDecompilers()
+    local decompilers = {}
+    
+    local function add(fn, name)
+        if fn and type(fn) == "function" then
+            table.insert(decompilers, {func = fn, name = name})
+        end
     end
     
-    if decompile then return decompile end
-    if getscriptsource then return getscriptsource end
+    if getgenv then
+        local env = getgenv()
+        -- Priority 1: Modern/Custom Executors
+        add(env.getscriptsource, "getscriptsource")
+        add(env.decompile, "decompile")
+        
+        -- Priority 2: Known Executors (Specific Tables)
+        if env.syn then add(env.syn.decompile, "syn.decompile") end
+        if env.fluxus then add(env.fluxus.decompile, "fluxus.decompile") end
+        if env.krnl then add(env.krnl.decompile, "krnl.decompile") end
+        if env.sentinel then add(env.sentinel.decompile, "sentinel.decompile") end
+        if env.oxygen then add(env.oxygen.decompile, "oxygen.decompile") end
+        if env.electron then add(env.electron.decompile, "electron.decompile") end
+        if env.valyse then add(env.valyse.decompile, "valyse.decompile") end
+        if env.unitary then add(env.unitary.decompile, "unitary.decompile") end
+        
+        -- Priority 3: Fallbacks
+        if env.secure_decompile then add(env.secure_decompile, "secure_decompile") end
+        if env.recover_script then add(env.recover_script, "recover_script") end
+    end
     
-    return nil
+    -- Global fallback
+    if not next(decompilers) then
+        add(decompile, "decompile (global)")
+        add(getscriptsource, "getscriptsource (global)")
+    end
+    
+    return decompilers
 end
 
--- Enhanced Script Collector
+-- Timeout-protected Decompile
+function BaoSaveInstance._DecompileWithTimeout(decompilerFn, scriptInstance, timeout)
+    local result = nil
+    local finished = false
+    local errorMsg = nil
+    
+    local thread = coroutine.create(function()
+        local ok, res = pcall(decompilerFn, scriptInstance)
+        if ok then
+            result = res
+        else
+            errorMsg = res
+        end
+        finished = true
+    end)
+    
+    coroutine.resume(thread)
+    
+    local start = os.clock()
+    while not finished do
+        if os.clock() - start > timeout then
+            -- Kill thread if possible (Lua 5.1 coroutines can't be killed externally easily without yield, 
+            -- but we stop waiting for it)
+            return nil, "Timeout (" .. timeout .. "s)"
+        end
+        task.wait(0.05)
+    end
+    
+    if errorMsg then return nil, "Error: " .. tostring(errorMsg) end
+    if not result or result == "" then return nil, "Empty result" end
+    
+    return result, nil
+end
+
+-- Validate Source Quality & Check Obfuscation
+function BaoSaveInstance._ValidateSource(source)
+    if not source or #source == 0 then return false, 0, "Empty" end
+    if #source < 10 then return false, 0, "Too short" end
+    
+    -- Check for common decompiler failure messages
+    if source:find("stack index") or source:find("decompile failed") or source:find("error while decompiling") then
+        return false, 0, "Decompiler error message"
+    end
+    
+    local quality = 100
+    local notes = {}
+    
+    -- Obfuscation / Junk Checks
+    local junkPatterns = {
+        { "string%.char", 15 }, -- Heavily used in obfuscation
+        { "getfenv", 10 },
+        { "setfenv", 10 },
+        { "loadstring", 20 },
+        { "bit32%.bxor", 10 },
+        { "RunService%]%]%:FireServer", 50 }, -- Common in some exploit logs
+    }
+    
+    for _, check in ipairs(junkPatterns) do
+        local _, count = source:gsub(check[1], "")
+        if count > 5 then
+            quality = quality - math.min(check[2] * count, 60)
+            table.insert(notes, check[1] .. " detected")
+        end
+    end
+    
+    if quality < 30 then
+        return true, quality, "Low Quality / Obfuscated: " .. table.concat(notes, ", ")
+    end
+    
+    return true, quality, "OK"
+end
+
+-- Dump Bytecode as Fallback
+function BaoSaveInstance._DumpBytecodeAsComment(scriptInstance)
+    local bytecode = nil
+    
+    pcall(function()
+        if getscriptbytecode then
+            bytecode = getscriptbytecode(scriptInstance)
+        end
+    end)
+    
+    if not bytecode then return nil end
+    
+    local b64 = Utility.Base64Encode(bytecode)
+    local hash = "N/A"
+    pcall(function() hash = getscripthash(scriptInstance) end)
+    
+    return string.format("--[[\n\t[BaoSaveInstance V2] BYTECODE DUMP\n\tReason: Decompile failed\n\tHash: %s\n\tSize: %d bytes\n\tBase64: %s\n]]", 
+        hash, #bytecode, b64)
+end
+
+-- Enhanced Script Collector V3 (Maximum Power)
 function BaoSaveInstance._CollectScriptSource(scriptInstance)
     if not scriptInstance then return nil end
+    local config = BaoSaveInstance._config
+    local fullName = scriptInstance:GetFullName()
+    
+    -- 0. Check Cache
+    local scriptHash = nil
+    if BaoSaveInstance._capabilities.HasGetScriptHash then
+        pcall(function() scriptHash = getscripthash(scriptInstance) end)
+    end
+    
+    -- Try hash-based cache first (most accurate)
+    if scriptHash and BaoSaveInstance._decompileCache[scriptHash] then
+        BaoSaveInstance._stats.ScriptsCached = BaoSaveInstance._stats.ScriptsCached + 1
+        return BaoSaveInstance._decompileCache[scriptHash]
+    end
+    
+    -- Try name-based cache (fallback)
+    if not scriptHash and BaoSaveInstance._decompileCache[fullName] then
+        BaoSaveInstance._stats.ScriptsCached = BaoSaveInstance._stats.ScriptsCached + 1
+        return BaoSaveInstance._decompileCache[fullName]
+    end
     
     local source = nil
     local success = false
     local method = "Unknown"
+    local qualityScore = 0
+    local qualityNote = ""
+    local attempts = 0
     
-    -- 1. Try to read Source property (Studio / High Permissions)
-    pcall(function()
-        if scriptInstance:IsA("LuaSourceContainer") then
-            if scriptInstance.Source and scriptInstance.Source ~= "" then
-                source = scriptInstance.Source
-                method = "SourceProperty"
-                success = true
-            end
-        end
-    end)
-    
-    -- 2. Try Executor Decompiler
+    -- 1. Try Source property (Studio / High Privileges)
     if not success then
-        local decompiler = BaoSaveInstance._GetBestDecompiler()
-        if decompiler then
-            pcall(function()
-                source = decompiler(scriptInstance)
-                if source and source ~= "" then
-                    method = "Decompiler"
+        pcall(function()
+            if scriptInstance:IsA("LuaSourceContainer") and scriptInstance.Source ~= "" then
+                local valid, qual, note = BaoSaveInstance._ValidateSource(scriptInstance.Source)
+                if valid then
+                    source = scriptInstance.Source
+                    method = "SourceProperty"
+                    qualityScore = qual
+                    qualityNote = note
                     success = true
                 end
-            end)
+            end
+        end)
+    end
+    
+    -- 2. Try ALL Decompilers (Multi-Executor Power)
+    if not success and config.UseExecutorDecompiler then
+        local decompilers = BaoSaveInstance._GetAllDecompilers()
+        local maxRetries = config.DecompileMaxRetries or 2
+        
+        for _, d in ipairs(decompilers) do
+            for retry = 1, maxRetries do
+                attempts = attempts + 1
+                local src, err = BaoSaveInstance._DecompileWithTimeout(d.func, scriptInstance, config.DecompileTimeout)
+                
+                if src then
+                    local valid, qual, note = BaoSaveInstance._ValidateSource(src)
+                    if valid then
+                        source = src
+                        method = d.name
+                        qualityScore = qual
+                        qualityNote = note
+                        success = true
+                        break -- Success!
+                    else
+                        -- Keep trying if invalid, but maybe log it?
+                        -- Utility.Log("WARN", "Invalid decompile from " .. d.name .. ": " .. note)
+                    end
+                end
+                
+                -- Small yield between heavy retries
+                if retry < maxRetries then task.wait(0.1) end
+            end
+            if success then break end
         end
     end
     
     -- 3. Try ScriptEditorService (Studio Fallback)
-    if not success then
+    if not success and BaoSaveInstance._capabilities.IsStudio then
         pcall(function()
             local ses = game:GetService("ScriptEditorService")
             if ses then
                 local doc = ses:FindScriptDocument(scriptInstance)
                 if doc then
-                    source = doc:GetText()
-                    if source and source ~= "" then
+                    local src = doc:GetText()
+                    if src and src ~= "" then
+                        source = src
                         method = "ScriptEditorService"
+                        qualityScore = 100
                         success = true
                     end
                 end
@@ -322,89 +624,252 @@ function BaoSaveInstance._CollectScriptSource(scriptInstance)
         end)
     end
     
-    -- 4. Post-Process & Metadata
+    -- 4. Result Processing
     if success and source then
-        -- Add metadata header
-        local header = string.format("--[[\n\tBaoSaveInstance Decompiler v2.0\n\tSource: %s\n\tMethod: %s\n\tTime: %s\n]]\n\n",
-            scriptInstance:GetFullName(),
+        BaoSaveInstance._stats.Scripts = BaoSaveInstance._stats.Scripts + 1
+        
+        local className = "Script"
+        pcall(function() className = scriptInstance.ClassName end)
+        
+        local hashInfo = scriptHash and string.format("\n\tHash: %s", tostring(scriptHash)) or ""
+        local noteInfo = qualityNote ~= "OK" and string.format("\n\tNote: %s", qualityNote) or ""
+        
+        local header = string.format("--[[\n\tBaoSaveInstance V2 Official\n\tClass: %s\n\tSource: %s\n\tMethod: %s\n\tQuality: %d%%%s\n\tTime: %s%s\n]]\n\n",
+            className,
+            fullName,
             method,
-            os.date("%c")
+            qualityScore,
+            noteInfo,
+            os.date("%c"),
+            hashInfo
         )
-        return header .. source
-    elseif not success then
-        -- Failure Recovery: Try to dump bytecode if possible
-        local bytecodeMsg = ""
-        pcall(function()
-            if getscriptbytecode then
-                local bc = getscriptbytecode(scriptInstance)
-                if bc then
-                     bytecodeMsg = string.format("\n\tBytecode Size: %d bytes (Decompile failed)", #bc)
-                end
+        
+        local finalSource = header .. source
+        
+        -- Cache result
+        if scriptHash then
+            BaoSaveInstance._decompileCache[scriptHash] = finalSource
+        else
+            BaoSaveInstance._decompileCache[fullName] = finalSource
+        end
+        
+        return finalSource
+        
+    else
+        -- 5. FAILURE FALLBACK -> Bytecode Dump
+        BaoSaveInstance._stats.ScriptsFailed = BaoSaveInstance._stats.ScriptsFailed + 1
+        
+        if config.SaveBytecodeOnFail then
+            local dump = BaoSaveInstance._DumpBytecodeAsComment(scriptInstance)
+            if dump then
+                BaoSaveInstance._stats.ScriptsBytecodeOnly = BaoSaveInstance._stats.ScriptsBytecodeOnly + 1
+                return dump
             end
-        end)
-
-        -- Return a comment explaining failure if we know it's a script
+        end
+        
+        -- Absolute failure
+        BaoSaveInstance._stats.Errors = BaoSaveInstance._stats.Errors + 1
         if scriptInstance:IsA("Script") or scriptInstance:IsA("LocalScript") or scriptInstance:IsA("ModuleScript") then
-             return string.format("--[[\n\t[BaoSaveInstance] FAILED TO DECOMPILE\n\tSource: %s\n\tReason: No access or decompiler failed.%s\n]]", 
-                scriptInstance:GetFullName(), bytecodeMsg)
+             return string.format("--[[\n\t[BaoSaveInstance V2] FAILED TO DECOMPILE\n\tSource: %s\n\tReason: All %d attempts failed.\n]]", 
+                fullName, attempts)
         end
     end
     
     return nil
 end
 
--- Process scripts in a cloned tree: ensure Source is preserved
+-- V2: Process scripts in cloned tree — WRITES source back into .Source property
 function BaoSaveInstance._ProcessScriptsInTree(root)
     if not root then return 0 end
     
     local scriptCount = 0
+    local writeBack = BaoSaveInstance._config.WriteSourceToClone
     local descendants = {}
     
+    Utility.Log("INFO", "Collecting scripts from tree...")
     pcall(function()
         descendants = root:GetDescendants()
     end)
-    
-    -- Also check root itself
     table.insert(descendants, root)
     
+    -- Filter only scripts first to know total count for progress
+    local scriptsToProcess = {}
     for _, desc in ipairs(descendants) do
+        if desc:IsA("LuaSourceContainer") then
+            table.insert(scriptsToProcess, desc)
+        end
+    end
+    
+    local totalScripts = #scriptsToProcess
+    Utility.Log("INFO", "Found " .. totalScripts .. " scripts to process")
+    
+    -- Batch process
+    local batchSize = 10
+    local processed = 0
+    
+    for i, scriptInstance in ipairs(scriptsToProcess) do
+        -- Check Cancel
+        if BaoSaveInstance._cancelRequested then
+            Utility.Log("WARN", "Operation cancelled by user during script processing")
+            BaoSaveInstance._cancelled = true
+            break
+        end
+        
         pcall(function()
-            if desc:IsA("LuaSourceContainer") then
-                -- The Source property should be preserved during Clone in Studio
-                -- But we verify and log
-                local hasSource = false
-                pcall(function()
-                    hasSource = (desc.Source ~= nil and desc.Source ~= "")
-                end)
-                if hasSource then
-                    scriptCount = scriptCount + 1
+            -- Check if source already exists (e.g. from Studio)
+            local hasSource = false
+            pcall(function()
+                hasSource = (scriptInstance.Source ~= nil and scriptInstance.Source ~= "")
+            end)
+            
+            if not hasSource and writeBack then
+                -- Decompile and write source back into the cloned script
+                local decompiled = BaoSaveInstance._CollectScriptSource(scriptInstance)
+                if decompiled then
+                    pcall(function()
+                        scriptInstance.Source = decompiled
+                    end)
                 end
+            elseif hasSource then
+                -- Even if it has source, we might want to validate/header it if it's raw
+                -- But for now let's assume if it has source it's good (optimization)
+                BaoSaveInstance._stats.Scripts = BaoSaveInstance._stats.Scripts + 1
             end
+            
+            scriptCount = scriptCount + 1
         end)
+        
+        processed = processed + 1
+        
+        -- Update Progress & Yield
+        if i % batchSize == 0 then
+            local progress = (i / totalScripts) * 100
+             BaoSaveInstance._SetProgress(progress)
+             BaoSaveInstance._SetStatus("Processing Scripts (" .. i .. "/" .. totalScripts .. ")")
+             task.wait() 
+        end
     end
     
     return scriptCount
 end
 
+-- V3: Sweep hidden scripts (Loaded Modules + Nil Instances + Running Scripts)
+function BaoSaveInstance._CollectLoadedModules(container)
+    local count = 0
+    local processedHashes = {}
+    local config = BaoSaveInstance._config
+    
+    local hiddenFolder = Instance.new("Folder")
+    hiddenFolder.Name = "_HiddenScripts"
+    
+    local function processScript(scriptInstance, sourceName)
+        if not scriptInstance then return end
+        
+        -- Duplicate check via Hash (if available) or unique ID
+        local hash = nil
+        pcall(function()
+            if BaoSaveInstance._capabilities.HasGetScriptHash then
+                hash = getscripthash(scriptInstance)
+            end
+        end)
+        
+        -- If we have a hash and saw it, skip
+        if hash and processedHashes[hash] then return end
+        if hash then processedHashes[hash] = true end
+        
+        -- Check if it's already in the game tree
+        local isInTree = false
+        pcall(function()
+            if scriptInstance:IsDescendantOf(game) then
+                isInTree = true
+            end
+        end)
+        
+        if not isInTree or scriptInstance.Parent == nil then
+            -- Clone and decompile
+            local clone = nil
+            -- Try to clone, but some nil instances are locked
+            pcall(function()
+                 -- Special handling for nil instances: we might need to create a new script and copy source
+                 -- because cloning a nil/locked script might fail or return emptiness
+                 if scriptInstance:IsA("ModuleScript") then
+                    clone = Instance.new("ModuleScript")
+                 elseif scriptInstance:IsA("LocalScript") then
+                    clone = Instance.new("LocalScript")
+                 else
+                    clone = Instance.new("Script")
+                 end
+                 clone.Name = scriptInstance.Name .. " (" .. sourceName .. ")"
+                 
+                 -- Try to copy properties if possible
+                 pcall(function() clone.Name = scriptInstance.Name end)
+            end)
+            
+            if clone then
+                local src = BaoSaveInstance._CollectScriptSource(scriptInstance)
+                if src then
+                    pcall(function() clone.Source = src end)
+                    clone.Parent = hiddenFolder
+                    count = count + 1
+                end
+            end
+        end
+    end
+    
+    -- 1. Get Loaded Modules
+    if BaoSaveInstance._capabilities.HasGetLoadedModules then
+        pcall(function()
+            local modules = getloadedmodules()
+            if modules then
+                Utility.Log("INFO", "Scanning " .. #modules .. " loaded modules...")
+                for _, mod in ipairs(modules) do
+                    processScript(mod, "LoadedModule")
+                end
+            end
+        end)
+    end
+    
+    -- 2. Get Nil Instances (Scripts)
+    if config.DecompileNilScripts and BaoSaveInstance._capabilities.HasGetNilInstances then
+         pcall(function()
+            local nils = getnilinstances()
+            if nils then
+                Utility.Log("INFO", "Scanning " .. #nils .. " nil instances...")
+                for _, inst in ipairs(nils) do
+                    if inst:IsA("LuaSourceContainer") then
+                        processScript(inst, "NilInstance")
+                    end
+                end
+            end
+        end)
+    end
+    
+    -- 3. Get Running Scripts (if available)
+    if getrunningscripts then
+         pcall(function()
+            local running = getrunningscripts()
+            if running then
+                Utility.Log("INFO", "Scanning " .. #running .. " running scripts...")
+                for _, s in ipairs(running) do
+                    processScript(s, "RunningScript")
+                end
+            end
+        end)
+    end
+    
+    if count > 0 then
+        hiddenFolder.Parent = container
+        Utility.Log("INFO", "Recovered " .. count .. " hidden scripts/modules")
+    else
+        hiddenFolder:Destroy()
+    end
+    
+    return count
+end
+
 -- ============================================================
 -- DEEP CLONE SYSTEM
 -- ============================================================
-
--- Try to read a property safely, returns value or nil
-function Utility.TryGetProperty(instance, propName)
-    local success, value = pcall(function()
-        return instance[propName]
-    end)
-    if success then return value end
-    -- Try hidden property via executor
-    if gethiddenproperty then
-        local s2, v2 = pcall(function()
-            return gethiddenproperty(instance, propName)
-        end)
-        if s2 then return v2 end
-    end
-    return nil
-end
 
 -- Create a shell instance copying basic properties when Clone fails
 function BaoSaveInstance._CreateShell(instance)
@@ -2009,6 +2474,259 @@ function BaoSaveInstance._GenerateRBXLXML()
                      end
                  end)
             end
+            
+            -- ===== V2: Constraint Types =====
+            pcall(function()
+                if inst:IsA("Constraint") then
+                    table.insert(xml, string.rep(" ", depth + 2) .. '<bool name="Enabled">' .. tostring(inst.Enabled) .. '</bool>')
+                    table.insert(xml, string.rep(" ", depth + 2) .. '<bool name="Visible">' .. tostring(inst.Visible) .. '</bool>')
+                    
+                    pcall(function()
+                        if inst:IsA("RopeConstraint") or inst:IsA("RodConstraint") then
+                            table.insert(xml, string.rep(" ", depth + 2) .. '<float name="Length">' .. tostring(inst.Length) .. '</float>')
+                            table.insert(xml, string.rep(" ", depth + 2) .. '<float name="Thickness">' .. tostring(inst.Thickness) .. '</float>')
+                        end
+                    end)
+                    pcall(function()
+                        if inst:IsA("SpringConstraint") then
+                            table.insert(xml, string.rep(" ", depth + 2) .. '<float name="Stiffness">' .. tostring(inst.Stiffness) .. '</float>')
+                            table.insert(xml, string.rep(" ", depth + 2) .. '<float name="Damping">' .. tostring(inst.Damping) .. '</float>')
+                            table.insert(xml, string.rep(" ", depth + 2) .. '<float name="FreeLength">' .. tostring(inst.FreeLength) .. '</float>')
+                            table.insert(xml, string.rep(" ", depth + 2) .. '<float name="MinLength">' .. tostring(inst.MinLength) .. '</float>')
+                            table.insert(xml, string.rep(" ", depth + 2) .. '<float name="MaxLength">' .. tostring(inst.MaxLength) .. '</float>')
+                        end
+                    end)
+                    pcall(function()
+                        if inst:IsA("HingeConstraint") then
+                            table.insert(xml, string.rep(" ", depth + 2) .. '<token name="ActuatorType">' .. inst.ActuatorType.Value .. '</token>')
+                            table.insert(xml, string.rep(" ", depth + 2) .. '<float name="AngularSpeed">' .. tostring(inst.AngularSpeed) .. '</float>')
+                            table.insert(xml, string.rep(" ", depth + 2) .. '<float name="MotorMaxTorque">' .. tostring(inst.MotorMaxTorque) .. '</float>')
+                            table.insert(xml, string.rep(" ", depth + 2) .. '<bool name="LimitsEnabled">' .. tostring(inst.LimitsEnabled) .. '</bool>')
+                        end
+                    end)
+                    pcall(function()
+                        if inst:IsA("BallSocketConstraint") then
+                            table.insert(xml, string.rep(" ", depth + 2) .. '<bool name="LimitsEnabled">' .. tostring(inst.LimitsEnabled) .. '</bool>')
+                            table.insert(xml, string.rep(" ", depth + 2) .. '<float name="UpperAngle">' .. tostring(inst.UpperAngle) .. '</float>')
+                            table.insert(xml, string.rep(" ", depth + 2) .. '<float name="TwistUpperAngle">' .. tostring(inst.TwistUpperAngle) .. '</float>')
+                            table.insert(xml, string.rep(" ", depth + 2) .. '<float name="TwistLowerAngle">' .. tostring(inst.TwistLowerAngle) .. '</float>')
+                        end
+                    end)
+                    pcall(function()
+                        if inst:IsA("PrismaticConstraint") then
+                            table.insert(xml, string.rep(" ", depth + 2) .. '<token name="ActuatorType">' .. inst.ActuatorType.Value .. '</token>')
+                            table.insert(xml, string.rep(" ", depth + 2) .. '<float name="Speed">' .. tostring(inst.Speed) .. '</float>')
+                            table.insert(xml, string.rep(" ", depth + 2) .. '<float name="UpperLimit">' .. tostring(inst.UpperLimit) .. '</float>')
+                            table.insert(xml, string.rep(" ", depth + 2) .. '<float name="LowerLimit">' .. tostring(inst.LowerLimit) .. '</float>')
+                            table.insert(xml, string.rep(" ", depth + 2) .. '<bool name="LimitsEnabled">' .. tostring(inst.LimitsEnabled) .. '</bool>')
+                        end
+                    end)
+                    pcall(function()
+                        if inst:IsA("AlignPosition") then
+                            table.insert(xml, string.rep(" ", depth + 2) .. '<float name="MaxForce">' .. tostring(inst.MaxForce) .. '</float>')
+                            table.insert(xml, string.rep(" ", depth + 2) .. '<float name="Responsiveness">' .. tostring(inst.Responsiveness) .. '</float>')
+                            table.insert(xml, string.rep(" ", depth + 2) .. '<token name="Mode">' .. inst.Mode.Value .. '</token>')
+                        end
+                    end)
+                    pcall(function()
+                        if inst:IsA("AlignOrientation") then
+                            table.insert(xml, string.rep(" ", depth + 2) .. '<float name="MaxTorque">' .. tostring(inst.MaxTorque) .. '</float>')
+                            table.insert(xml, string.rep(" ", depth + 2) .. '<float name="Responsiveness">' .. tostring(inst.Responsiveness) .. '</float>')
+                            table.insert(xml, string.rep(" ", depth + 2) .. '<token name="Mode">' .. inst.Mode.Value .. '</token>')
+                        end
+                    end)
+                    pcall(function()
+                        if inst:IsA("LinearVelocity") then
+                            local lv = inst.VectorVelocity
+                            table.insert(xml, string.rep(" ", depth + 2) .. '<Vector3 name="VectorVelocity">')
+                            table.insert(xml, string.rep(" ", depth + 3) .. '<X>' .. lv.X .. '</X><Y>' .. lv.Y .. '</Y><Z>' .. lv.Z .. '</Z>')
+                            table.insert(xml, string.rep(" ", depth + 2) .. '</Vector3>')
+                            table.insert(xml, string.rep(" ", depth + 2) .. '<float name="MaxForce">' .. tostring(inst.MaxForce) .. '</float>')
+                        end
+                    end)
+                    pcall(function()
+                        if inst:IsA("AngularVelocity") then
+                            local av = inst.AngularVelocity
+                            table.insert(xml, string.rep(" ", depth + 2) .. '<Vector3 name="AngularVelocity">')
+                            table.insert(xml, string.rep(" ", depth + 3) .. '<X>' .. av.X .. '</X><Y>' .. av.Y .. '</Y><Z>' .. av.Z .. '</Z>')
+                            table.insert(xml, string.rep(" ", depth + 2) .. '</Vector3>')
+                            table.insert(xml, string.rep(" ", depth + 2) .. '<float name="MaxTorque">' .. tostring(inst.MaxTorque) .. '</float>')
+                        end
+                    end)
+                    pcall(function()
+                        if inst:IsA("VectorForce") then
+                            local vf = inst.Force
+                            table.insert(xml, string.rep(" ", depth + 2) .. '<Vector3 name="Force">')
+                            table.insert(xml, string.rep(" ", depth + 3) .. '<X>' .. vf.X .. '</X><Y>' .. vf.Y .. '</Y><Z>' .. vf.Z .. '</Z>')
+                            table.insert(xml, string.rep(" ", depth + 2) .. '</Vector3>')
+                        end
+                    end)
+                    pcall(function()
+                        if inst:IsA("Torque") then
+                            local tq = inst.Torque
+                            table.insert(xml, string.rep(" ", depth + 2) .. '<Vector3 name="Torque">')
+                            table.insert(xml, string.rep(" ", depth + 3) .. '<X>' .. tq.X .. '</X><Y>' .. tq.Y .. '</Y><Z>' .. tq.Z .. '</Z>')
+                            table.insert(xml, string.rep(" ", depth + 2) .. '</Vector3>')
+                        end
+                    end)
+                end
+            end)
+            
+            -- ===== V2: UILayout Types =====
+            pcall(function()
+                if inst:IsA("UIListLayout") then
+                    table.insert(xml, string.rep(" ", depth + 2) .. '<token name="FillDirection">' .. inst.FillDirection.Value .. '</token>')
+                    table.insert(xml, string.rep(" ", depth + 2) .. '<token name="HorizontalAlignment">' .. inst.HorizontalAlignment.Value .. '</token>')
+                    table.insert(xml, string.rep(" ", depth + 2) .. '<token name="VerticalAlignment">' .. inst.VerticalAlignment.Value .. '</token>')
+                    table.insert(xml, string.rep(" ", depth + 2) .. '<token name="SortOrder">' .. inst.SortOrder.Value .. '</token>')
+                    local pd = inst.Padding
+                    table.insert(xml, string.rep(" ", depth + 2) .. '<UDim name="Padding">')
+                    table.insert(xml, string.rep(" ", depth + 3) .. '<S>' .. pd.Scale .. '</S><O>' .. pd.Offset .. '</O>')
+                    table.insert(xml, string.rep(" ", depth + 2) .. '</UDim>')
+                    pcall(function()
+                        table.insert(xml, string.rep(" ", depth + 2) .. '<bool name="Wraps">' .. tostring(inst.Wraps) .. '</bool>')
+                    end)
+                end
+            end)
+            pcall(function()
+                if inst:IsA("UIGridLayout") then
+                    table.insert(xml, string.rep(" ", depth + 2) .. '<token name="FillDirection">' .. inst.FillDirection.Value .. '</token>')
+                    table.insert(xml, string.rep(" ", depth + 2) .. '<token name="HorizontalAlignment">' .. inst.HorizontalAlignment.Value .. '</token>')
+                    table.insert(xml, string.rep(" ", depth + 2) .. '<token name="VerticalAlignment">' .. inst.VerticalAlignment.Value .. '</token>')
+                    table.insert(xml, string.rep(" ", depth + 2) .. '<token name="SortOrder">' .. inst.SortOrder.Value .. '</token>')
+                    table.insert(xml, string.rep(" ", depth + 2) .. '<token name="StartCorner">' .. inst.StartCorner.Value .. '</token>')
+                    local cs = inst.CellSize
+                    table.insert(xml, string.rep(" ", depth + 2) .. '<UDim2 name="CellSize">')
+                    table.insert(xml, string.rep(" ", depth + 3) .. '<XS>' .. cs.X.Scale .. '</XS><XO>' .. cs.X.Offset .. '</XO>')
+                    table.insert(xml, string.rep(" ", depth + 3) .. '<YS>' .. cs.Y.Scale .. '</YS><YO>' .. cs.Y.Offset .. '</YO>')
+                    table.insert(xml, string.rep(" ", depth + 2) .. '</UDim2>')
+                    local cp = inst.CellPadding
+                    table.insert(xml, string.rep(" ", depth + 2) .. '<UDim2 name="CellPadding">')
+                    table.insert(xml, string.rep(" ", depth + 3) .. '<XS>' .. cp.X.Scale .. '</XS><XO>' .. cp.X.Offset .. '</XO>')
+                    table.insert(xml, string.rep(" ", depth + 3) .. '<YS>' .. cp.Y.Scale .. '</YS><YO>' .. cp.Y.Offset .. '</YO>')
+                    table.insert(xml, string.rep(" ", depth + 2) .. '</UDim2>')
+                end
+            end)
+            pcall(function()
+                if inst:IsA("UIPadding") then
+                    local pl, pr, pt, pb = inst.PaddingLeft, inst.PaddingRight, inst.PaddingTop, inst.PaddingBottom
+                    table.insert(xml, string.rep(" ", depth + 2) .. '<UDim name="PaddingLeft"><S>' .. pl.Scale .. '</S><O>' .. pl.Offset .. '</O></UDim>')
+                    table.insert(xml, string.rep(" ", depth + 2) .. '<UDim name="PaddingRight"><S>' .. pr.Scale .. '</S><O>' .. pr.Offset .. '</O></UDim>')
+                    table.insert(xml, string.rep(" ", depth + 2) .. '<UDim name="PaddingTop"><S>' .. pt.Scale .. '</S><O>' .. pt.Offset .. '</O></UDim>')
+                    table.insert(xml, string.rep(" ", depth + 2) .. '<UDim name="PaddingBottom"><S>' .. pb.Scale .. '</S><O>' .. pb.Offset .. '</O></UDim>')
+                end
+            end)
+            pcall(function()
+                if inst:IsA("UIScale") then
+                    table.insert(xml, string.rep(" ", depth + 2) .. '<float name="Scale">' .. tostring(inst.Scale) .. '</float>')
+                end
+            end)
+            pcall(function()
+                if inst:IsA("UIAspectRatioConstraint") then
+                    table.insert(xml, string.rep(" ", depth + 2) .. '<float name="AspectRatio">' .. tostring(inst.AspectRatio) .. '</float>')
+                    table.insert(xml, string.rep(" ", depth + 2) .. '<token name="AspectType">' .. inst.AspectType.Value .. '</token>')
+                    table.insert(xml, string.rep(" ", depth + 2) .. '<token name="DominantAxis">' .. inst.DominantAxis.Value .. '</token>')
+                end
+            end)
+            pcall(function()
+                if inst:IsA("UISizeConstraint") then
+                    local minS = inst.MinSize
+                    local maxS = inst.MaxSize
+                    table.insert(xml, string.rep(" ", depth + 2) .. '<Vector2 name="MinSize"><X>' .. minS.X .. '</X><Y>' .. minS.Y .. '</Y></Vector2>')
+                    table.insert(xml, string.rep(" ", depth + 2) .. '<Vector2 name="MaxSize"><X>' .. maxS.X .. '</X><Y>' .. maxS.Y .. '</Y></Vector2>')
+                end
+            end)
+            pcall(function()
+                if inst:IsA("UITextSizeConstraint") then
+                    table.insert(xml, string.rep(" ", depth + 2) .. '<int name="MinTextSize">' .. tostring(inst.MinTextSize) .. '</int>')
+                    table.insert(xml, string.rep(" ", depth + 2) .. '<int name="MaxTextSize">' .. tostring(inst.MaxTextSize) .. '</int>')
+                end
+            end)
+            pcall(function()
+                if inst:IsA("UIFlexItem") then
+                    table.insert(xml, string.rep(" ", depth + 2) .. '<token name="FlexMode">' .. inst.FlexMode.Value .. '</token>')
+                    table.insert(xml, string.rep(" ", depth + 2) .. '<float name="GrowRatio">' .. tostring(inst.GrowRatio) .. '</float>')
+                    table.insert(xml, string.rep(" ", depth + 2) .. '<float name="ShrinkRatio">' .. tostring(inst.ShrinkRatio) .. '</float>')
+                end
+            end)
+            
+            -- ===== V2: Highlight =====
+            pcall(function()
+                if inst:IsA("Highlight") then
+                    local fc = inst.FillColor
+                    table.insert(xml, string.rep(" ", depth + 2) .. '<Color3 name="FillColor"><R>' .. fc.R .. '</R><G>' .. fc.G .. '</G><B>' .. fc.B .. '</B></Color3>')
+                    table.insert(xml, string.rep(" ", depth + 2) .. '<float name="FillTransparency">' .. tostring(inst.FillTransparency) .. '</float>')
+                    local oc = inst.OutlineColor
+                    table.insert(xml, string.rep(" ", depth + 2) .. '<Color3 name="OutlineColor"><R>' .. oc.R .. '</R><G>' .. oc.G .. '</G><B>' .. oc.B .. '</B></Color3>')
+                    table.insert(xml, string.rep(" ", depth + 2) .. '<float name="OutlineTransparency">' .. tostring(inst.OutlineTransparency) .. '</float>')
+                    table.insert(xml, string.rep(" ", depth + 2) .. '<token name="DepthMode">' .. inst.DepthMode.Value .. '</token>')
+                    table.insert(xml, string.rep(" ", depth + 2) .. '<bool name="Enabled">' .. tostring(inst.Enabled) .. '</bool>')
+                end
+            end)
+            
+            -- ===== V2: Trail =====
+            pcall(function()
+                if inst:IsA("Trail") then
+                    table.insert(xml, string.rep(" ", depth + 2) .. '<Content name="Texture"><url>' .. escapeXml(inst.Texture) .. '</url></Content>')
+                    table.insert(xml, string.rep(" ", depth + 2) .. '<float name="Lifetime">' .. tostring(inst.Lifetime) .. '</float>')
+                    table.insert(xml, string.rep(" ", depth + 2) .. '<float name="MinLength">' .. tostring(inst.MinLength) .. '</float>')
+                    table.insert(xml, string.rep(" ", depth + 2) .. '<float name="MaxLength">' .. tostring(inst.MaxLength) .. '</float>')
+                    table.insert(xml, string.rep(" ", depth + 2) .. '<float name="WidthScale">' .. tostring(inst.WidthScale) .. '</float>')
+                    table.insert(xml, string.rep(" ", depth + 2) .. '<float name="LightEmission">' .. tostring(inst.LightEmission) .. '</float>')
+                    table.insert(xml, string.rep(" ", depth + 2) .. '<bool name="Enabled">' .. tostring(inst.Enabled) .. '</bool>')
+                    table.insert(xml, string.rep(" ", depth + 2) .. '<token name="FaceCamera">' .. tostring(inst.FaceCamera) .. '</token>')
+                end
+            end)
+            
+            -- ===== V2: Camera =====
+            pcall(function()
+                if inst:IsA("Camera") then
+                    table.insert(xml, string.rep(" ", depth + 2) .. '<float name="FieldOfView">' .. tostring(inst.FieldOfView) .. '</float>')
+                    table.insert(xml, string.rep(" ", depth + 2) .. '<token name="CameraType">' .. inst.CameraType.Value .. '</token>')
+                    local ccf = inst.CFrame
+                    local cx, cy, cz, cR00, cR01, cR02, cR10, cR11, cR12, cR20, cR21, cR22 = ccf:GetComponents()
+                    table.insert(xml, string.rep(" ", depth + 2) .. '<CoordinateFrame name="CFrame">')
+                    table.insert(xml, string.rep(" ", depth + 3) .. '<X>' .. cx .. '</X><Y>' .. cy .. '</Y><Z>' .. cz .. '</Z>')
+                    table.insert(xml, string.rep(" ", depth + 3) .. '<R00>' .. cR00 .. '</R00><R01>' .. cR01 .. '</R01><R02>' .. cR02 .. '</R02>')
+                    table.insert(xml, string.rep(" ", depth + 3) .. '<R10>' .. cR10 .. '</R10><R11>' .. cR11 .. '</R11><R12>' .. cR12 .. '</R12>')
+                    table.insert(xml, string.rep(" ", depth + 3) .. '<R20>' .. cR20 .. '</R20><R21>' .. cR21 .. '</R21><R22>' .. cR22 .. '</R22>')
+                    table.insert(xml, string.rep(" ", depth + 2) .. '</CoordinateFrame>')
+                end
+            end)
+            
+            -- ===== V2: SurfaceAppearance =====
+            pcall(function()
+                if inst:IsA("SurfaceAppearance") then
+                    table.insert(xml, string.rep(" ", depth + 2) .. '<Content name="ColorMap"><url>' .. escapeXml(inst.ColorMap) .. '</url></Content>')
+                    table.insert(xml, string.rep(" ", depth + 2) .. '<Content name="MetalnessMap"><url>' .. escapeXml(inst.MetalnessMap) .. '</url></Content>')
+                    table.insert(xml, string.rep(" ", depth + 2) .. '<Content name="NormalMap"><url>' .. escapeXml(inst.NormalMap) .. '</url></Content>')
+                    table.insert(xml, string.rep(" ", depth + 2) .. '<Content name="RoughnessMap"><url>' .. escapeXml(inst.RoughnessMap) .. '</url></Content>')
+                    pcall(function()
+                        table.insert(xml, string.rep(" ", depth + 2) .. '<token name="AlphaMode">' .. inst.AlphaMode.Value .. '</token>')
+                    end)
+                end
+            end)
+            
+            -- ===== V2: ClickDetector =====
+            pcall(function()
+                if inst:IsA("ClickDetector") then
+                    table.insert(xml, string.rep(" ", depth + 2) .. '<float name="MaxActivationDistance">' .. tostring(inst.MaxActivationDistance) .. '</float>')
+                    table.insert(xml, string.rep(" ", depth + 2) .. '<Content name="CursorIcon"><url>' .. escapeXml(inst.CursorIcon) .. '</url></Content>')
+                end
+            end)
+            
+            -- ===== V2: UnionOperation =====
+            pcall(function()
+                if inst:IsA("UnionOperation") then
+                    pcall(function()
+                        table.insert(xml, string.rep(" ", depth + 2) .. '<token name="CollisionFidelity">' .. inst.CollisionFidelity.Value .. '</token>')
+                        table.insert(xml, string.rep(" ", depth + 2) .. '<token name="RenderFidelity">' .. inst.RenderFidelity.Value .. '</token>')
+                        table.insert(xml, string.rep(" ", depth + 2) .. '<bool name="UsePartColor">' .. tostring(inst.UsePartColor) .. '</bool>')
+                        table.insert(xml, string.rep(" ", depth + 2) .. '<bool name="SmoothingAngle">' .. tostring(inst.SmoothingAngle) .. '</bool>')
+                    end)
+                end
+            end)
+            
         end)
         
         table.insert(xml, string.rep(" ", depth + 1) .. '</Properties>')
@@ -2028,6 +2746,10 @@ function BaoSaveInstance._GenerateRBXLXML()
         end
         
         table.insert(xml, string.rep(" ", depth) .. '</Item>')
+        
+        -- Yield periodically for large trees
+        refCounter = refCounter  -- already incremented
+        if refCounter % 200 == 0 then task.wait() end
     end
     
     -- Serialize all collected data
@@ -2273,7 +2995,7 @@ function UIBuilder.Create()
     subtitleLabel.Size = UDim2.new(0, 250, 0, 14)
     subtitleLabel.Position = UDim2.new(0, 54, 0, 29)
     subtitleLabel.BackgroundTransparency = 1
-    subtitleLabel.Text = "Decompile API v2.0"
+    subtitleLabel.Text = "V2 Official  |  " .. BaoSaveInstance._capabilities.ExecutorName .. (BaoSaveInstance._capabilities.IsStudio and " (Studio)" or "")
     subtitleLabel.TextColor3 = Theme.TextMuted
     subtitleLabel.TextSize = 11
     subtitleLabel.Font = Enum.Font.Gotham
@@ -2823,6 +3545,111 @@ function UIBuilder.Create()
     modeLabel.Parent = statusFrame
     
     -- ================================
+    -- V2: Elapsed Timer Label
+    -- ================================
+    local elapsedLabel = Instance.new("TextLabel")
+    elapsedLabel.Name = "ElapsedLabel"
+    elapsedLabel.Size = UDim2.new(0.5, -10, 0, 16)
+    elapsedLabel.Position = UDim2.new(0.5, 0, 0, 56)
+    elapsedLabel.BackgroundTransparency = 1
+    elapsedLabel.Text = ""
+    elapsedLabel.TextColor3 = Theme.Accent2
+    elapsedLabel.TextSize = 10
+    elapsedLabel.Font = Enum.Font.GothamSemibold
+    elapsedLabel.TextXAlignment = Enum.TextXAlignment.Right
+    elapsedLabel.ZIndex = 4
+    elapsedLabel.Parent = statusFrame
+    
+    -- ================================
+    -- V2: Cancel Button
+    -- ================================
+    local cancelBtn = Instance.new("TextButton")
+    cancelBtn.Name = "CancelBtn"
+    cancelBtn.Size = UDim2.new(1, 0, 0, 32)
+    cancelBtn.Position = UDim2.new(0, 0, 0, 472)
+    cancelBtn.BackgroundColor3 = Theme.Error
+    cancelBtn.BackgroundTransparency = 0.3
+    cancelBtn.BorderSizePixel = 0
+    cancelBtn.Text = "⛔  Cancel Operation"
+    cancelBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    cancelBtn.TextSize = 12
+    cancelBtn.Font = Enum.Font.GothamSemibold
+    cancelBtn.ZIndex = 3
+    cancelBtn.Visible = false
+    cancelBtn.Parent = contentFrame
+    
+    local cancelCorner = Instance.new("UICorner")
+    cancelCorner.CornerRadius = UDim.new(0, 6)
+    cancelCorner.Parent = cancelBtn
+    
+    cancelBtn.MouseButton1Click:Connect(function()
+        BaoSaveInstance._cancelRequested = true
+        cancelBtn.Text = "⏳  Cancelling..."
+        cancelBtn.Active = false
+        Utility.Log("WARN", "User requested cancel")
+    end)
+    
+    -- ================================
+    -- V2: Live Log Viewer
+    -- ================================
+    local logSectionLabel = Instance.new("TextLabel")
+    logSectionLabel.Name = "LogSectionLabel"
+    logSectionLabel.Size = UDim2.new(1, 0, 0, 18)
+    logSectionLabel.Position = UDim2.new(0, 0, 0, 510)
+    logSectionLabel.BackgroundTransparency = 1
+    logSectionLabel.Text = "LIVE LOG"
+    logSectionLabel.TextColor3 = Theme.TextMuted
+    logSectionLabel.TextSize = 10
+    logSectionLabel.Font = Enum.Font.GothamBold
+    logSectionLabel.TextXAlignment = Enum.TextXAlignment.Left
+    logSectionLabel.ZIndex = 3
+    logSectionLabel.Parent = contentFrame
+    
+    local logFrame = Instance.new("ScrollingFrame")
+    logFrame.Name = "LogViewer"
+    logFrame.Size = UDim2.new(1, 0, 0, 110)
+    logFrame.Position = UDim2.new(0, 0, 0, 530)
+    logFrame.BackgroundColor3 = Color3.fromRGB(12, 12, 20)
+    logFrame.BorderSizePixel = 0
+    logFrame.ScrollBarThickness = 4
+    logFrame.ScrollBarImageColor3 = Theme.Primary
+    logFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+    logFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    logFrame.ZIndex = 3
+    logFrame.Parent = contentFrame
+    
+    local logCorner = Instance.new("UICorner")
+    logCorner.CornerRadius = UDim.new(0, 6)
+    logCorner.Parent = logFrame
+    
+    local logStroke = Instance.new("UIStroke")
+    logStroke.Color = Theme.Border
+    logStroke.Thickness = 1
+    logStroke.Transparency = 0.6
+    logStroke.Parent = logFrame
+    
+    local logLayout = Instance.new("UIListLayout")
+    logLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    logLayout.Padding = UDim.new(0, 1)
+    logLayout.Parent = logFrame
+    
+    local logPadding = Instance.new("UIPadding")
+    logPadding.PaddingLeft = UDim.new(0, 6)
+    logPadding.PaddingRight = UDim.new(0, 6)
+    logPadding.PaddingTop = UDim.new(0, 4)
+    logPadding.PaddingBottom = UDim.new(0, 4)
+    logPadding.Parent = logFrame
+    
+    local logColors = {
+        INFO = Theme.TextSecondary,
+        WARN = Theme.Warning,
+        ERROR = Theme.Error,
+        PERF = Theme.Accent2,
+    }
+    
+    local lastLogCount = 0
+    
+    -- ================================
     -- UI Update Functions
     -- ================================
     
@@ -2865,6 +3692,13 @@ function UIBuilder.Create()
             TweenService:Create(progressFill, TweenInfo.new(0.3), {
                 BackgroundColor3 = Theme.ProgressFill
             }):Play()
+        end
+        
+        -- V2: Show/hide cancel button
+        cancelBtn.Visible = (status == "Processing" or status == "Exporting")
+        if cancelBtn.Visible then
+            cancelBtn.Text = "⛔  Cancel Operation"
+            cancelBtn.Active = true
         end
     end
     
@@ -2928,6 +3762,75 @@ function UIBuilder.Create()
         while screenGui and screenGui.Parent do
             rotation = (rotation + 1) % 360
             task.wait(0.05)
+        end
+    end)
+    
+    -- ================================
+    -- V2: Elapsed Timer Loop
+    -- ================================
+    task.spawn(function()
+        while screenGui and screenGui.Parent do
+            if BaoSaveInstance._status == "Processing" or BaoSaveInstance._status == "Exporting" then
+                local elapsed = os.clock() - BaoSaveInstance._operationStartTime
+                local mins = math.floor(elapsed / 60)
+                local secs = math.floor(elapsed % 60)
+                elapsedLabel.Text = string.format("⏱ %02d:%02d", mins, secs)
+            else
+                if elapsedLabel.Text ~= "" and BaoSaveInstance._status ~= "Idle" then
+                    -- keep showing final time
+                else
+                    elapsedLabel.Text = ""
+                end
+            end
+            task.wait(0.5)
+        end
+    end)
+    
+    -- ================================
+    -- V2: Log Viewer Update Loop
+    -- ================================
+    task.spawn(function()
+        while screenGui and screenGui.Parent do
+            local logs = Utility.Logs
+            if #logs > lastLogCount then
+                -- Add new log entries
+                for i = lastLogCount + 1, math.min(#logs, lastLogCount + 10) do
+                    local entry = logs[i]
+                    local logLabel = Instance.new("TextLabel")
+                    logLabel.Size = UDim2.new(1, 0, 0, 13)
+                    logLabel.BackgroundTransparency = 1
+                    logLabel.Text = string.format("[%.1f] [%s] %s", entry.Time, entry.Level, entry.Message)
+                    logLabel.TextColor3 = logColors[entry.Level] or Theme.TextMuted
+                    logLabel.TextSize = 9
+                    logLabel.Font = Enum.Font.Code
+                    logLabel.TextXAlignment = Enum.TextXAlignment.Left
+                    logLabel.TextTruncate = Enum.TextTruncate.AtEnd
+                    logLabel.ZIndex = 4
+                    logLabel.LayoutOrder = i
+                    logLabel.Parent = logFrame
+                end
+                lastLogCount = #logs
+                
+                -- Keep only the last 50 entries visible
+                local children = logFrame:GetChildren()
+                local labelCount = 0
+                for _, c in ipairs(children) do
+                    if c:IsA("TextLabel") then labelCount = labelCount + 1 end
+                end
+                if labelCount > 50 then
+                    for _, c in ipairs(children) do
+                        if c:IsA("TextLabel") then
+                            c:Destroy()
+                            labelCount = labelCount - 1
+                            if labelCount <= 50 then break end
+                        end
+                    end
+                end
+                
+                -- Auto-scroll to bottom
+                logFrame.CanvasPosition = Vector2.new(0, logFrame.AbsoluteCanvasSize.Y)
+            end
+            task.wait(0.3)
         end
     end)
     
@@ -3122,13 +4025,13 @@ function UIBuilder.Create()
     task.wait(0.1)
     
     TweenService:Create(mainFrame, TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
-        Size = UDim2.new(0, 460, 0, 490),
-        Position = UDim2.new(0.5, -230, 0.5, -245),
+        Size = UDim2.new(0, 460, 0, 660),
+        Position = UDim2.new(0.5, -230, 0.5, -330),
         BackgroundTransparency = 0
     }):Play()
     
     TweenService:Create(shadowFrame, TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
-        Size = UDim2.new(0, 474, 0, 504),
+        Size = UDim2.new(0, 474, 0, 674),
         Position = UDim2.new(0.5, -237, 0.5, -252),
         BackgroundTransparency = 0.6
     }):Play()
@@ -3149,7 +4052,7 @@ BaoSaveInstance.Init()
 -- Create UI
 UIBuilder.Create()
 
-Utility.Log("INFO", "BaoSaveInstance API v2.0 loaded and ready")
+Utility.Log("INFO", "BaoSaveInstance V2 Official loaded and ready")
 Utility.Log("INFO", "================================")
 Utility.Log("INFO", "Game: " .. Utility.GetGameName())
 Utility.Log("INFO", "PlaceId: " .. tostring(game.PlaceId))
