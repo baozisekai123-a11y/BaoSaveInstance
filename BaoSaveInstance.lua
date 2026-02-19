@@ -221,7 +221,6 @@ BaoSaveInstance._decompileCache = {} -- Hash -> Source cache
 BaoSaveInstance._mode = nil
 BaoSaveInstance._startTime = 0
 BaoSaveInstance._cancelled = false
-BaoSaveInstance._cancelled = false
 BaoSaveInstance._cancelRequested = false
 BaoSaveInstance._operationStartTime = 0
 BaoSaveInstance._stats = { 
@@ -367,7 +366,7 @@ function BaoSaveInstance.Init()
     BaoSaveInstance._initialized = true
     BaoSaveInstance._status = "Idle"
     BaoSaveInstance._progress = 0
-    BaoSaveInstance._stats = { Objects = 0, Scripts = 0, Errors = 0, NilInstances = 0 }
+    BaoSaveInstance._stats = { Objects = 0, Scripts = 0, ScriptsCached = 0, ScriptsFailed = 0, ScriptsBytecodeOnly = 0, Errors = 0, NilInstances = 0 }
     
     Utility.TimerEnd("Init")
     Utility.Log("INFO", "BaoSaveInstance " .. BaoSaveInstance.VERSION .. " initialized (Mem: " .. Utility.FormatBytes(Utility.GetMemoryUsage() * 1024) .. ")")
@@ -499,7 +498,7 @@ function BaoSaveInstance._ValidateSource(source)
         end
     end
     
-    if quality < 30 then
+    if quality < 15 then
         return true, quality, "Low Quality / Obfuscated: " .. table.concat(notes, ", ")
     end
     
@@ -591,21 +590,139 @@ function BaoSaveInstance._CollectScriptSource(scriptInstance)
                         qualityScore = qual
                         qualityNote = note
                         success = true
-                        break -- Success!
-                    else
-                        -- Keep trying if invalid, but maybe log it?
-                        -- Utility.Log("WARN", "Invalid decompile from " .. d.name .. ": " .. note)
+                        break
                     end
                 end
                 
-                -- Small yield between heavy retries
-                if retry < maxRetries then task.wait(0.1) end
+                -- GC between retries to free memory for large scripts
+                if retry < maxRetries then
+                    collectgarbage("collect")
+                    task.wait(0.1)
+                end
             end
             if success then break end
         end
     end
     
-    -- 3. Try ScriptEditorService (Studio Fallback)
+    -- 3. Try getscriptclosure (Closure Decompile)
+    if not success and getscriptclosure then
+        pcall(function()
+            local closure = getscriptclosure(scriptInstance)
+            if closure and type(closure) == "function" then
+                -- Try to decompile the closure itself
+                local decompilers = BaoSaveInstance._GetAllDecompilers()
+                for _, d in ipairs(decompilers) do
+                    pcall(function()
+                        local src = d.func(closure)
+                        if src and src ~= "" then
+                            local valid, qual, note = BaoSaveInstance._ValidateSource(src)
+                            if valid then
+                                source = src
+                                method = d.name .. " (closure)"
+                                qualityScore = qual
+                                qualityNote = note
+                                success = true
+                            end
+                        end
+                    end)
+                    if success then break end
+                end
+            end
+        end)
+    end
+    
+    -- 4. Try require() trick for ModuleScripts
+    if not success and scriptInstance:IsA("ModuleScript") then
+        pcall(function()
+            local moduleResult = require(scriptInstance)
+            if moduleResult ~= nil then
+                local resultStr = nil
+                if type(moduleResult) == "table" then
+                    -- Serialize table as readable Lua
+                    local lines = {"-- [BaoSaveInstance] Module return value (serialized)", "return {"}
+                    for k, v in pairs(moduleResult) do
+                        local keyStr = type(k) == "string" and string.format('["%s"]', k) or string.format("[%s]", tostring(k))
+                        local valStr
+                        if type(v) == "string" then
+                            valStr = string.format('"%s"', v:gsub('"', '\\"'))
+                        elseif type(v) == "number" or type(v) == "boolean" then
+                            valStr = tostring(v)
+                        elseif type(v) == "function" then
+                            valStr = '"<function>"'
+                        else
+                            valStr = string.format('"%s"', tostring(v))
+                        end
+                        table.insert(lines, string.format("    %s = %s,", keyStr, valStr))
+                    end
+                    table.insert(lines, "}")
+                    resultStr = table.concat(lines, "\n")
+                elseif type(moduleResult) == "function" then
+                    resultStr = "-- [BaoSaveInstance] Module returns a function\nreturn function() end"
+                else
+                    resultStr = "-- [BaoSaveInstance] Module return value\nreturn " .. tostring(moduleResult)
+                end
+                
+                if resultStr then
+                    source = resultStr
+                    method = "require() serialize"
+                    qualityScore = 40  -- Lower quality since it's just the return value
+                    qualityNote = "Serialized return value only"
+                    success = true
+                end
+            end
+        end)
+    end
+    
+    -- 5. Try Constant Pool Extraction from Bytecode
+    if not success and BaoSaveInstance._capabilities.HasGetScriptBytecode then
+        pcall(function()
+            local bytecode = getscriptbytecode(scriptInstance)
+            if bytecode and #bytecode > 4 then
+                -- Extract readable string constants from bytecode
+                local constants = {}
+                -- Scan for string patterns in bytecode (strings are stored as length-prefixed)
+                local pos = 1
+                while pos < #bytecode - 4 do
+                    -- Look for printable ASCII sequences of 4+ chars
+                    local chunk = bytecode:sub(pos, pos + 200)
+                    local str = chunk:match("([%w%p ]{4,100})")
+                    if str and not str:match("^%x+$") then
+                        -- Filter likely strings (not just hex data)
+                        local clean = str:gsub("[^%w%p ]", "")
+                        if #clean >= 4 then
+                            constants[clean] = true
+                        end
+                    end
+                    pos = pos + 1
+                end
+                
+                if next(constants) then
+                    local lines = {
+                        "-- [BaoSaveInstance] CONSTANT POOL EXTRACTION",
+                        "-- Full decompile failed. Extracted string constants from bytecode:",
+                        "--",
+                    }
+                    local count = 0
+                    for str, _ in pairs(constants) do
+                        if count < 200 then -- Cap at 200 constants
+                            table.insert(lines, '-- "' .. str .. '"')
+                            count = count + 1
+                        end
+                    end
+                    table.insert(lines, "--")
+                    table.insert(lines, "-- Total constants found: " .. count)
+                    
+                    source = table.concat(lines, "\n")
+                    method = "ConstantPool"
+                    qualityScore = 15
+                    qualityNote = "Constants only, no logic recovered"
+                    success = true
+                end
+            end
+        end)
+    end
+    
+    -- 6. Try ScriptEditorService (Studio Fallback)
     if not success and BaoSaveInstance._capabilities.IsStudio then
         pcall(function()
             local ses = game:GetService("ScriptEditorService")
@@ -958,8 +1075,18 @@ function BaoSaveInstance._DeepCloneChildren(service, targetFolder, yieldEvery)
 end
 
 -- ============================================================
--- TERRAIN CAPTURE SYSTEM
+-- TERRAIN CAPTURE SYSTEM V3 (Full Power)
 -- ============================================================
+
+-- All 22 Roblox terrain material types
+local TERRAIN_MATERIALS = {
+    Enum.Material.Grass, Enum.Material.Sand, Enum.Material.Rock, Enum.Material.Water,
+    Enum.Material.Glacier, Enum.Material.Snow, Enum.Material.Sandstone, Enum.Material.Mud,
+    Enum.Material.Basalt, Enum.Material.Ground, Enum.Material.CrackedLava, Enum.Material.Asphalt,
+    Enum.Material.Cobblestone, Enum.Material.Ice, Enum.Material.LeafyGrass, Enum.Material.Salt,
+    Enum.Material.Limestone, Enum.Material.Pavement, Enum.Material.Slate, Enum.Material.Concrete,
+    Enum.Material.WoodPlanks, Enum.Material.Air,
+}
 
 function BaoSaveInstance._CaptureTerrain()
     local terrain = nil
@@ -972,10 +1099,11 @@ function BaoSaveInstance._CaptureTerrain()
         return nil
     end
     
+    Utility.TimerStart("TerrainCapture")
+    
     -- Clone terrain object first
     local terrainClone = Utility.SafeClone(terrain)
     if not terrainClone then
-        -- If clone fails, create a shell
         pcall(function()
             terrainClone = Instance.new("Terrain")
         end)
@@ -986,74 +1114,178 @@ function BaoSaveInstance._CaptureTerrain()
         return nil
     end
     
-    Utility.Log("INFO", "Terrain object captured")
+    Utility.Log("INFO", "Terrain object captured — starting full decompile")
     
-    -- Capture terrain properties
+    -- 1. Copy Water Properties
     pcall(function()
         terrainClone.WaterColor = terrain.WaterColor
         terrainClone.WaterReflectance = terrain.WaterReflectance
         terrainClone.WaterTransparency = terrain.WaterTransparency
         terrainClone.WaterWaveSize = terrain.WaterWaveSize
         terrainClone.WaterWaveSpeed = terrain.WaterWaveSpeed
-        terrainClone.Decoration = terrain.Decoration
     end)
     
-    -- Capture terrain extents info
+    -- 2. Copy Decoration flag
+    pcall(function() terrainClone.Decoration = terrain.Decoration end)
+    
+    -- 3. Capture MaterialColors (all 22 material types)
+    local matColorCount = 0
+    for _, mat in ipairs(TERRAIN_MATERIALS) do
+        pcall(function()
+            local color = terrain:GetMaterialColor(mat)
+            if color then
+                terrainClone:SetMaterialColor(mat, color)
+                matColorCount = matColorCount + 1
+            end
+        end)
+    end
+    Utility.Log("INFO", "Captured " .. matColorCount .. " material colors")
+    
+    -- 4. Get terrain bounds
     local extents = Vector3.new(0, 0, 0)
     pcall(function()
         extents = terrain:GetExtentsSize()
-        Utility.Log("INFO", string.format("Terrain extents: %.0f x %.0f x %.0f", 
+        Utility.Log("INFO", string.format("Terrain extents: %.0f x %.0f x %.0f studs", 
             extents.X, extents.Y, extents.Z))
     end)
     
-    -- Capture voxel data using ReadVoxels (region-by-region to avoid memory issues)
-    pcall(function()
-        local REGION_SIZE = 128 -- studs per region chunk
-        local RESOLUTION = 4   -- voxel resolution
-        
+    -- 5. Capture Voxel Data with Adaptive Chunking
+    if extents.X > 0 and extents.Y > 0 and extents.Z > 0 then
+        local RESOLUTION = 4
         local minBound = Vector3.new(-extents.X/2, -extents.Y/2, -extents.Z/2)
         local maxBound = Vector3.new(extents.X/2, extents.Y/2, extents.Z/2)
         
-        -- Only attempt if terrain has actual content
-        if extents.X > 0 and extents.Y > 0 and extents.Z > 0 then
-            local regionCount = 0
-            
-            for x = minBound.X, maxBound.X, REGION_SIZE do
-                for y = minBound.Y, maxBound.Y, REGION_SIZE do
-                    for z = minBound.Z, maxBound.Z, REGION_SIZE do
-                        local regionStart = Vector3.new(x, y, z)
-                        local regionEnd = Vector3.new(
-                            math.min(x + REGION_SIZE, maxBound.X),
-                            math.min(y + REGION_SIZE, maxBound.Y),
-                            math.min(z + REGION_SIZE, maxBound.Z)
-                        )
-                        
-                        local region = Region3.new(regionStart, regionEnd)
-                        region = region:ExpandToGrid(RESOLUTION)
-                        
-                        local materials, occupancy = terrain:ReadVoxels(region, RESOLUTION)
-                        
-                        -- Write voxels to cloned terrain
-                        if materials and occupancy then
-                            pcall(function()
-                                terrainClone:WriteVoxels(region, RESOLUTION, materials, occupancy)
-                            end)
-                            regionCount = regionCount + 1
-                        end
-                        
-                        if regionCount % 10 == 0 then
-                            task.wait()
-                        end
-                    end
-                end
+        -- Estimate total regions for progress
+        local chunkSizes = {512, 256, 128, 64} -- Adaptive: try large first, fall back to small
+        local regionCount = 0
+        local failedRegions = 0
+        local emptyRegions = 0
+        local memWarnings = 0
+        
+        -- Calculate total number of chunks for progress reporting
+        local initialChunk = chunkSizes[1]
+        local totalChunksEstimate = math.ceil((maxBound.X - minBound.X) / initialChunk)
+            * math.ceil((maxBound.Y - minBound.Y) / initialChunk)
+            * math.ceil((maxBound.Z - minBound.Z) / initialChunk)
+        local chunksDone = 0
+        
+        -- Adaptive ReadVoxels: try chunk, if it fails, split into smaller chunks
+        local function captureRegion(rStart, rEnd, chunkIdx)
+            if chunkIdx > #chunkSizes then
+                failedRegions = failedRegions + 1
+                return
             end
             
-            Utility.Log("INFO", "Terrain voxels captured: " .. regionCount .. " regions")
-        else
-            Utility.Log("WARN", "Terrain has zero extents, skipping voxel capture")
+            -- Memory safety check
+            local mem = 0
+            pcall(function() mem = gcinfo() end)
+            if mem > 500000 then -- ~500MB warning
+                memWarnings = memWarnings + 1
+                collectgarbage("collect")
+                task.wait(0.2)
+            end
+            
+            local region = Region3.new(rStart, rEnd)
+            region = region:ExpandToGrid(RESOLUTION)
+            
+            local ok, materials, occupancy = false, nil, nil
+            ok = pcall(function()
+                materials, occupancy = terrain:ReadVoxels(region, RESOLUTION)
+            end)
+            
+            if ok and materials and occupancy then
+                -- Check if region has any non-air content
+                local hasContent = false
+                pcall(function()
+                    for xi = 1, #materials do
+                        for yi = 1, #materials[xi] do
+                            for zi = 1, #materials[xi][yi] do
+                                if materials[xi][yi][zi] ~= Enum.Material.Air then
+                                    hasContent = true
+                                    return
+                                end
+                            end
+                            if hasContent then return end
+                        end
+                        if hasContent then return end
+                    end
+                end)
+                
+                if hasContent then
+                    pcall(function()
+                        terrainClone:WriteVoxels(region, RESOLUTION, materials, occupancy)
+                    end)
+                    regionCount = regionCount + 1
+                else
+                    emptyRegions = emptyRegions + 1
+                end
+            else
+                -- Failed — try smaller chunk size
+                local nextIdx = chunkIdx + 1
+                if nextIdx <= #chunkSizes then
+                    local subSize = chunkSizes[nextIdx]
+                    for sx = rStart.X, rEnd.X - 1, subSize do
+                        for sy = rStart.Y, rEnd.Y - 1, subSize do
+                            for sz = rStart.Z, rEnd.Z - 1, subSize do
+                                local subStart = Vector3.new(sx, sy, sz)
+                                local subEnd = Vector3.new(
+                                    math.min(sx + subSize, rEnd.X),
+                                    math.min(sy + subSize, rEnd.Y),
+                                    math.min(sz + subSize, rEnd.Z)
+                                )
+                                captureRegion(subStart, subEnd, nextIdx)
+                            end
+                        end
+                    end
+                else
+                    failedRegions = failedRegions + 1
+                end
+            end
         end
-    end)
+        
+        -- Main loop: iterate with largest chunk size
+        local mainChunk = chunkSizes[1]
+        for x = minBound.X, maxBound.X - 1, mainChunk do
+            for y = minBound.Y, maxBound.Y - 1, mainChunk do
+                for z = minBound.Z, maxBound.Z - 1, mainChunk do
+                    -- Cancel check
+                    if BaoSaveInstance._cancelRequested then
+                        Utility.Log("WARN", "Terrain capture cancelled")
+                        break
+                    end
+                    
+                    local rStart = Vector3.new(x, y, z)
+                    local rEnd = Vector3.new(
+                        math.min(x + mainChunk, maxBound.X),
+                        math.min(y + mainChunk, maxBound.Y),
+                        math.min(z + mainChunk, maxBound.Z)
+                    )
+                    
+                    captureRegion(rStart, rEnd, 1)
+                    
+                    chunksDone = chunksDone + 1
+                    
+                    -- Progress + yield
+                    if chunksDone % 5 == 0 then
+                        local pct = math.min(99, math.floor((chunksDone / math.max(totalChunksEstimate, 1)) * 100))
+                        Utility.Log("INFO", string.format("Terrain: %d%% (%d regions captured, %d empty, %d failed)",
+                            pct, regionCount, emptyRegions, failedRegions))
+                        task.wait()
+                    end
+                end
+                if BaoSaveInstance._cancelRequested then break end
+            end
+            if BaoSaveInstance._cancelRequested then break end
+        end
+        
+        Utility.Log("INFO", string.format(
+            "Terrain voxels complete: %d regions written, %d empty, %d failed, %d mem warnings",
+            regionCount, emptyRegions, failedRegions, memWarnings))
+    else
+        Utility.Log("WARN", "Terrain has zero extents, skipping voxel capture")
+    end
     
+    Utility.TimerEnd("TerrainCapture")
     return terrainClone
 end
 
@@ -2814,24 +3046,30 @@ function UIBuilder.Create()
     -- Theme Colors
     -- ================================
     local Theme = {
-        Background      = Color3.fromRGB(22, 22, 30),
-        Surface         = Color3.fromRGB(30, 30, 42),
-        SurfaceLight    = Color3.fromRGB(40, 40, 55),
-        Primary         = Color3.fromRGB(88, 101, 242),
+        Background      = Color3.fromRGB(15, 15, 20),
+        Sidebar         = Color3.fromRGB(20, 20, 28),
+        Content         = Color3.fromRGB(25, 25, 35),
+        Surface         = Color3.fromRGB(35, 35, 48),
+        SurfaceHover    = Color3.fromRGB(45, 45, 60),
+        
+        Primary         = Color3.fromRGB(88, 101, 242), -- Blurple
         PrimaryHover    = Color3.fromRGB(108, 121, 255),
-        PrimaryPressed  = Color3.fromRGB(68, 81, 222),
-        Success         = Color3.fromRGB(59, 165, 93),
-        SuccessHover    = Color3.fromRGB(79, 185, 113),
-        Warning         = Color3.fromRGB(250, 168, 26),
-        Error           = Color3.fromRGB(237, 66, 69),
-        TextPrimary     = Color3.fromRGB(235, 235, 245),
-        TextSecondary   = Color3.fromRGB(155, 155, 175),
-        TextMuted       = Color3.fromRGB(100, 100, 120),
+        Secondary       = Color3.fromRGB(40, 40, 50),
+        
+        Accent1         = Color3.fromRGB(255, 60, 140), -- Pink
+        Accent2         = Color3.fromRGB(60, 220, 180), -- Cyan
+        
+        TextPrimary     = Color3.fromRGB(240, 240, 240),
+        TextSecondary   = Color3.fromRGB(160, 160, 170),
+        TextMuted       = Color3.fromRGB(100, 100, 110),
+        
         Border          = Color3.fromRGB(50, 50, 65),
-        ProgressBg      = Color3.fromRGB(35, 35, 48),
-        ProgressFill    = Color3.fromRGB(88, 101, 242),
-        Accent1         = Color3.fromRGB(235, 69, 158),  -- Pink accent
-        Accent2         = Color3.fromRGB(69, 235, 214),  -- Cyan accent
+        Separator       = Color3.fromRGB(40, 40, 50),
+        
+        Success         = Color3.fromRGB(60, 200, 100),
+        Warning         = Color3.fromRGB(250, 170, 30),
+        Error           = Color3.fromRGB(240, 70, 70),
+        
         Shadow          = Color3.fromRGB(0, 0, 0),
     }
     
@@ -2864,10 +3102,10 @@ function UIBuilder.Create()
     -- ================================
     local shadowFrame = Instance.new("Frame")
     shadowFrame.Name = "Shadow"
-    shadowFrame.Size = UDim2.new(0, 474, 0, 504)
-    shadowFrame.Position = UDim2.new(0.5, -237, 0.5, -252)
-    shadowFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-    shadowFrame.BackgroundTransparency = 0.6
+    shadowFrame.Size = UDim2.new(0, 654, 0, 534)
+    shadowFrame.Position = UDim2.new(0.5, -327, 0.5, -267) -- Centered for 640x520 + 7px shadow
+    shadowFrame.BackgroundColor3 = Theme.Shadow
+    shadowFrame.BackgroundTransparency = 0.5
     shadowFrame.BorderSizePixel = 0
     shadowFrame.Parent = screenGui
     shadowFrame.ZIndex = 1
@@ -2881,8 +3119,8 @@ function UIBuilder.Create()
     -- ================================
     local mainFrame = Instance.new("Frame")
     mainFrame.Name = "MainFrame"
-    mainFrame.Size = UDim2.new(0, 460, 0, 490)
-    mainFrame.Position = UDim2.new(0.5, -230, 0.5, -245)
+    mainFrame.Size = UDim2.new(0, 640, 0, 520)
+    mainFrame.Position = UDim2.new(0.5, -320, 0.5, -260)
     mainFrame.BackgroundColor3 = Theme.Background
     mainFrame.BorderSizePixel = 0
     mainFrame.ClipsDescendants = true
@@ -2929,171 +3167,385 @@ function UIBuilder.Create()
     -- ================================
     -- Title Bar
     -- ================================
-    local titleBar = Instance.new("Frame")
-    titleBar.Name = "TitleBar"
-    titleBar.Size = UDim2.new(1, 0, 0, 52)
-    titleBar.Position = UDim2.new(0, 0, 0, 0)
-    titleBar.BackgroundColor3 = Theme.Surface
-    titleBar.BorderSizePixel = 0
-    titleBar.ZIndex = 3
-    titleBar.Parent = mainFrame
+    -- ================================
+    -- Sidebar (Left)
+    -- ================================
+    local sidebar = Instance.new("Frame")
+    sidebar.Name = "Sidebar"
+    sidebar.Size = UDim2.new(0, 160, 1, 0)
+    sidebar.Position = UDim2.new(0, 0, 0, 0)
+    sidebar.BackgroundColor3 = Theme.Sidebar
+    sidebar.BorderSizePixel = 0
+    sidebar.Parent = mainFrame
+    sidebar.ZIndex = 3
     
-    -- Gradient on title bar
-    local titleGradient = Instance.new("UIGradient")
-    titleGradient.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Theme.Surface),
-        ColorSequenceKeypoint.new(1, Theme.SurfaceLight)
-    })
-    titleGradient.Rotation = 90
-    titleGradient.Parent = titleBar
+    local sidebarBorder = Instance.new("Frame")
+    sidebarBorder.Size = UDim2.new(0, 1, 1, 0)
+    sidebarBorder.Position = UDim2.new(1, -1, 0, 0)
+    sidebarBorder.BackgroundColor3 = Theme.Separator
+    sidebarBorder.BorderSizePixel = 0
+    sidebarBorder.Parent = sidebar
+    sidebarBorder.ZIndex = 4
     
-    -- Title bar bottom border
-    local titleBorder = Instance.new("Frame")
-    titleBorder.Name = "Border"
-    titleBorder.Size = UDim2.new(1, 0, 0, 1)
-    titleBorder.Position = UDim2.new(0, 0, 1, -1)
-    titleBorder.BackgroundColor3 = Theme.Border
-    titleBorder.BorderSizePixel = 0
-    titleBorder.ZIndex = 4
-    titleBorder.Parent = titleBar
+    -- Logo Area
+    local logoArea = Instance.new("Frame")
+    logoArea.Size = UDim2.new(1, 0, 0, 60)
+    logoArea.BackgroundTransparency = 1
+    logoArea.Parent = sidebar
+    logoArea.ZIndex = 4
     
-    -- Logo icon (styled text)
     local logoIcon = Instance.new("TextLabel")
-    logoIcon.Name = "LogoIcon"
     logoIcon.Size = UDim2.new(0, 32, 0, 32)
-    logoIcon.Position = UDim2.new(0, 14, 0.5, -16)
+    logoIcon.Position = UDim2.new(0, 16, 0.5, -16)
     logoIcon.BackgroundColor3 = Theme.Primary
     logoIcon.BackgroundTransparency = 0
     logoIcon.Text = "B"
     logoIcon.TextColor3 = Color3.fromRGB(255, 255, 255)
-    logoIcon.TextSize = 18
-    logoIcon.Font = Enum.Font.GothamBold
-    logoIcon.ZIndex = 4
-    logoIcon.Parent = titleBar
+    logoIcon.TextSize = 20
+    logoIcon.Font = Enum.Font.FredokaOne
+    logoIcon.Parent = logoArea
+    logoIcon.ZIndex = 5
     
     local logoCorner = Instance.new("UICorner")
-    logoCorner.CornerRadius = UDim.new(0, 8)
+    logoCorner.CornerRadius = UDim.new(0, 10)
     logoCorner.Parent = logoIcon
     
-    -- Title text
-    local titleLabel = Instance.new("TextLabel")
-    titleLabel.Name = "Title"
-    titleLabel.Size = UDim2.new(0, 250, 0, 20)
-    titleLabel.Position = UDim2.new(0, 54, 0, 8)
-    titleLabel.BackgroundTransparency = 1
-    titleLabel.Text = "BaoSaveInstance"
-    titleLabel.TextColor3 = Theme.TextPrimary
-    titleLabel.TextSize = 16
-    titleLabel.Font = Enum.Font.GothamBold
-    titleLabel.TextXAlignment = Enum.TextXAlignment.Left
-    titleLabel.ZIndex = 4
-    titleLabel.Parent = titleBar
+    local logoTitle = Instance.new("TextLabel")
+    logoTitle.Size = UDim2.new(0, 100, 0, 20)
+    logoTitle.Position = UDim2.new(0, 58, 0.5, -10)
+    logoTitle.BackgroundTransparency = 1
+    logoTitle.Text = "BaoSave"
+    logoTitle.TextColor3 = Theme.TextPrimary
+    logoTitle.TextSize = 16
+    logoTitle.Font = Enum.Font.GothamBold
+    logoTitle.TextXAlignment = Enum.TextXAlignment.Left
+    logoTitle.Parent = logoArea
+    logoTitle.ZIndex = 5
     
-    -- Subtitle
-    local subtitleLabel = Instance.new("TextLabel")
-    subtitleLabel.Name = "Subtitle"
-    subtitleLabel.Size = UDim2.new(0, 250, 0, 14)
-    subtitleLabel.Position = UDim2.new(0, 54, 0, 29)
-    subtitleLabel.BackgroundTransparency = 1
-    subtitleLabel.Text = "V2 Official  |  " .. BaoSaveInstance._capabilities.ExecutorName .. (BaoSaveInstance._capabilities.IsStudio and " (Studio)" or "")
-    subtitleLabel.TextColor3 = Theme.TextMuted
-    subtitleLabel.TextSize = 11
-    subtitleLabel.Font = Enum.Font.Gotham
-    subtitleLabel.TextXAlignment = Enum.TextXAlignment.Left
-    subtitleLabel.ZIndex = 4
-    subtitleLabel.Parent = titleBar
+    -- Navigation Container
+    local navContainer = Instance.new("Frame")
+    navContainer.Size = UDim2.new(1, 0, 1, -120) -- Reserve space for logo & bottom info
+    navContainer.Position = UDim2.new(0, 0, 0, 70)
+    navContainer.BackgroundTransparency = 1
+    navContainer.Parent = sidebar
+    navContainer.ZIndex = 4
     
-    -- Close button
+    local navList = Instance.new("UIListLayout")
+    navList.SortOrder = Enum.SortOrder.LayoutOrder
+    navList.Padding = UDim.new(0, 4)
+    navList.Parent = navContainer
+    
+    -- Active Tab Indicator
+    local activeIndicator = Instance.new("Frame")
+    activeIndicator.Name = "ActiveIndicator"
+    activeIndicator.Size = UDim2.new(0, 3, 0, 24)
+    activeIndicator.AnchorPoint = Vector2.new(0, 0.5)
+    activeIndicator.BackgroundColor3 = Theme.Accent1
+    activeIndicator.BorderSizePixel = 0
+    activeIndicator.Parent = navContainer
+    activeIndicator.ZIndex = 6
+    activeIndicator.Visible = false
+    
+    local navButtons = {}
+    local panels = {}
+    local currentTab = 1
+    
+    local function createNavBtn(id, text, icon, layoutOrder)
+        local btn = Instance.new("TextButton")
+        btn.Name = "Nav_" .. id
+        btn.Size = UDim2.new(1, -24, 0, 40)
+        btn.Position = UDim2.new(0, 12, 0, 0) -- ListLayout handles Y
+        btn.BackgroundColor3 = Theme.Surface
+        btn.BackgroundTransparency = 1
+        btn.Text = ""
+        btn.AutoButtonColor = false
+        btn.LayoutOrder = layoutOrder
+        btn.Parent = navContainer
+        btn.ZIndex = 5
+        
+        local ico = Instance.new("TextLabel")
+        ico.Size = UDim2.new(0, 24, 1, 0)
+        ico.Position = UDim2.new(0, 16, 0, 0)
+        ico.BackgroundTransparency = 1
+        ico.Text = icon
+        ico.TextColor3 = Theme.TextSecondary
+        ico.TextSize = 18
+        ico.Font = Enum.Font.Gotham
+        ico.Parent = btn
+        ico.ZIndex = 6
+        
+        local lbl = Instance.new("TextLabel")
+        lbl.Size = UDim2.new(1, -50, 1, 0)
+        lbl.Position = UDim2.new(0, 50, 0, 0)
+        lbl.BackgroundTransparency = 1
+        lbl.Text = text
+        lbl.TextColor3 = Theme.TextSecondary
+        lbl.TextSize = 14
+        lbl.Font = Enum.Font.GothamSemibold
+        lbl.TextXAlignment = Enum.TextXAlignment.Left
+        lbl.Parent = btn
+        lbl.ZIndex = 6
+        
+        local corner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(0, 8)
+        corner.Parent = btn
+        
+        btn.MouseEnter:Connect(function()
+            if currentTab ~= layoutOrder then
+                TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundTransparency = 0.9}):Play()
+                TweenService:Create(lbl, TweenInfo.new(0.2), {TextColor3 = Theme.TextPrimary}):Play()
+                TweenService:Create(ico, TweenInfo.new(0.2), {TextColor3 = Theme.TextPrimary}):Play()
+            end
+        end)
+        
+        btn.MouseLeave:Connect(function()
+            if currentTab ~= layoutOrder then
+                TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundTransparency = 1}):Play()
+                TweenService:Create(lbl, TweenInfo.new(0.2), {TextColor3 = Theme.TextSecondary}):Play()
+                TweenService:Create(ico, TweenInfo.new(0.2), {TextColor3 = Theme.TextSecondary}):Play()
+            end
+        end)
+        
+        table.insert(navButtons, {Button = btn, Label = lbl, Icon = ico, Id = layoutOrder})
+        return btn
+    end
+    
+    local btnHome = createNavBtn("Home", "Home", "🏠", 1)
+    local btnExplorer = createNavBtn("Explorer", "Explorer", "📁", 2)
+    local btnScript = createNavBtn("Script", "Script", "📜", 3)
+    local btnModel = createNavBtn("3D View", "3D View", "🎨", 4)
+    local btnSettings = createNavBtn("Settings", "Settings", "⚙️", 5)
+    
+    -- Executor Info (Bottom Left)
+    local execInfo = Instance.new("TextLabel")
+    execInfo.Size = UDim2.new(1, -20, 0, 40)
+    execInfo.Position = UDim2.new(0, 10, 1, -45)
+    execInfo.BackgroundTransparency = 1
+    execInfo.Text = (BaoSaveInstance._capabilities.ExecutorName or "Unknown") .. "\n" .. (BaoSaveInstance._capabilities.IsStudio and "Studio Mode" or "Executor Mode")
+    execInfo.TextColor3 = Theme.TextMuted
+    execInfo.TextSize = 10
+    execInfo.Font = Enum.Font.Code
+    execInfo.TextXAlignment = Enum.TextXAlignment.Left
+    execInfo.Parent = sidebar
+    execInfo.ZIndex = 4
+    
+    -- ================================
+    -- Content Container (Right)
+    -- ================================
+    local contentContainer = Instance.new("Frame")
+    contentContainer.Name = "ContentContainer"
+    contentContainer.Size = UDim2.new(1, -160, 1, 0)
+    contentContainer.Position = UDim2.new(0, 160, 0, 0)
+    contentContainer.BackgroundColor3 = Theme.Background
+    contentContainer.BackgroundTransparency = 1
+    contentContainer.BorderSizePixel = 0
+    contentContainer.Parent = mainFrame
+    contentContainer.ZIndex = 3
+    
+    -- Top Bar (Drag Area + Controls)
+    local topBar = Instance.new("Frame")
+    topBar.Name = "TopBar"
+    topBar.Size = UDim2.new(1, 0, 0, 40)
+    topBar.Position = UDim2.new(0, 0, 0, 0)
+    topBar.BackgroundTransparency = 1
+    topBar.Parent = contentContainer
+    topBar.ZIndex = 5
+    
+    -- Window Controls
     local closeBtn = Instance.new("TextButton")
-    closeBtn.Name = "CloseBtn"
-    closeBtn.Size = UDim2.new(0, 32, 0, 32)
-    closeBtn.Position = UDim2.new(1, -42, 0.5, -16)
-    closeBtn.BackgroundColor3 = Theme.Error
-    closeBtn.BackgroundTransparency = 0.8
+    closeBtn.Name = "Close"
+    closeBtn.Size = UDim2.new(0, 40, 0, 40)
+    closeBtn.Position = UDim2.new(1, -40, 0, 0)
+    closeBtn.BackgroundTransparency = 1
     closeBtn.Text = "✕"
     closeBtn.TextColor3 = Theme.TextSecondary
-    closeBtn.TextSize = 14
-    closeBtn.Font = Enum.Font.GothamBold
-    closeBtn.ZIndex = 4
-    closeBtn.Parent = titleBar
-    closeBtn.BorderSizePixel = 0
+    closeBtn.TextSize = 16
+    closeBtn.Font = Enum.Font.GothamMedium
+    closeBtn.Parent = topBar
+    closeBtn.ZIndex = 6
     
-    local closeCorner = Instance.new("UICorner")
-    closeCorner.CornerRadius = UDim.new(0, 8)
-    closeCorner.Parent = closeBtn
-    
-    -- Minimize button
     local minimizeBtn = Instance.new("TextButton")
-    minimizeBtn.Name = "MinimizeBtn"
-    minimizeBtn.Size = UDim2.new(0, 32, 0, 32)
-    minimizeBtn.Position = UDim2.new(1, -78, 0.5, -16)
-    minimizeBtn.BackgroundColor3 = Theme.Warning
-    minimizeBtn.BackgroundTransparency = 0.8
+    minimizeBtn.Name = "Minimize"
+    minimizeBtn.Size = UDim2.new(0, 40, 0, 40)
+    minimizeBtn.Position = UDim2.new(1, -80, 0, 0)
+    minimizeBtn.BackgroundTransparency = 1
     minimizeBtn.Text = "─"
     minimizeBtn.TextColor3 = Theme.TextSecondary
-    minimizeBtn.TextSize = 14
-    minimizeBtn.Font = Enum.Font.GothamBold
-    minimizeBtn.ZIndex = 4
-    minimizeBtn.Parent = titleBar
-    minimizeBtn.BorderSizePixel = 0
+    minimizeBtn.TextSize = 16
+    minimizeBtn.Font = Enum.Font.GothamMedium
+    minimizeBtn.Parent = topBar
+    minimizeBtn.ZIndex = 6
     
-    local minimizeCorner = Instance.new("UICorner")
-    minimizeCorner.CornerRadius = UDim.new(0, 8)
-    minimizeCorner.Parent = minimizeBtn
+    -- Separator
+    local topSeparator = Instance.new("Frame")
+    topSeparator.Size = UDim2.new(1, -40, 0, 1)
+    topSeparator.Position = UDim2.new(0, 20, 1, 0)
+    topSeparator.BackgroundColor3 = Theme.Separator
+    topSeparator.BorderSizePixel = 0
+    topSeparator.Parent = topBar
+    topSeparator.ZIndex = 4
     
-    -- Settings button
-    local settingsBtn = Instance.new("TextButton")
-    settingsBtn.Name = "SettingsBtn"
-    settingsBtn.Size = UDim2.new(0, 32, 0, 32)
-    settingsBtn.Position = UDim2.new(1, -114, 0.5, -16)
-    settingsBtn.BackgroundColor3 = Theme.SurfaceLight or Color3.fromRGB(40, 40, 55)
-    settingsBtn.BackgroundTransparency = 0.8
-    settingsBtn.Text = "⚙️"
-    settingsBtn.TextColor3 = Theme.TextSecondary
-    settingsBtn.TextSize = 14
-    settingsBtn.Font = Enum.Font.GothamBold
-    settingsBtn.ZIndex = 4
-    settingsBtn.Parent = titleBar
-    settingsBtn.BorderSizePixel = 0
+    -- Panel Container
+    local panelContainer = Instance.new("Frame")
+    panelContainer.Name = "PanelContainer"
+    panelContainer.Size = UDim2.new(1, 0, 1, -70) -- -40 top, -30 bottom
+    panelContainer.Position = UDim2.new(0, 0, 0, 40)
+    panelContainer.BackgroundTransparency = 1
+    panelContainer.Parent = contentContainer
+    panelContainer.ZIndex = 3
     
-    local settingsCorner = Instance.new("UICorner")
-    settingsCorner.CornerRadius = UDim.new(0, 8)
-    settingsCorner.Parent = settingsBtn
+    -- Status Bar (Bottom)
+    local statusBarMain = Instance.new("Frame")
+    statusBarMain.Name = "StatusBar"
+    statusBarMain.Size = UDim2.new(1, 0, 0, 30)
+    statusBarMain.Position = UDim2.new(0, 0, 1, -30)
+    statusBarMain.BackgroundColor3 = Theme.Surface
+    statusBarMain.BorderSizePixel = 0
+    statusBarMain.Parent = contentContainer
+    statusBarMain.ZIndex = 4
     
-    -- Drag from title bar
-    titleBar.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or
-           input.UserInputType == Enum.UserInputType.Touch then
+    local statusText = Instance.new("TextLabel")
+    statusText.Size = UDim2.new(1, -120, 1, 0)
+    statusText.Position = UDim2.new(0, 15, 0, 0)
+    statusText.BackgroundTransparency = 1
+    statusText.Text = "Idle"
+    statusText.TextColor3 = Theme.TextMuted
+    statusText.TextSize = 11
+    statusText.Font = Enum.Font.Gotham
+    statusText.TextXAlignment = Enum.TextXAlignment.Left
+    statusText.Parent = statusBarMain
+    statusText.ZIndex = 5
+    
+    local progressBar = Instance.new("Frame")
+    progressBar.Size = UDim2.new(0, 100, 0, 4)
+    progressBar.Position = UDim2.new(1, -115, 0.5, -2)
+    progressBar.BackgroundColor3 = Theme.ProgressBg
+    progressBar.BorderSizePixel = 0
+    progressBar.Parent = statusBarMain
+    progressBar.ZIndex = 5
+    
+    local progressBarCorner = Instance.new("UICorner")
+    progressBarCorner.CornerRadius = UDim.new(1, 0)
+    progressBarCorner.Parent = progressBar
+    
+    local progressFillMain = Instance.new("Frame")
+    progressFillMain.Size = UDim2.new(0, 0, 1, 0)
+    progressFillMain.BackgroundColor3 = Theme.ProgressFill
+    progressFillMain.BorderSizePixel = 0
+    progressFillMain.Parent = progressBar
+    progressFillMain.ZIndex = 5
+    
+    local progressFillCorner = Instance.new("UICorner")
+    progressFillCorner.CornerRadius = UDim.new(1, 0)
+    progressFillCorner.Parent = progressFillMain
+    
+    -- Panels
+    local mainPanel = Instance.new("Frame")
+    mainPanel.Name = "HomePanel"
+    mainPanel.Size = UDim2.new(1, 0, 1, 0)
+    mainPanel.BackgroundTransparency = 1
+    mainPanel.Visible = true
+    mainPanel.Parent = panelContainer
+    panels[1] = mainPanel
+    
+    local explorerPanel = Instance.new("Frame")
+    explorerPanel.Name = "ExplorerPanel"
+    explorerPanel.Size = UDim2.new(1, 0, 1, 0)
+    explorerPanel.BackgroundTransparency = 1
+    explorerPanel.Visible = false
+    explorerPanel.Parent = panelContainer
+    panels[2] = explorerPanel
+    
+    local scriptPanel = Instance.new("Frame")
+    scriptPanel.Name = "ScriptPanel"
+    scriptPanel.Size = UDim2.new(1, 0, 1, 0)
+    scriptPanel.BackgroundTransparency = 1
+    scriptPanel.Visible = false
+    scriptPanel.Parent = panelContainer
+    panels[3] = scriptPanel
+    
+    local model3DPanel = Instance.new("Frame")
+    model3DPanel.Name = "Model3DPanel"
+    model3DPanel.Size = UDim2.new(1, 0, 1, 0)
+    model3DPanel.BackgroundTransparency = 1
+    model3DPanel.Visible = false
+    model3DPanel.Parent = panelContainer
+    panels[4] = model3DPanel
+    
+    local settingsPanel = Instance.new("Frame")
+    settingsPanel.Name = "SettingsPanel"
+    settingsPanel.Size = UDim2.new(1, 0, 1, 0)
+    settingsPanel.BackgroundTransparency = 1
+    settingsPanel.Visible = false
+    settingsPanel.Parent = panelContainer
+    panels[5] = settingsPanel
+    
+    -- Drag Logic
+    topBar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
             dragging = true
             dragStart = input.Position
             startPos = mainFrame.Position
         end
     end)
     
-    titleBar.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or
-           input.UserInputType == Enum.UserInputType.Touch then
+    topBar.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
             dragging = false
         end
     end)
     
     UserInputService.InputChanged:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseMovement or
-           input.UserInputType == Enum.UserInputType.Touch then
+        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
             updateDrag(input)
         end
     end)
     
-    -- ================================
-    -- Content Area
-    -- ================================
-    local contentFrame = Instance.new("Frame")
-    contentFrame.Name = "Content"
-    contentFrame.Size = UDim2.new(1, -32, 1, -52 - 16)
-    contentFrame.Position = UDim2.new(0, 16, 0, 60)
-    contentFrame.BackgroundTransparency = 1
-    contentFrame.ZIndex = 3
-    contentFrame.Parent = mainFrame
+    -- Tab Switching
+    local function switchTab(id)
+        currentTab = id
+        for i, p in ipairs(panels) do p.Visible = (i == id) end
+        
+        -- Update buttons
+        for i, b in ipairs(navButtons) do
+            local isSel = (b.Id == id)
+            if isSel then
+                b.Label.TextColor3 = Theme.TextPrimary
+                b.Icon.TextColor3 = Theme.TextPrimary
+                b.Button.BackgroundTransparency = 0.9
+                -- Move indicator
+                activeIndicator.Visible = true
+                activeIndicator.Parent = b.Button
+                activeIndicator.Position = UDim2.new(0, 0, 0.5, 0)
+            else
+                b.Label.TextColor3 = Theme.TextSecondary
+                b.Icon.TextColor3 = Theme.TextSecondary
+                b.Button.BackgroundTransparency = 1
+            end
+        end
+    end
+    
+    for _, btnData in ipairs(navButtons) do
+        btnData.Button.MouseButton1Click:Connect(function() switchTab(btnData.Id) end)
+    end
+    switchTab(1)
+    
+    -- Gradient on title bar
+
+    
+    -- Title bar bottom border
+
+    
+    -- Logo icon (styled text)
+
+    
+    -- Title text
+
+    
+    -- Subtitle
+
+    
+
     
     -- ================================
     -- Section: Game Info
@@ -3105,7 +3557,7 @@ function UIBuilder.Create()
     infoFrame.BackgroundColor3 = Theme.Surface
     infoFrame.BorderSizePixel = 0
     infoFrame.ZIndex = 3
-    infoFrame.Parent = contentFrame
+    infoFrame.Parent = mainPanel
     
     local infoCorner = Instance.new("UICorner")
     infoCorner.CornerRadius = UDim.new(0, 8)
@@ -3154,8 +3606,8 @@ function UIBuilder.Create()
     settingsFrame.BackgroundColor3 = Theme.Surface
     settingsFrame.BorderSizePixel = 0
     settingsFrame.ZIndex = 10
-    settingsFrame.Visible = false
-    settingsFrame.Parent = contentFrame
+    settingsFrame.Visible = true
+    settingsFrame.Parent = panels[5]
 
     local settingsTitle = Instance.new("TextLabel")
     settingsTitle.Size = UDim2.new(1, 0, 0, 30)
@@ -3364,30 +3816,30 @@ function UIBuilder.Create()
     sectionLabel1.Font = Enum.Font.GothamBold
     sectionLabel1.TextXAlignment = Enum.TextXAlignment.Left
     sectionLabel1.ZIndex = 3
-    sectionLabel1.Parent = contentFrame
+    sectionLabel1.Parent = mainPanel
     
     -- Button 0: Stream & Decompile (New)
     local btnStreamDecompile = createButton(
         "BtnStreamDecompile", "Stream & Decompile", "🚀",
-        Theme.Accent1, Color3.fromRGB(245, 79, 168), 82, contentFrame
+        Theme.Accent1, Color3.fromRGB(245, 79, 168), 82, mainPanel
     )
 
     -- Button 1: Decompile Full Game
     local btnFullGame = createButton(
         "BtnFullGame", "Decompile Full Game", "🎮",
-        Theme.Primary, Theme.PrimaryHover, 132, contentFrame
+        Theme.Primary, Theme.PrimaryHover, 132, mainPanel
     )
     
     -- Button 2: Decompile Full Model
     local btnFullModel = createButton(
         "BtnFullModel", "Decompile Full Model", "🏗️",
-        Color3.fromRGB(60, 75, 180), Color3.fromRGB(80, 95, 200), 182, contentFrame
+        Color3.fromRGB(60, 75, 180), Color3.fromRGB(80, 95, 200), 182, mainPanel
     )
     
     -- Button 3: Decompile Terrain
     local btnTerrain = createButton(
         "BtnTerrain", "Decompile Terrain", "🌍",
-        Color3.fromRGB(45, 130, 90), Color3.fromRGB(65, 150, 110), 232, contentFrame
+        Color3.fromRGB(45, 130, 90), Color3.fromRGB(65, 150, 110), 232, mainPanel
     )
     
     -- ================================
@@ -3404,190 +3856,65 @@ function UIBuilder.Create()
     sectionLabel2.Font = Enum.Font.GothamBold
     sectionLabel2.TextXAlignment = Enum.TextXAlignment.Left
     sectionLabel2.ZIndex = 3
-    sectionLabel2.Parent = contentFrame
+    sectionLabel2.Parent = mainPanel
     
     -- Button 4: Export RBXL
     local btnExport = createButton(
         "BtnExport", "Export (.rbxl)", "💾",
-        Color3.fromRGB(170, 120, 30), Color3.fromRGB(190, 140, 50), 307, contentFrame
+        Color3.fromRGB(170, 120, 30), Color3.fromRGB(190, 140, 50), 307, mainPanel
     )
     
     -- ================================
     -- Progress Section
     -- ================================
-    local sectionLabel3 = Instance.new("TextLabel")
-    sectionLabel3.Name = "SectionLabel3"
-    sectionLabel3.Size = UDim2.new(1, 0, 0, 18)
-    sectionLabel3.Position = UDim2.new(0, 0, 0, 365)
-    sectionLabel3.BackgroundTransparency = 1
-    sectionLabel3.Text = "STATUS"
-    sectionLabel3.TextColor3 = Theme.TextMuted
-    sectionLabel3.TextSize = 10
-    sectionLabel3.Font = Enum.Font.GothamBold
-    sectionLabel3.TextXAlignment = Enum.TextXAlignment.Left
-    sectionLabel3.ZIndex = 3
-    sectionLabel3.Parent = contentFrame
+    -- ================================
+    -- Hook Backend to New Status Bar
+    -- ================================
     
-    -- Status container
-    local statusFrame = Instance.new("Frame")
-    statusFrame.Name = "StatusFrame"
-    statusFrame.Size = UDim2.new(1, 0, 0, 80)
-    statusFrame.Position = UDim2.new(0, 0, 0, 387)
-    statusFrame.BackgroundColor3 = Theme.Surface
-    statusFrame.BorderSizePixel = 0
-    statusFrame.ZIndex = 3
-    statusFrame.Parent = contentFrame
-    
-    local statusCorner = Instance.new("UICorner")
-    statusCorner.CornerRadius = UDim.new(0, 8)
-    statusCorner.Parent = statusFrame
-    
-    local statusStroke = Instance.new("UIStroke")
-    statusStroke.Color = Theme.Border
-    statusStroke.Thickness = 1
-    statusStroke.Transparency = 0.5
-    statusStroke.Parent = statusFrame
-    
-    -- Status text
-    local statusLabel = Instance.new("TextLabel")
-    statusLabel.Name = "StatusLabel"
-    statusLabel.Size = UDim2.new(0.5, -10, 0, 20)
-    statusLabel.Position = UDim2.new(0, 12, 0, 10)
-    statusLabel.BackgroundTransparency = 1
-    statusLabel.Text = "⏳ Idle"
-    statusLabel.TextColor3 = Theme.TextSecondary
-    statusLabel.TextSize = 12
-    statusLabel.Font = Enum.Font.GothamSemibold
-    statusLabel.TextXAlignment = Enum.TextXAlignment.Left
-    statusLabel.ZIndex = 4
-    statusLabel.Parent = statusFrame
-    
-    -- Percentage text
+    -- Add Percentage Label to Status Bar
     local percentLabel = Instance.new("TextLabel")
     percentLabel.Name = "PercentLabel"
-    percentLabel.Size = UDim2.new(0.5, -10, 0, 20)
-    percentLabel.Position = UDim2.new(0.5, 0, 0, 10)
+    percentLabel.Size = UDim2.new(0, 40, 1, 0)
+    percentLabel.Position = UDim2.new(1, -160, 0, 0) -- Left of progress bar
     percentLabel.BackgroundTransparency = 1
     percentLabel.Text = "0%"
-    percentLabel.TextColor3 = Theme.Primary
-    percentLabel.TextSize = 14
+    percentLabel.TextColor3 = Theme.PrimaryHover
+    percentLabel.TextSize = 11
     percentLabel.Font = Enum.Font.GothamBold
     percentLabel.TextXAlignment = Enum.TextXAlignment.Right
-    percentLabel.ZIndex = 4
-    percentLabel.Parent = statusFrame
+    percentLabel.Parent = statusBarMain
+    percentLabel.ZIndex = 5
     
-    -- Progress bar background
-    local progressBg = Instance.new("Frame")
-    progressBg.Name = "ProgressBg"
-    progressBg.Size = UDim2.new(1, -24, 0, 12)
-    progressBg.Position = UDim2.new(0, 12, 0, 38)
-    progressBg.BackgroundColor3 = Theme.ProgressBg
-    progressBg.BorderSizePixel = 0
-    progressBg.ZIndex = 4
-    progressBg.Parent = statusFrame
-    
-    local progressBgCorner = Instance.new("UICorner")
-    progressBgCorner.CornerRadius = UDim.new(0, 6)
-    progressBgCorner.Parent = progressBg
-    
-    -- Progress bar fill
-    local progressFill = Instance.new("Frame")
-    progressFill.Name = "ProgressFill"
-    progressFill.Size = UDim2.new(0, 0, 1, 0)
-    progressFill.Position = UDim2.new(0, 0, 0, 0)
-    progressFill.BackgroundColor3 = Theme.ProgressFill
-    progressFill.BorderSizePixel = 0
-    progressFill.ZIndex = 5
-    progressFill.Parent = progressBg
-    
-    local progressFillCorner = Instance.new("UICorner")
-    progressFillCorner.CornerRadius = UDim.new(0, 6)
-    progressFillCorner.Parent = progressFill
-    
-    -- Progress fill gradient
-    local progressGradient = Instance.new("UIGradient")
-    progressGradient.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, Theme.Primary),
-        ColorSequenceKeypoint.new(0.5, Theme.Accent2),
-        ColorSequenceKeypoint.new(1, Theme.Primary)
-    })
-    progressGradient.Rotation = 0
-    progressGradient.Parent = progressFill
-    
-    -- Progress glow (animated shine)
-    local progressShine = Instance.new("Frame")
-    progressShine.Name = "Shine"
-    progressShine.Size = UDim2.new(0.3, 0, 1, 0)
-    progressShine.Position = UDim2.new(-0.3, 0, 0, 0)
-    progressShine.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-    progressShine.BackgroundTransparency = 0.7
-    progressShine.BorderSizePixel = 0
-    progressShine.ZIndex = 6
-    progressShine.Parent = progressFill
-    progressShine.ClipsDescendants = true
-    
-    local shineCorner = Instance.new("UICorner")
-    shineCorner.CornerRadius = UDim.new(0, 6)
-    shineCorner.Parent = progressShine
-    
-    -- Mode indicator text
-    local modeLabel = Instance.new("TextLabel")
-    modeLabel.Name = "ModeLabel"
-    modeLabel.Size = UDim2.new(1, -24, 0, 16)
-    modeLabel.Position = UDim2.new(0, 12, 0, 56)
-    modeLabel.BackgroundTransparency = 1
-    modeLabel.Text = ""
-    modeLabel.TextColor3 = Theme.TextMuted
-    modeLabel.TextSize = 10
-    modeLabel.Font = Enum.Font.Gotham
-    modeLabel.TextXAlignment = Enum.TextXAlignment.Left
-    modeLabel.ZIndex = 4
-    modeLabel.Parent = statusFrame
-    
-    -- ================================
-    -- V2: Elapsed Timer Label
-    -- ================================
-    local elapsedLabel = Instance.new("TextLabel")
-    elapsedLabel.Name = "ElapsedLabel"
-    elapsedLabel.Size = UDim2.new(0.5, -10, 0, 16)
-    elapsedLabel.Position = UDim2.new(0.5, 0, 0, 56)
-    elapsedLabel.BackgroundTransparency = 1
-    elapsedLabel.Text = ""
-    elapsedLabel.TextColor3 = Theme.Accent2
-    elapsedLabel.TextSize = 10
-    elapsedLabel.Font = Enum.Font.GothamSemibold
-    elapsedLabel.TextXAlignment = Enum.TextXAlignment.Right
-    elapsedLabel.ZIndex = 4
-    elapsedLabel.Parent = statusFrame
-    
-    -- ================================
-    -- V2: Cancel Button
-    -- ================================
-    local cancelBtn = Instance.new("TextButton")
-    cancelBtn.Name = "CancelBtn"
-    cancelBtn.Size = UDim2.new(1, 0, 0, 32)
-    cancelBtn.Position = UDim2.new(0, 0, 0, 472)
-    cancelBtn.BackgroundColor3 = Theme.Error
-    cancelBtn.BackgroundTransparency = 0.3
-    cancelBtn.BorderSizePixel = 0
-    cancelBtn.Text = "⛔  Cancel Operation"
-    cancelBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    cancelBtn.TextSize = 12
-    cancelBtn.Font = Enum.Font.GothamSemibold
-    cancelBtn.ZIndex = 3
-    cancelBtn.Visible = false
-    cancelBtn.Parent = contentFrame
+    -- Add Cancel Button to Status Bar
+    local cancelBtnSmall = Instance.new("TextButton")
+    cancelBtnSmall.Name = "CancelSmall"
+    cancelBtnSmall.Size = UDim2.new(0, 20, 0, 20)
+    cancelBtnSmall.Position = UDim2.new(1, -25, 0.5, -10) -- Right edge
+    cancelBtnSmall.BackgroundColor3 = Theme.Error
+    cancelBtnSmall.BackgroundTransparency = 0.2
+    cancelBtnSmall.Text = "✕"
+    cancelBtnSmall.TextColor3 = Theme.TextPrimary
+    cancelBtnSmall.TextSize = 10
+    cancelBtnSmall.Font = Enum.Font.GothamBold
+    cancelBtnSmall.Parent = statusBarMain
+    cancelBtnSmall.ZIndex = 6
     
     local cancelCorner = Instance.new("UICorner")
-    cancelCorner.CornerRadius = UDim.new(0, 6)
-    cancelCorner.Parent = cancelBtn
+    cancelCorner.CornerRadius = UDim.new(0, 4)
+    cancelCorner.Parent = cancelBtnSmall
     
-    cancelBtn.MouseButton1Click:Connect(function()
+    cancelBtnSmall.MouseButton1Click:Connect(function()
         BaoSaveInstance._cancelRequested = true
-        cancelBtn.Text = "⏳  Cancelling..."
-        cancelBtn.Active = false
         Utility.Log("WARN", "User requested cancel")
     end)
+    
+    -- Link variables
+    BaoSaveInstance._statusLabel = statusText
+    BaoSaveInstance._progressLabel = percentLabel
+    BaoSaveInstance._progressBar = progressFillMain
+
+    
+
     
     -- ================================
     -- V2: Live Log Viewer
@@ -3603,7 +3930,7 @@ function UIBuilder.Create()
     logSectionLabel.Font = Enum.Font.GothamBold
     logSectionLabel.TextXAlignment = Enum.TextXAlignment.Left
     logSectionLabel.ZIndex = 3
-    logSectionLabel.Parent = contentFrame
+    logSectionLabel.Parent = mainPanel
     
     local logFrame = Instance.new("ScrollingFrame")
     logFrame.Name = "LogViewer"
@@ -3616,7 +3943,7 @@ function UIBuilder.Create()
     logFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
     logFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
     logFrame.ZIndex = 3
-    logFrame.Parent = contentFrame
+    logFrame.Parent = mainPanel
     
     local logCorner = Instance.new("UICorner")
     logCorner.CornerRadius = UDim.new(0, 6)
@@ -3649,6 +3976,552 @@ function UIBuilder.Create()
     
     local lastLogCount = 0
     
+    -- Forward declarations for circular dependencies
+    local showScriptSource
+    local preview3DModel
+    
+    -- ================================
+    -- EXPLORER PANEL CONTENT
+    -- ================================
+    -- ================================
+    -- EXPLORER PANEL CONTENT
+    -- ================================
+    local explorerHeader = Instance.new("Frame")
+    explorerHeader.Size = UDim2.new(1, 0, 0, 36)
+    explorerHeader.BackgroundTransparency = 1
+    explorerHeader.Parent = explorerPanel
+    
+    local explorerTitle = Instance.new("TextLabel")
+    explorerTitle.Size = UDim2.new(0, 150, 1, 0)
+    explorerTitle.Position = UDim2.new(0, 0, 0, 0)
+    explorerTitle.BackgroundTransparency = 1
+    explorerTitle.Text = "📁 Game Explorer"
+    explorerTitle.TextColor3 = Theme.TextPrimary
+    explorerTitle.TextSize = 14
+    explorerTitle.Font = Enum.Font.GothamBold
+    explorerTitle.TextXAlignment = Enum.TextXAlignment.Left
+    explorerTitle.Parent = explorerHeader
+    
+    -- Search Bar
+    local searchFrame = Instance.new("Frame")
+    searchFrame.Size = UDim2.new(1, -160, 0, 26)
+    searchFrame.Position = UDim2.new(0, 160, 0.5, -13)
+    searchFrame.BackgroundColor3 = Theme.Surface
+    searchFrame.BorderSizePixel = 0
+    searchFrame.Parent = explorerHeader
+    
+    local searchCorner = Instance.new("UICorner")
+    searchCorner.CornerRadius = UDim.new(0, 6)
+    searchCorner.Parent = searchFrame
+    
+    local searchBox = Instance.new("TextBox")
+    searchBox.Size = UDim2.new(1, -10, 1, 0)
+    searchBox.Position = UDim2.new(0, 5, 0, 0)
+    searchBox.BackgroundTransparency = 1
+    searchBox.Text = ""
+    searchBox.PlaceholderText = "Search instances..."
+    searchBox.PlaceholderColor3 = Theme.TextMuted
+    searchBox.TextColor3 = Theme.TextPrimary
+    searchBox.TextSize = 12
+    searchBox.Font = Enum.Font.Gotham
+    searchBox.TextXAlignment = Enum.TextXAlignment.Left
+    searchBox.Parent = searchFrame
+    
+    local explorerScroll = Instance.new("ScrollingFrame")
+    explorerScroll.Name = "ExplorerTree"
+    explorerScroll.Size = UDim2.new(1, 0, 1, -40)
+    explorerScroll.Position = UDim2.new(0, 0, 0, 40)
+    explorerScroll.BackgroundColor3 = Color3.fromRGB(12, 12, 20)
+    explorerScroll.BorderSizePixel = 0
+    explorerScroll.ScrollBarThickness = 5
+    explorerScroll.ScrollBarImageColor3 = Theme.Primary
+    explorerScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+    explorerScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    explorerScroll.ZIndex = 3
+    explorerScroll.Parent = explorerPanel
+    
+    local explorerScrollCorner = Instance.new("UICorner")
+    explorerScrollCorner.CornerRadius = UDim.new(0, 6)
+    explorerScrollCorner.Parent = explorerScroll
+    
+    local explorerScrollStroke = Instance.new("UIStroke")
+    explorerScrollStroke.Color = Theme.Border
+    explorerScrollStroke.Thickness = 1
+    explorerScrollStroke.Transparency = 0.5
+    explorerScrollStroke.Parent = explorerScroll
+    
+    local explorerLayout = Instance.new("UIListLayout")
+    explorerLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    explorerLayout.Padding = UDim.new(0, 1)
+    explorerLayout.Parent = explorerScroll
+    
+    -- Class icons for Explorer
+    local classIcons = {
+        Folder = "📁", Script = "📝", LocalScript = "📜", ModuleScript = "📦",
+        Part = "🧱", MeshPart = "🔷", UnionOperation = "🔶", Model = "📐",
+        SpawnLocation = "🏁", Camera = "📷", Attachment = "📌",
+        PointLight = "💡", SpotLight = "🔦", SurfaceLight = "☀️",
+        Sound = "🔊", ParticleEmitter = "✨", Fire = "🔥", Smoke = "💨",
+        Decal = "🖼️", Texture = "🎨", SurfaceAppearance = "🎭",
+        Humanoid = "🧑", HumanoidRootPart = "🦴",
+        ScreenGui = "🖥️", Frame = "⬜", TextLabel = "📋", TextButton = "🔘",
+        ImageLabel = "🖼️", ImageButton = "🖱️", ScrollingFrame = "📜",
+        Terrain = "🌍", Workspace = "🌐",
+        ReplicatedStorage = "📦", ServerStorage = "🗄️", ServerScriptService = "⚙️",
+        StarterGui = "🖥️", StarterPack = "🎒", Players = "👥",
+        Lighting = "☀️", SoundService = "🔈",
+    }
+    
+    local function getClassIcon(className)
+        return classIcons[className] or "⬜"
+    end
+    
+    local expandedNodes = {}  -- Track expanded states
+    local searchTerm = ""
+    
+    local function buildExplorerRow(instance, depth, layoutOrder, isMatch)
+        local row = Instance.new("TextButton")
+        row.Size = UDim2.new(1, 0, 0, 22)
+        row.BackgroundColor3 = isMatch and Theme.Primary or Theme.Surface
+        row.BackgroundTransparency = isMatch and 0.2 or 0.6 -- Fade background
+        row.BorderSizePixel = 0
+        row.Text = ""
+        row.AutoButtonColor = false
+        row.ZIndex = 4
+        row.LayoutOrder = layoutOrder
+        row.Parent = explorerScroll
+        
+        local className = "Unknown"
+        local instName = "?"
+        local childCount = 0
+        pcall(function() className = instance.ClassName end)
+        pcall(function() instName = instance.Name end)
+        pcall(function() childCount = #instance:GetChildren() end)
+        
+        local indent = depth * 16
+        local icon = getClassIcon(className)
+        local arrow = (childCount > 0 and not isMatch) and "▶ " or "   "
+        if expandedNodes[instance] then arrow = "▼ " end
+        
+        local label = Instance.new("TextLabel")
+        label.Size = UDim2.new(1, -indent - 8, 1, 0)
+        label.Position = UDim2.new(0, indent + 4, 0, 0)
+        label.BackgroundTransparency = 1
+        label.Text = arrow .. icon .. " " .. instName .. "  (" .. className .. ")"
+        label.TextColor3 = isMatch and Color3.new(1,1,1) or Theme.TextPrimary
+        label.TextSize = 11
+        label.Font = Enum.Font.Code
+        label.TextXAlignment = Enum.TextXAlignment.Left
+        label.TextTruncate = Enum.TextTruncate.AtEnd
+        label.ZIndex = 5
+        label.Parent = row
+        
+        -- Hover effect
+        row.MouseEnter:Connect(function()
+            row.BackgroundTransparency = 0.4
+        end)
+        row.MouseLeave:Connect(function()
+            row.BackgroundTransparency = isMatch and 0.2 or 0.6
+        end)
+        
+        -- Click
+        row.MouseButton1Click:Connect(function()
+            -- View file logic
+            if instance:IsA("LuaSourceContainer") then
+                switchTab(3)
+                task.spawn(function() showScriptSource(instance) end)
+                return
+            end
+            if instance:IsA("BasePart") or instance:IsA("Model") then
+                switchTab(4)
+                task.spawn(function() preview3DModel(instance) end)
+                return
+            end
+            
+            -- Expand/Collapse
+            if childCount > 0 then
+                if expandedNodes[instance] then
+                    expandedNodes[instance] = nil
+                else
+                    expandedNodes[instance] = true
+                end
+                refreshExplorer()
+            end
+        end)
+        
+        -- Context Menu (Right Click)
+        row.MouseButton2Click:Connect(function()
+            -- TODO: Show context menu
+            Utility.Log("INFO", "Right-clicked: " .. instName)
+        end)
+        
+        return row
+    end
+    
+    local function refreshExplorer()
+        -- Clear
+        for _, c in ipairs(explorerScroll:GetChildren()) do
+            if c:IsA("TextButton") then c:Destroy() end
+        end
+        
+        local order = 0
+        
+        -- If searching, flat list of matches
+        if searchTerm and #searchTerm > 2 then
+            local matches = {}
+            local function search(parent)
+                for _, child in ipairs(parent:GetChildren()) do
+                    if not Utility.IsProtected(child) then
+                        if child.Name:lower():find(searchTerm:lower()) then
+                            table.insert(matches, child)
+                        end
+                        -- Limit search depth/count
+                        if #matches < 50 then
+                            search(child)
+                        end
+                    end
+                end
+            end
+            search(game)
+            
+            for _, m in ipairs(matches) do
+                order = order + 1
+                buildExplorerRow(m, 0, order, true)
+            end
+            return
+        end
+        
+        -- Normal Tree View
+        local function buildTree(instance, depth)
+            if depth > 10 then return end
+            order = order + 1
+            buildExplorerRow(instance, depth, order, false)
+            
+            if expandedNodes[instance] then
+                local children = instance:GetChildren()
+                table.sort(children, function(a,b) return a.Name < b.Name end)
+                for _, child in ipairs(children) do
+                    if not Utility.IsProtected(child) then
+                        buildTree(child, depth + 1)
+                    end
+                end
+            end
+        end
+        
+        pcall(function()
+            local services = game:GetChildren()
+            table.sort(services, function(a,b) return a.Name < b.Name end)
+            for _, svc in ipairs(services) do
+                buildTree(svc, 0)
+            end
+        end)
+    end
+    
+    searchBox:GetPropertyChangedSignal("Text"):Connect(function()
+        searchTerm = searchBox.Text
+        refreshExplorer()
+    end)
+    
+    -- Initial Load
+    task.delay(1, refreshExplorer)
+
+    
+    -- ================================
+    -- SCRIPT VIEWER PANEL CONTENT
+    -- ================================
+    -- ================================
+    -- SCRIPT VIEWER PANEL CONTENT
+    -- ================================
+    local scriptHeader = Instance.new("Frame")
+    scriptHeader.Size = UDim2.new(1, 0, 0, 36)
+    scriptHeader.BackgroundTransparency = 1
+    scriptHeader.Parent = scriptPanel
+    
+    local scriptTitleLabel = Instance.new("TextLabel")
+    scriptTitleLabel.Size = UDim2.new(1, -100, 1, 0)
+    scriptTitleLabel.BackgroundTransparency = 1
+    scriptTitleLabel.Text = "📜 Select a script to view..."
+    scriptTitleLabel.TextColor3 = Theme.TextPrimary
+    scriptTitleLabel.TextSize = 12
+    scriptTitleLabel.Font = Enum.Font.Code
+    scriptTitleLabel.TextXAlignment = Enum.TextXAlignment.Left
+    scriptTitleLabel.TextTruncate = Enum.TextTruncate.AtEnd
+    scriptTitleLabel.Parent = scriptHeader
+    
+    local copyScriptBtn = Instance.new("TextButton")
+    copyScriptBtn.Size = UDim2.new(0, 80, 0, 24)
+    copyScriptBtn.Position = UDim2.new(1, -80, 0.5, -12)
+    copyScriptBtn.BackgroundColor3 = Theme.Surface
+    copyScriptBtn.Text = "Copy All"
+    copyScriptBtn.TextColor3 = Theme.TextSecondary
+    copyScriptBtn.TextSize = 11
+    copyScriptBtn.Font = Enum.Font.GothamBold
+    copyScriptBtn.Parent = scriptHeader
+    
+    local copyCorner = Instance.new("UICorner")
+    copyCorner.CornerRadius = UDim.new(0, 4)
+    copyCorner.Parent = copyScriptBtn
+    
+    local scriptScroll = Instance.new("ScrollingFrame")
+    scriptScroll.Name = "ScriptSource"
+    scriptScroll.Size = UDim2.new(1, 0, 1, -40)
+    scriptScroll.Position = UDim2.new(0, 0, 0, 40)
+    scriptScroll.BackgroundColor3 = Color3.fromRGB(18, 18, 28)
+    scriptScroll.BorderSizePixel = 0
+    scriptScroll.ScrollBarThickness = 5
+    scriptScroll.ScrollBarImageColor3 = Theme.Primary
+    scriptScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+    scriptScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    scriptScroll.ZIndex = 3
+    scriptScroll.Parent = scriptPanel
+    
+    local scriptScrollCorner = Instance.new("UICorner")
+    scriptScrollCorner.CornerRadius = UDim.new(0, 6)
+    scriptScrollCorner.Parent = scriptScroll
+    
+    local scriptLayout = Instance.new("UIListLayout")
+    scriptLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    scriptLayout.Parent = scriptScroll
+    
+    local scriptPadding = Instance.new("UIPadding")
+    scriptPadding.PaddingLeft = UDim.new(0, 4)
+    scriptPadding.PaddingTop = UDim.new(0, 4)
+    scriptPadding.Parent = scriptScroll
+    
+    local currentSource = ""
+    
+    copyScriptBtn.MouseButton1Click:Connect(function()
+        if currentSource and currentSource ~= "" then
+            if setclipboard then
+                setclipboard(currentSource)
+                copyScriptBtn.Text = "Copied!"
+                task.delay(1, function() copyScriptBtn.Text = "Copy All" end)
+            else
+                copyScriptBtn.Text = "No Clipboard"
+            end
+        end
+    end)
+    
+    -- Syntax Highlighting
+    local syntaxColors = {
+        keyword  = Color3.fromRGB(197, 134, 192),
+        string   = Color3.fromRGB(206, 145, 120),
+        comment  = Color3.fromRGB(106, 153, 85),
+        number   = Color3.fromRGB(181, 206, 168),
+        builtin  = Color3.fromRGB(86, 156, 214),
+        normal   = Color3.fromRGB(212, 212, 212),
+    }
+    
+    local function highlightLine(line)
+        -- Simplified highlighter
+        if line:match("^%s*%-%-") then return syntaxColors.comment end
+        if line:match('^%s*".-"$') or line:match("^%s*'.*'$") then return syntaxColors.string end
+        local first = line:match("^%s*(%a+)")
+        if first and (first == "local" or first == "function" or first == "if" or first == "end" or first == "return" or first == "for" or first == "while") then
+            return syntaxColors.keyword
+        end
+        return syntaxColors.normal
+    end
+    
+    function showScriptSource(scriptInstance)
+        for _, c in ipairs(scriptScroll:GetChildren()) do
+            if c:IsA("Frame") then c:Destroy() end
+        end
+        
+        scriptTitleLabel.Text = "⏳ Decompiling " .. scriptInstance.Name .. "..."
+        currentSource = ""
+        
+        task.spawn(function()
+            local src = BaoSaveInstance._CollectScriptSource(scriptInstance)
+            if not src then src = "-- Failed to decompile" end
+            currentSource = src
+            scriptTitleLabel.Text = "📜 " .. scriptInstance.Name
+            
+            local i = 0
+            for line in (src.."\n"):gmatch("([^\n]*)\n") do
+                i = i + 1
+                local row = Instance.new("Frame")
+                row.Size = UDim2.new(1, 0, 0, 16)
+                row.BackgroundTransparency = 1
+                row.LayoutOrder = i
+                row.Parent = scriptScroll
+                
+                local num = Instance.new("TextLabel")
+                num.Size = UDim2.new(0, 30, 1, 0)
+                num.BackgroundTransparency = 1
+                num.Text = tostring(i)
+                num.TextColor3 = Theme.TextMuted
+                num.TextSize = 10
+                num.Font = Enum.Font.Code
+                num.TextXAlignment = Enum.TextXAlignment.Right
+                num.Parent = row
+                
+                local code = Instance.new("TextLabel")
+                code.Size = UDim2.new(1, -34, 1, 0)
+                code.Position = UDim2.new(0, 34, 0, 0)
+                code.BackgroundTransparency = 1
+                code.Text = line
+                code.TextColor3 = highlightLine(line)
+                code.TextSize = 11
+                code.Font = Enum.Font.Code
+                code.TextXAlignment = Enum.TextXAlignment.Left
+                code.TextTruncate = Enum.TextTruncate.AtEnd
+                code.Parent = row
+                
+                if i % 50 == 0 then task.wait() end
+            end
+        end)
+    end
+    
+    -- ================================
+    -- 3D MODEL VIEWER PANEL CONTENT
+    -- ================================
+    -- ================================
+    -- 3D MODEL VIEWER PANEL CONTENT
+    -- ================================
+    local model3DHeader = Instance.new("Frame")
+    model3DHeader.Size = UDim2.new(1, 0, 0, 30)
+    model3DHeader.BackgroundTransparency = 1
+    model3DHeader.Parent = model3DPanel
+    
+    local model3DTitle = Instance.new("TextLabel")
+    model3DTitle.Size = UDim2.new(1, 0, 1, 0)
+    model3DTitle.BackgroundTransparency = 1
+    model3DTitle.Text = "🎨 Select a Model/Part to view"
+    model3DTitle.TextColor3 = Theme.TextPrimary
+    model3DTitle.TextSize = 12
+    model3DTitle.Font = Enum.Font.GothamBold
+    model3DTitle.Parent = model3DHeader
+    
+    local vpContainer = Instance.new("Frame")
+    vpContainer.Size = UDim2.new(1, 0, 1, -30)
+    vpContainer.Position = UDim2.new(0, 0, 0, 30)
+    vpContainer.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
+    vpContainer.BorderSizePixel = 0
+    vpContainer.Parent = model3DPanel
+    
+    local viewportFrame = Instance.new("ViewportFrame")
+    viewportFrame.Size = UDim2.new(1, 0, 1, 0)
+    viewportFrame.BackgroundTransparency = 1
+    viewportFrame.Parent = vpContainer
+    
+    local vpCamera = Instance.new("Camera")
+    viewportFrame.CurrentCamera = vpCamera
+    vpCamera.Parent = viewportFrame
+    
+    -- Controls Info
+    local controlsLabel = Instance.new("TextLabel")
+    controlsLabel.Size = UDim2.new(1, 0, 0, 20)
+    controlsLabel.Position = UDim2.new(0, 0, 1, -20)
+    controlsLabel.BackgroundTransparency = 0.5
+    controlsLabel.BackgroundColor3 = Color3.new(0,0,0)
+    controlsLabel.Text = "Drag to Rotate • Scroll to Zoom"
+    controlsLabel.TextColor3 = Color3.new(1,1,1)
+    controlsLabel.TextSize = 10
+    controlsLabel.Parent = vpContainer
+    
+    -- 3D Logic Variables
+    local currentModel = nil
+    local camAngleX = 0
+    local camAngleY = 0
+    local camDist = 10
+    local draggingVP = false
+    local lastMouse = Vector2.new()
+    
+    vpContainer.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            draggingVP = true
+            lastMouse = input.Position
+        end
+    end)
+    
+    vpContainer.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then draggingVP = false end
+    end)
+    
+    UserInputService.InputChanged:Connect(function(input)
+        if draggingVP and input.UserInputType == Enum.UserInputType.MouseMovement then
+            local delta = input.Position - lastMouse
+            lastMouse = input.Position
+            camAngleX = camAngleX - delta.X * 0.01
+            camAngleY = math.clamp(camAngleY - delta.Y * 0.01, -1.5, 1.5)
+        elseif input.UserInputType == Enum.UserInputType.MouseWheel then
+            -- Zoom logic
+            if model3DPanel.Visible then
+                camDist = math.clamp(camDist - input.Position.Z * 2, 2, 100)
+            end
+        end
+    end)
+    
+    -- Render Loop for 3D Camera
+    task.spawn(function()
+        local RunService = game:GetService("RunService")
+        while screenGui and screenGui.Parent do
+            if model3DPanel.Visible and currentModel then
+                local center = Vector3.new(0,0,0)
+                if currentModel:IsA("Model") and currentModel.PrimaryPart then
+                    center = currentModel.PrimaryPart.Position
+                elseif currentModel:IsA("BasePart") then
+                    center = currentModel.Position
+                end
+                
+                local cf = CFrame.new(center) 
+                    * CFrame.Angles(0, camAngleX, 0) 
+                    * CFrame.Angles(camAngleY, 0, 0) 
+                    * CFrame.new(0, 0, camDist)
+                vpCamera.CFrame = cf
+            end
+            task.wait(0.01)
+        end
+    end)
+    
+    function preview3DModel(instance)
+        viewportFrame:ClearAllChildren()
+        model3DTitle.Text = "🎨 " .. instance.Name
+        
+        local clone = nil
+        pcall(function()
+            clone = instance:Clone()
+        end)
+        
+        if not clone then
+            model3DTitle.Text = "🎨 Failed to clone: " .. instance.Name
+            return
+        end
+        
+        clone.Parent = viewportFrame
+        
+        -- Center model logic
+        local center = Vector3.new(0,0,0)
+        local size = Vector3.new(4,4,4)
+        if clone:IsA("Model") then
+             local cf, sz = clone:GetBoundingBox()
+             center = cf.Position
+             size = sz
+        elseif clone:IsA("BasePart") then
+             center = clone.Position
+             size = clone.Size
+        end
+        
+        currentModel = clone
+        camDist = math.max(size.Magnitude * 1.5, 5)
+        camAngleX = 0
+        camAngleY = -0.5
+    end
+    
+    -- ================================
+    -- LOGIC: Auto-Build Explorer
+    -- ================================
+    local explorerBuilt = false
+    local origSwitchTab = switchTab -- Save strict ref
+    
+    navButtons[2].Button.MouseButton1Click:Connect(function()
+        if not explorerBuilt then
+            explorerBuilt = true
+            task.spawn(refreshExplorer)
+        end
+    end)
+    
     -- ================================
     -- UI Update Functions
     -- ================================
@@ -3673,23 +4546,23 @@ function UIBuilder.Create()
         local icon = statusIcons[status] or "❓"
         local color = statusColors[status] or Theme.TextSecondary
         
-        statusLabel.Text = icon .. " " .. status
+        BaoSaveInstance._statusLabel.Text = icon .. " " .. status
         
-        TweenService:Create(statusLabel, TweenInfo.new(0.3, Enum.EasingStyle.Quad), {
+        TweenService:Create(BaoSaveInstance._statusLabel, TweenInfo.new(0.3, Enum.EasingStyle.Quad), {
             TextColor3 = color
         }):Play()
         
         -- Update progress bar color based on status
         if status == "Done" then
-            TweenService:Create(progressFill, TweenInfo.new(0.5, Enum.EasingStyle.Quad), {
+            TweenService:Create(BaoSaveInstance._progressBar, TweenInfo.new(0.5, Enum.EasingStyle.Quad), {
                 BackgroundColor3 = Theme.Success
             }):Play()
         elseif status == "Error" then
-            TweenService:Create(progressFill, TweenInfo.new(0.3), {
+            TweenService:Create(BaoSaveInstance._progressBar, TweenInfo.new(0.3), {
                 BackgroundColor3 = Theme.Error
             }):Play()
         else
-            TweenService:Create(progressFill, TweenInfo.new(0.3), {
+            TweenService:Create(BaoSaveInstance._progressBar, TweenInfo.new(0.3), {
                 BackgroundColor3 = Theme.ProgressFill
             }):Play()
         end
@@ -3705,36 +4578,40 @@ function UIBuilder.Create()
     local function updateProgress(percent)
         local clampedPercent = math.clamp(percent, 0, 100)
         
-        TweenService:Create(progressFill, TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+        TweenService:Create(BaoSaveInstance._progressBar, TweenInfo.new(0.4, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
             Size = UDim2.new(clampedPercent / 100, 0, 1, 0)
         }):Play()
         
-        percentLabel.Text = math.floor(clampedPercent) .. "%"
+        BaoSaveInstance._progressLabel.Text = math.floor(clampedPercent) .. "%"
         
-        -- Animate percent text color
         if clampedPercent >= 100 then
-            TweenService:Create(percentLabel, TweenInfo.new(0.3), {
+            TweenService:Create(BaoSaveInstance._progressLabel, TweenInfo.new(0.3), {
                 TextColor3 = Theme.Success
             }):Play()
         else
-            TweenService:Create(percentLabel, TweenInfo.new(0.3), {
+            TweenService:Create(BaoSaveInstance._progressLabel, TweenInfo.new(0.3), {
                 TextColor3 = Theme.Primary
             }):Play()
         end
     end
     
     local function setButtonsEnabled(enabled)
+        -- We need references to buttons. They were local to Main Panel creation.
+        -- But this scope is still UIBuilder.Create, so they SHOULD be accessible if defined earlier.
+        -- Yes, they were defined in previous logic block.
         local alpha = enabled and 1 or 0.5
         for _, btn in ipairs({btnStreamDecompile, btnFullGame, btnFullModel, btnTerrain, btnExport}) do
-            btn.Active = enabled
-            TweenService:Create(btn, TweenInfo.new(0.2), {
-                BackgroundTransparency = enabled and 0 or 0.4
-            }):Play()
+            if btn then
+                btn.Active = enabled
+                TweenService:Create(btn, TweenInfo.new(0.2), {
+                    BackgroundTransparency = enabled and 0 or 0.4
+                }):Play()
+            end
         end
     end
     
     local function updateModeLabel(text)
-        modeLabel.Text = text
+       BaoSaveInstance._statusLabel.Text = text
     end
     
     -- ================================
@@ -3742,47 +4619,8 @@ function UIBuilder.Create()
     -- ================================
     task.spawn(function()
         while screenGui and screenGui.Parent do
-            if BaoSaveInstance._status == "Processing" or BaoSaveInstance._status == "Exporting" then
-                TweenService:Create(progressShine, TweenInfo.new(1.2, Enum.EasingStyle.Linear), {
-                    Position = UDim2.new(1, 0, 0, 0)
-                }):Play()
-                task.wait(1.2)
-                progressShine.Position = UDim2.new(-0.3, 0, 0, 0)
-            else
-                task.wait(0.5)
-            end
-        end
-    end)
-    
-    -- ================================
-    -- Gradient animation on title logo
-    -- ================================
-    task.spawn(function()
-        local rotation = 0
-        while screenGui and screenGui.Parent do
-            rotation = (rotation + 1) % 360
-            task.wait(0.05)
-        end
-    end)
-    
-    -- ================================
-    -- V2: Elapsed Timer Loop
-    -- ================================
-    task.spawn(function()
-        while screenGui and screenGui.Parent do
-            if BaoSaveInstance._status == "Processing" or BaoSaveInstance._status == "Exporting" then
-                local elapsed = os.clock() - BaoSaveInstance._operationStartTime
-                local mins = math.floor(elapsed / 60)
-                local secs = math.floor(elapsed % 60)
-                elapsedLabel.Text = string.format("⏱ %02d:%02d", mins, secs)
-            else
-                if elapsedLabel.Text ~= "" and BaoSaveInstance._status ~= "Idle" then
-                    -- keep showing final time
-                else
-                    elapsedLabel.Text = ""
-                end
-            end
-            task.wait(0.5)
+             -- We skip shine for now or find it via FindFirstChild.
+             task.wait(1)
         end
     end)
     
@@ -3793,42 +4631,26 @@ function UIBuilder.Create()
         while screenGui and screenGui.Parent do
             local logs = Utility.Logs
             if #logs > lastLogCount then
-                -- Add new log entries
                 for i = lastLogCount + 1, math.min(#logs, lastLogCount + 10) do
                     local entry = logs[i]
-                    local logLabel = Instance.new("TextLabel")
-                    logLabel.Size = UDim2.new(1, 0, 0, 13)
-                    logLabel.BackgroundTransparency = 1
-                    logLabel.Text = string.format("[%.1f] [%s] %s", entry.Time, entry.Level, entry.Message)
-                    logLabel.TextColor3 = logColors[entry.Level] or Theme.TextMuted
-                    logLabel.TextSize = 9
-                    logLabel.Font = Enum.Font.Code
-                    logLabel.TextXAlignment = Enum.TextXAlignment.Left
-                    logLabel.TextTruncate = Enum.TextTruncate.AtEnd
-                    logLabel.ZIndex = 4
-                    logLabel.LayoutOrder = i
-                    logLabel.Parent = logFrame
-                end
-                lastLogCount = #logs
-                
-                -- Keep only the last 50 entries visible
-                local children = logFrame:GetChildren()
-                local labelCount = 0
-                for _, c in ipairs(children) do
-                    if c:IsA("TextLabel") then labelCount = labelCount + 1 end
-                end
-                if labelCount > 50 then
-                    for _, c in ipairs(children) do
-                        if c:IsA("TextLabel") then
-                            c:Destroy()
-                            labelCount = labelCount - 1
-                            if labelCount <= 50 then break end
-                        end
+                    if logFrame then -- Ensure logFrame exists
+                        local logLabel = Instance.new("TextLabel")
+                        logLabel.Size = UDim2.new(1, 0, 0, 13)
+                        logLabel.BackgroundTransparency = 1
+                        logLabel.Text = string.format("[%.1f] [%s] %s", entry.Time, entry.Level, entry.Message)
+                        logLabel.TextColor3 = logColors[entry.Level] or Theme.TextMuted
+                        logLabel.TextSize = 9
+                        logLabel.Font = Enum.Font.Code
+                        logLabel.TextXAlignment = Enum.TextXAlignment.Left
+                        logLabel.TextTruncate = Enum.TextTruncate.AtEnd
+                        logLabel.LayoutOrder = i
+                        logLabel.Parent = logFrame
                     end
                 end
-                
-                -- Auto-scroll to bottom
-                logFrame.CanvasPosition = Vector2.new(0, logFrame.AbsoluteCanvasSize.Y)
+                lastLogCount = #logs
+                if logFrame then
+                    logFrame.CanvasPosition = Vector2.new(0, logFrame.AbsoluteCanvasSize.Y)
+                end
             end
             task.wait(0.3)
         end
@@ -3846,198 +4668,124 @@ function UIBuilder.Create()
     
     local isProcessing = false
     
-    btnStreamDecompile.MouseButton1Click:Connect(function()
+    local function handleDecompile(mode)
         if isProcessing then return end
         isProcessing = true
         setButtonsEnabled(false)
-        updateModeLabel("Auto: Stream -> Full Game -> Export")
+        updateStatus("Processing")
         BaoSaveInstance.Cleanup()
         task.spawn(function()
-            local success = BaoSaveInstance.StreamAndDecompile("FullGame")
-            updateModeLabel(success and "✅ Auto-Process Complete!" or "❌ Process Failed")
+            local success = BaoSaveInstance.StreamAndDecompile(mode)
+            updateStatus(success and "Done" or "Error")
             isProcessing = false
             setButtonsEnabled(true)
         end)
-    end)
+    end
     
-    btnFullGame.MouseButton1Click:Connect(function()
-        if isProcessing then return end
-        isProcessing = true
-        setButtonsEnabled(false)
-        updateModeLabel("Auto: Stream -> Full Game -> Export")
-        BaoSaveInstance.Cleanup()
-        task.spawn(function()
-            local success = BaoSaveInstance.StreamAndDecompile("FullGame")
-            updateModeLabel(success and "✅ Auto-Process Complete!" or "❌ Process Failed")
-            isProcessing = false
-            setButtonsEnabled(true)
-        end)
-    end)
-    
-    btnFullModel.MouseButton1Click:Connect(function()
-        if isProcessing then return end
-        isProcessing = true
-        setButtonsEnabled(false)
-        updateModeLabel("Auto: Stream -> Full Model -> Export")
-        BaoSaveInstance.Cleanup()
-        task.spawn(function()
-            local success = BaoSaveInstance.StreamAndDecompile("Models")
-            updateModeLabel(success and "✅ Auto-Process Complete!" or "❌ Process Failed")
-            isProcessing = false
-            setButtonsEnabled(true)
-        end)
-    end)
-    
-    btnTerrain.MouseButton1Click:Connect(function()
-        if isProcessing then return end
-        isProcessing = true
-        setButtonsEnabled(false)
-        updateModeLabel("Auto: Stream -> Terrain -> Export")
-        BaoSaveInstance.Cleanup()
-        task.spawn(function()
-            local success = BaoSaveInstance.StreamAndDecompile("Terrain")
-            updateModeLabel(success and "✅ Auto-Process Complete!" or "❌ Process Failed")
-            isProcessing = false
-            setButtonsEnabled(true)
-        end)
-    end)
+    btnStreamDecompile.MouseButton1Click:Connect(function() handleDecompile("FullGame") end)
+    btnFullGame.MouseButton1Click:Connect(function() handleDecompile("FullGame") end)
+    btnFullModel.MouseButton1Click:Connect(function() handleDecompile("Models") end)
+    btnTerrain.MouseButton1Click:Connect(function() handleDecompile("Terrain") end)
     
     btnExport.MouseButton1Click:Connect(function()
         if isProcessing then return end
-        
         if not BaoSaveInstance._collectedData then
-            updateModeLabel("⚠️ No data to export. Run a decompile first!")
-            updateStatus("Error")
+            updateStatus("Error: No Data")
             task.wait(2)
             updateStatus("Idle")
             return
         end
-        
         isProcessing = true
         setButtonsEnabled(false)
-        updateModeLabel("Exporting as .rbxl...")
-        
+        updateStatus("Exporting")
         task.spawn(function()
             local success = BaoSaveInstance.ExportRBXL()
-            if success then
-                updateModeLabel("✅ Export complete! Check ServerStorage or file system.")
-            else
-                updateModeLabel("❌ Export failed.")
-            end
+            updateStatus(success and "Done" or "Error")
             isProcessing = false
             setButtonsEnabled(true)
         end)
     end)
     
     -- ================================
-    -- Close Button
+    -- CLOSE / MINIMIZE ANIMATIONS
     -- ================================
+    
+    local isMinimized = false
+    local fullSize = UDim2.new(0, 640, 0, 520)
+    local fullShadowSize = UDim2.new(0, 654, 0, 534)
+    local minSize = UDim2.new(0, 640, 0, 40)
+    local minShadowSize = UDim2.new(0, 654, 0, 54)
+    local midPos = UDim2.new(0.5, -320, 0.5, -260)
+    
     closeBtn.MouseButton1Click:Connect(function()
         -- Animate out
         TweenService:Create(mainFrame, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.In), {
             Size = UDim2.new(0, 0, 0, 0),
-            Position = UDim2.new(0.5, 0, 0.5, 0)
+            BackgroundTransparency = 1
         }):Play()
         TweenService:Create(shadowFrame, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.In), {
             Size = UDim2.new(0, 0, 0, 0),
-            Position = UDim2.new(0.5, 0, 0.5, 0)
-        }):Play()
-        TweenService:Create(mainFrame, TweenInfo.new(0.3), {
             BackgroundTransparency = 1
         }):Play()
-        
-        task.wait(0.4)
+        task.wait(0.3)
         screenGui:Destroy()
-        
-        -- Cleanup collected data
         BaoSaveInstance.Cleanup()
     end)
     
-    -- Close button hover
-    closeBtn.MouseEnter:Connect(function()
-        TweenService:Create(closeBtn, TweenInfo.new(0.2), {
-            BackgroundTransparency = 0.2,
-            TextColor3 = Color3.fromRGB(255, 255, 255)
-        }):Play()
-    end)
-    
-    closeBtn.MouseLeave:Connect(function()
-        TweenService:Create(closeBtn, TweenInfo.new(0.2), {
-            BackgroundTransparency = 0.8,
-            TextColor3 = Theme.TextSecondary
-        }):Play()
-    end)
-    
-    -- Minimize button hover
-    minimizeBtn.MouseEnter:Connect(function()
-        TweenService:Create(minimizeBtn, TweenInfo.new(0.2), {
-            BackgroundTransparency = 0.2,
-            TextColor3 = Color3.fromRGB(255, 255, 255)
-        }):Play()
-    end)
-    
-    minimizeBtn.MouseLeave:Connect(function()
-        TweenService:Create(minimizeBtn, TweenInfo.new(0.2), {
-            BackgroundTransparency = 0.8,
-            TextColor3 = Theme.TextSecondary
-        }):Play()
-    end)
-    
-    -- ================================
-    -- Minimize Toggle
-    -- ================================
-    local isMinimized = false
-    local originalSize = mainFrame.Size
-    local originalShadowSize = shadowFrame.Size
-    
     minimizeBtn.MouseButton1Click:Connect(function()
         isMinimized = not isMinimized
-        
         if isMinimized then
-            TweenService:Create(mainFrame, TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-                Size = UDim2.new(0, 460, 0, 52)
+             -- Hide panel container
+             panelContainer.Visible = false
+             statusBarMain.Visible = false
+             mainFrame.ClipsDescendants = true
+             
+            TweenService:Create(mainFrame, TweenInfo.new(0.4, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
+                Size = minSize
             }):Play()
-            TweenService:Create(shadowFrame, TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-                Size = UDim2.new(0, 474, 0, 66)
+            TweenService:Create(shadowFrame, TweenInfo.new(0.4, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
+                Size = minShadowSize
             }):Play()
             minimizeBtn.Text = "□"
         else
-            TweenService:Create(mainFrame, TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-                Size = originalSize
+            TweenService:Create(mainFrame, TweenInfo.new(0.4, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
+                Size = fullSize
             }):Play()
-            TweenService:Create(shadowFrame, TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-                Size = originalShadowSize
+            TweenService:Create(shadowFrame, TweenInfo.new(0.4, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
+                Size = fullShadowSize
             }):Play()
+             task.delay(0.2, function()
+                 panelContainer.Visible = true
+                 statusBarMain.Visible = true
+                 mainFrame.ClipsDescendants = false
+             end)
             minimizeBtn.Text = "─"
         end
     end)
     
     -- ================================
-    -- Open Animation
+    -- OPEN ANIMATION
     -- ================================
     mainFrame.Size = UDim2.new(0, 0, 0, 0)
-    mainFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
     mainFrame.BackgroundTransparency = 1
     shadowFrame.Size = UDim2.new(0, 0, 0, 0)
-    shadowFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
     shadowFrame.BackgroundTransparency = 1
     
     task.wait(0.1)
     
-    TweenService:Create(mainFrame, TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
-        Size = UDim2.new(0, 460, 0, 660),
-        Position = UDim2.new(0.5, -230, 0.5, -330),
+    TweenService:Create(mainFrame, TweenInfo.new(0.6, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+        Size = fullSize,
+        Position = midPos,
         BackgroundTransparency = 0
     }):Play()
     
-    TweenService:Create(shadowFrame, TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
-        Size = UDim2.new(0, 474, 0, 674),
-        Position = UDim2.new(0.5, -237, 0.5, -252),
+    TweenService:Create(shadowFrame, TweenInfo.new(0.6, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+        Size = fullShadowSize,
+        Position = UDim2.new(midPos.X.Scale, midPos.X.Offset - 7, midPos.Y.Scale, midPos.Y.Offset - 7),
         BackgroundTransparency = 0.6
     }):Play()
     
-    Utility.Log("INFO", "UI created successfully")
-    
+    Utility.Log("INFO", "UI Created")
     return screenGui
 end
 
