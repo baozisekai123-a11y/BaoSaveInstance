@@ -6,28 +6,28 @@
     ██████╔╝██║  ██║╚██████╔╝███████║██║  ██║ ╚████╔╝ ███████╗
     ╚═════╝ ╚═╝  ╚═╝ ╚═════╝╚══════╝╚═╝  ╚═╝  ╚═══╝  ╚══════╝
 
-    BaoSaveInstance v5.0 OMEGA
-    Maximum Power Decompiler
+    BaoSaveInstance v6.0 ULTRA
+    Ultimate Power Decompiler
     
     Core Architecture:
       01. Config
       02. Services
-      03. Executor Detection Engine
+      03. Executor Detection Engine (50 caps)
       04. Webhook System
       05. Memory Manager
       06. Thread Scheduler
       07. Utility
       08. Signal System
-      09. Property Database (350+)
+      09. Property Database (500+)
       10. Reference Resolver
-      11. Script Decompiler (12 methods)
+      11. Script Decompiler (20 methods)
       12. Bytecode Analyzer
       13. Closure Scanner
       14. Upvalue Extractor
       15. Environment Capturer
       16. Mesh Reconstructor
       17. Texture Pipeline
-      18. Terrain Voxel Engine
+      18. Terrain Voxel Engine (Adaptive)
       19. Animation Ripper
       20. Sound Pipeline
       21. Particle Cloner
@@ -35,13 +35,15 @@
       23. Physics Snapshot
       24. UI Tree Walker
       25. Package Scanner
-      26. Instance Forge
+      26. Instance Forge (3-layer failsafe)
       27. Hierarchy Validator
-      28. DecompilerCore (35 methods)
-      29. Exporter (12 methods)
-      30. UI System
-      31. API (35 functions)
-      32. Init
+      28. Asset ID Collector
+      29. Connection Mapper
+      30. DecompilerCore (50+ methods)
+      31. Exporter (18 methods)
+      32. UI System (Tabs + Search)
+      33. API (50+ functions)
+      34. Init
 ]]
 
 -- ============================================================
@@ -49,8 +51,8 @@
 -- ============================================================
 local Config = {
     Name = "BaoSaveInstance",
-    Version = "5.0",
-    Build = "OMEGA",
+    Version = "6.0",
+    Build = "ULTRA",
     Out = "BaoSave",
 
     Webhook = {
@@ -59,18 +61,18 @@ local Config = {
     },
 
     Perf = {
-        Threads = 12,
-        Batch = 80,
-        YieldEvery = 6,
-        Retries = 8,
-        RetryDelay = 0.01,
+        Threads = 16,
+        Batch = 120,
+        YieldEvery = 5,
+        Retries = 12,
+        RetryDelay = 0.008,
         Chunk = 128,
         AdaptiveChunk = true,
         Cache = true,
         DeepClone = true,
-        Timeout = 600,
-        MaxMemMB = 3072,
-        GCInterval = 500,
+        Timeout = 900,
+        MaxMemMB = 4096,
+        GCInterval = 400,
         ParallelScripts = true,
         FastProperties = true,
         BruteForceProps = true,
@@ -78,6 +80,15 @@ local Config = {
         CaptureEnvs = true,
         SaveBytecode = true,
         RebuildFailed = true,
+        DecompileTimeout = 30,
+        MaxRetryDecompile = 3,
+        SmartFallback = true,
+        AssetIdResolve = true,
+        FullHierarchyRebuild = true,
+        CaptureAnimData = true,
+        CaptureConnections = true,
+        SourceValidation = true,
+        PriorityDecompile = true,
     },
 
     IgnoreClasses = {
@@ -140,6 +151,23 @@ local Config = {
         "UniversalConstraint","TorsionSpringConstraint","LineForce",
         "VectorForce","AlignOrientation","AlignPosition",
         "AngularVelocity","LinearVelocity","Torque",
+        "RigidConstraint","Plane","PlaneConstraint",
+    },
+
+    AudioClasses = {
+        "AudioPlayer","AudioEmitter","AudioListener","AudioFader",
+        "AudioAnalyzer","AudioCompressor","AudioDistortion","AudioEcho",
+        "AudioEqualizer","AudioFlanger","AudioPitchShifter","AudioReverb",
+        "Wire",
+    },
+
+    IKClasses = {
+        "IKControl",
+    },
+
+    ChatClasses = {
+        "TextChannel","TextSource","ChatWindowConfiguration",
+        "ChatInputBarConfiguration","BubbleChatConfiguration",
     },
 
     Theme = {
@@ -233,6 +261,7 @@ ExecDetect.Capabilities = {
     setclipboard = false,
     firesignal = false,
     getrawmetatable = false,
+    setrawmetatable = false,
     iscclosure = false,
     islclosure = false,
     clonefunction = false,
@@ -255,6 +284,22 @@ ExecDetect.Capabilities = {
     base64 = false,
     cache = false,
     debug_lib = false,
+    -- v6.0 ULTRA new capabilities
+    firetouchinterest = false,
+    fireproximityprompt = false,
+    getinstances = false,
+    gethui = false,
+    getscripts = false,
+    getrunningscripts = false,
+    getcallingscript = false,
+    hookmetamethod = false,
+    makewriteable = false,
+    makereadonly = false,
+    identifyexecutor = false,
+    lz4compress = false,
+    lz4decompress = false,
+    getthreadcontext = false,
+    messagebox = false,
 }
 
 function ExecDetect.Scan()
@@ -317,6 +362,24 @@ function ExecDetect.Scan()
         end
     end)
 
+    -- v6.0 ULTRA new capability scans
+    caps.firetouchinterest = firetouchinterest ~= nil
+    caps.fireproximityprompt = fireproximityprompt ~= nil
+    caps.getinstances = getinstances ~= nil
+    caps.gethui = gethui ~= nil
+    caps.getscripts = getscripts ~= nil
+    caps.getrunningscripts = getrunningscripts ~= nil
+    caps.getcallingscript = getcallingscript ~= nil
+    caps.hookmetamethod = hookmetamethod ~= nil
+    caps.setrawmetatable = setrawmetatable ~= nil
+    caps.makewriteable = makewriteable ~= nil
+    caps.makereadonly = makereadonly ~= nil
+    caps.identifyexecutor = identifyexecutor ~= nil
+    caps.lz4compress = lz4compress ~= nil
+    caps.lz4decompress = lz4decompress ~= nil
+    pcall(function() caps.getthreadcontext = getthreadcontext ~= nil or syn_context_get ~= nil end)
+    pcall(function() caps.messagebox = messagebox ~= nil or rconsolewarn ~= nil end)
+
     return caps
 end
 
@@ -350,9 +413,10 @@ function ExecDetect.PowerLevel()
     for _, v in pairs(caps) do
         if v then score = score + 1 end
     end
-    if score >= 30 then return "OMEGA", score end
-    if score >= 22 then return "HIGH", score end
-    if score >= 14 then return "MEDIUM", score end
+    if score >= 42 then return "ULTRA", score end
+    if score >= 35 then return "OMEGA", score end
+    if score >= 26 then return "HIGH", score end
+    if score >= 16 then return "MEDIUM", score end
     return "LOW", score
 end
 
@@ -371,6 +435,13 @@ function ExecDetect.BestDecompileMethod()
     if caps.getreg then table.insert(methods, "registry") end
     if caps.getsenv then table.insert(methods, "senv") end
     if caps.getloadedmodules then table.insert(methods, "modules") end
+    if caps.getrunningscripts then table.insert(methods, "running_scripts") end
+    if caps.getinstances then table.insert(methods, "instances") end
+    if caps.hookfunction then table.insert(methods, "hook") end
+    if caps.clonefunction then table.insert(methods, "clonefn") end
+    if caps.getrawmetatable then table.insert(methods, "metatable") end
+    if caps.getconnections then table.insert(methods, "connections") end
+    if caps.getscripts then table.insert(methods, "getscripts") end
     return methods
 end
 
@@ -718,6 +789,48 @@ PDB.Props = {
     WrapTarget = {"CageMeshId","CageOrigin","Stiffness"},
     WrapLayer = {"AutoSkin","BindOffset","CageMeshId","CageOrigin","Color","Enabled","Order","Puffiness","ReferenceMeshId","ReferenceOrigin","ShrinkFactor"},
     MeshPart_Extra = {"FluidFidelity","RenderFidelity"},
+    -- v6.0 ULTRA: Audio System
+    AudioPlayer = {"Asset","AutoLoad","IsPlaying","LoopRegion","Looping","PlaybackRegion","PlaybackSpeed","TimePosition","Volume"},
+    AudioEmitter = {"AudioInteractionGroup","DistanceAttenuation","AngleAttenuation"},
+    AudioListener = {"AudioInteractionGroup"},
+    AudioFader = {"Volume","Bypass"},
+    AudioAnalyzer = {"Bypass","WindowSize"},
+    AudioCompressor = {"Attack","Bypass","GainMakeup","Knee","Ratio","Release","Threshold"},
+    AudioDistortion = {"Bypass","Level"},
+    AudioEcho = {"Bypass","Delay","DryLevel","Feedback","WetLevel"},
+    AudioEqualizer = {"Bypass","HighFrequency","HighGain","LowFrequency","LowGain","MidFrequency","MidGain","MidRange"},
+    AudioFlanger = {"Bypass","Depth","Mix","Rate"},
+    AudioPitchShifter = {"Bypass","Pitch"},
+    AudioReverb = {"Bypass","DecayRatio","DecayTime","Density","Diffusion","DryLevel","EarlyDelayTime","HighCutFrequency","LateDelayTime","ReferenceFrequency","WetLevel"},
+    Wire = {"SourceInstance","SourceName","TargetInstance","TargetName"},
+    -- v6.0 ULTRA: IK & Constraints
+    IKControl = {"ChainRoot","Enabled","EndEffector","EndEffectorOffset","Offset","Pole","Priority","SmoothTime","Target","Type","Weight"},
+    RigidConstraint = {"Attachment0","Attachment1","Broken","DestructionEnabled","DestructionForce","DestructionTorque","Enabled"},
+    PlaneConstraint = {"Attachment0","Attachment1","Enabled"},
+    -- v6.0 ULTRA: Chat System
+    TextChannel = {"Name"},
+    TextSource = {"CanSend","UserId"},
+    ChatWindowConfiguration = {"AbsolutePosition","AbsoluteSize","BackgroundColor3","BackgroundTransparency","Enabled","FontFace","HeightScale","HorizontalAlignment","TextColor3","TextSize","TextStrokeColor3","TextStrokeTransparency","VerticalAlignment","WidthScale"},
+    ChatInputBarConfiguration = {"AbsolutePosition","AbsoluteSize","AutocompleteEnabled","BackgroundColor3","BackgroundTransparency","Enabled","FontFace","IsFocused","KeyboardKeyCode","PlaceholderColor3","TargetTextChannel","TextBox","TextColor3","TextSize","TextStrokeColor3","TextStrokeTransparency"},
+    BubbleChatConfiguration = {"AdorneeName","BackgroundColor3","BackgroundTransparency","BubbleDuration","BubblesSpacing","Enabled","FontFace","LocalPlayerStudsOffset","MaxBubbles","MaxDistance","MinimizeDistance","TailVisible","TextColor3","TextSize","VerticalStudsOffset"},
+    -- v6.0 ULTRA: Material & Mesh
+    MaterialVariant = {"BaseMaterial","ColorMap","CustomPhysicalProperties","MaterialPattern","MetalnessMap","NormalMap","RoughnessMap","StudsPerTile"},
+    EditableImage = {"Size"},
+    EditableMesh = {},
+    -- v6.0 ULTRA: Additional UI
+    CanvasGroup = {"GroupColor3","GroupTransparency"},
+    UIPageLayout = {"Animated","Circular","EasingDirection","EasingStyle","FillDirection","GamepadInputEnabled","HorizontalAlignment","Padding","ScrollWheelInputEnabled","SortOrder","TweenTime","VerticalAlignment"},
+    UITableLayout = {"FillEmptySpaceColumns","FillEmptySpaceRows","FillDirection","HorizontalAlignment","MajorAxis","Padding","SortOrder","VerticalAlignment"},
+    -- v6.0 ULTRA: Additional Classes
+    PathfindingLink = {"Attachment0","Attachment1","IsBidirectional","Label"},
+    PathfindingModifier = {"Label","PassThrough"},
+    NoCollisionConstraint = {"Enabled","Part0","Part1"},
+    AnimationRigData = {},
+    FaceControls = {},
+    MarkerCurve = {},
+    FloatCurve = {},
+    RotationCurve = {},
+    EulerRotationCurve = {},
 }
 
 function PDB.BruteForceProps(src, dst)
@@ -841,11 +954,26 @@ function RefResolver.ResolveAll(root)
 end
 
 -- ============================================================
--- 11. SCRIPT DECOMPILER (12 methods)
+-- 11. SCRIPT DECOMPILER (20 methods)
 -- ============================================================
 local SE = {}
 local SrcCache = {}
 local BytecodeCache = {}
+
+-- Source validation: check if decompiled source looks like real Lua
+local function ValidateSource(src)
+    if not src or #src < 3 then return false end
+    if not Config.Perf.SourceValidation then return true end
+    -- Check for common Lua patterns
+    local hasCode = src:find("function") or src:find("local") or src:find("return")
+        or src:find("if") or src:find("for") or src:find("while")
+        or src:find("require") or src:find("game") or src:find("script")
+        or src:find("Instance") or src:find("print") or src:find("=")
+    if hasCode then return true end
+    -- Still accept if it has comments (partial recovery)
+    if src:find("^%-%-") then return true end
+    return #src > 10
+end
 
 function SE.Has()
     local caps = ExecDetect.Capabilities
@@ -1056,6 +1184,236 @@ function SE.Decompile(inst)
         end)
     end
 
+    -- M13: getrunningscripts scan
+    if not src and getrunningscripts then
+        pcall(function()
+            local running = getrunningscripts()
+            for _, rs in ipairs(running) do
+                if rs == inst or rs.Name == inst.Name then
+                    if decompile then
+                        local r = decompile(rs)
+                        if r and ValidateSource(r) then src = r method = "running_scripts" end
+                    end
+                    if not src and getsource then
+                        local r = getsource(rs)
+                        if r and ValidateSource(r) then src = r method = "running_getsource" end
+                    end
+                    break
+                end
+            end
+        end)
+    end
+
+    -- M14: getinstances cross-reference
+    if not src and getinstances then
+        pcall(function()
+            local instances = getinstances()
+            for _, obj in ipairs(instances) do
+                if obj == inst or (typeof(obj) == "Instance" and obj:IsA("LuaSourceContainer") and obj.Name == inst.Name) then
+                    if decompile then
+                        local r = decompile(obj)
+                        if r and ValidateSource(r) then src = r method = "instances_xref" end
+                    end
+                    break
+                end
+            end
+        end)
+    end
+
+    -- M15: getscripts scan
+    if not src and getscripts then
+        pcall(function()
+            local allScripts = getscripts()
+            for _, s in ipairs(allScripts) do
+                if s == inst or s.Name == inst.Name then
+                    if decompile then
+                        local r = decompile(s)
+                        if r and ValidateSource(r) then src = r method = "getscripts" end
+                    end
+                    break
+                end
+            end
+        end)
+    end
+
+    -- M16: Deep environment chain
+    if not src and getsenv then
+        pcall(function()
+            local env = getsenv(inst)
+            if env then
+                -- Try to find module return values and reconstruct
+                local lines = {"-- [BaoSave ULTRA] Deep Environment Recovery"}
+                local envCount = 0
+                for k, v in pairs(env) do
+                    envCount = envCount + 1
+                    if type(v) == "function" and decompile then
+                        pcall(function()
+                            local fsrc = decompile(v)
+                            if fsrc and #fsrc > 5 then
+                                table.insert(lines, string.format("-- Function: %s", tostring(k)))
+                                table.insert(lines, fsrc)
+                            else
+                                table.insert(lines, string.format("local %s = function() end -- stub", tostring(k)))
+                            end
+                        end)
+                    elseif type(v) == "table" then
+                        table.insert(lines, string.format("local %s = {} -- table (%d entries)", tostring(k), (pcall(function() return #v end) and #v or 0)))
+                    else
+                        table.insert(lines, string.format("local %s = %s -- %s", tostring(k), tostring(v), type(v)))
+                    end
+                end
+                if envCount > 0 then
+                    src = table.concat(lines, "\n")
+                    method = "deep_env"
+                end
+            end
+        end)
+    end
+
+    -- M17: clonefunction + decompile
+    if not src and clonefunction and getscriptclosure and decompile then
+        pcall(function()
+            local cl = getscriptclosure(inst)
+            if cl then
+                local cloned = clonefunction(cl)
+                if cloned then
+                    local r = decompile(cloned)
+                    if r and ValidateSource(r) then src = r method = "clonefn_decompile" end
+                end
+            end
+        end)
+    end
+
+    -- M18: Metatable recovery
+    if not src and getrawmetatable and inst:IsA("ModuleScript") then
+        pcall(function()
+            local ok2, result = pcall(require, inst)
+            if ok2 and type(result) == "table" then
+                local mt = getrawmetatable(result)
+                local lines = {"-- [BaoSave ULTRA] Metatable Recovery"}
+                if mt then
+                    for k, v in pairs(mt) do
+                        if type(v) == "function" and decompile then
+                            pcall(function()
+                                local fsrc = decompile(v)
+                                if fsrc then
+                                    table.insert(lines, string.format("-- __[%s]", tostring(k)))
+                                    table.insert(lines, fsrc)
+                                end
+                            end)
+                        else
+                            table.insert(lines, string.format("-- MT[%s] = %s (%s)", tostring(k), tostring(v), type(v)))
+                        end
+                    end
+                end
+                -- Also dump table keys
+                for k, v in pairs(result) do
+                    if type(v) == "function" and decompile then
+                        pcall(function()
+                            local fsrc = decompile(v)
+                            if fsrc then
+                                table.insert(lines, string.format("function module.%s()", tostring(k)))
+                                table.insert(lines, fsrc)
+                                table.insert(lines, "end")
+                            end
+                        end)
+                    end
+                end
+                if #lines > 1 then
+                    table.insert(lines, 1, "local module = {}")
+                    table.insert(lines, "return module")
+                    src = table.concat(lines, "\n")
+                    method = "metatable"
+                end
+            end
+        end)
+    end
+
+    -- M19: Connection analysis
+    if not src and getconnections then
+        pcall(function()
+            local lines = {"-- [BaoSave ULTRA] Connection Analysis"}
+            local found = false
+            -- Check common event signal sources
+            for _, evName in ipairs({"Changed","ChildAdded","ChildRemoved","AncestryChanged","Destroying"}) do
+                pcall(function()
+                    local ev = inst[evName]
+                    if ev then
+                        local conns = getconnections(ev)
+                        for _, conn in ipairs(conns) do
+                            if conn.Function and decompile then
+                                local csrc = decompile(conn.Function)
+                                if csrc and #csrc > 5 then
+                                    table.insert(lines, string.format("-- Connection: %s", evName))
+                                    table.insert(lines, csrc)
+                                    found = true
+                                end
+                            end
+                        end
+                    end
+                end)
+            end
+            if found then
+                src = table.concat(lines, "\n")
+                method = "connections"
+            end
+        end)
+    end
+
+    -- M20: Smart Stub Generator (ultimate fallback before empty)
+    if not src and Config.Perf.SmartFallback then
+        pcall(function()
+            local lines = {string.format("-- [BaoSave ULTRA] Smart Stub Generator\n-- Script: %s\n-- Class: %s\n-- Path: %s", inst.Name, inst.ClassName, path)}
+            -- Gather what we can about the script
+            if inst:IsA("ModuleScript") then
+                table.insert(lines, "\nlocal module = {}")
+                -- Try to get return value type
+                pcall(function()
+                    local ok2, ret = pcall(require, inst)
+                    if ok2 then
+                        if type(ret) == "table" then
+                            for k, v in pairs(ret) do
+                                if type(v) == "function" then
+                                    table.insert(lines, string.format("function module.%s(...) end -- stub", tostring(k)))
+                                elseif type(v) ~= "userdata" then
+                                    table.insert(lines, string.format("module.%s = %s -- %s", tostring(k), tostring(v), type(v)))
+                                end
+                            end
+                        elseif type(ret) == "function" then
+                            table.insert(lines, "-- Module returns a function")
+                            if decompile then
+                                local fsrc = decompile(ret)
+                                if fsrc then table.insert(lines, "return " .. fsrc) end
+                            end
+                        end
+                    end
+                end)
+                table.insert(lines, "\nreturn module")
+            else
+                -- LocalScript / Script: try to gather children info
+                for _, child in ipairs(U.Ch(inst)) do
+                    table.insert(lines, string.format("-- Child: %s (%s)", child.Name, child.ClassName))
+                end
+                if getscriptclosure then
+                    pcall(function()
+                        local cl = getscriptclosure(inst)
+                        if cl then
+                            -- Get info
+                            local info = debug.getinfo(cl)
+                            if info then
+                                table.insert(lines, string.format("-- Source: %s", info.source or "?"))
+                                table.insert(lines, string.format("-- Lines: %s-%s", info.linedefined or "?", info.lastlinedefined or "?"))
+                                table.insert(lines, string.format("-- Args: %s", info.numparams or "?"))
+                            end
+                        end
+                    end)
+                end
+            end
+            src = table.concat(lines, "\n")
+            method = "smart_stub"
+        end)
+    end
+
     -- M-bytecode: Save raw bytecode if available
     if not src and getscriptbytecode and Config.Perf.SaveBytecode then
         pcall(function()
@@ -1063,7 +1421,7 @@ function SE.Decompile(inst)
             if bc and #bc > 0 then
                 BytecodeCache[path] = bc
                 src = string.format(
-                    "-- [BaoSave OMEGA] Raw Bytecode Preserved\n-- Size: %d bytes\n-- Path: %s\n-- Class: %s\n-- Hash: %s\n-- Note: Bytecode saved for offline decompilation\n",
+                    "-- [BaoSave ULTRA] Raw Bytecode Preserved\n-- Size: %d bytes\n-- Path: %s\n-- Class: %s\n-- Hash: %s\n-- Note: Bytecode saved for offline decompilation\n",
                     #bc, path, inst.ClassName,
                     getscripthash and tostring(pcall(getscripthash, inst) and getscripthash(inst)) or "N/A"
                 )
@@ -1084,8 +1442,8 @@ function SE.Decompile(inst)
     -- Fallback
     if not src then
         src = string.format(
-            "-- [BaoSaveInstance v5.0 OMEGA] All %d decompile methods exhausted\n-- Name: %s\n-- Class: %s\n-- Path: %s\n-- Executor: %s\n-- Available Methods: %s\n",
-            12, inst.Name, inst.ClassName, path,
+            "-- [BaoSaveInstance v6.0 ULTRA] All %d decompile methods exhausted\n-- Name: %s\n-- Class: %s\n-- Path: %s\n-- Executor: %s\n-- Available Methods: %s\n",
+            20, inst.Name, inst.ClassName, path,
             ExecDetect.Name(),
             table.concat(ExecDetect.BestDecompileMethod(), ", ")
         )
@@ -1790,7 +2148,326 @@ function Core.Remotes(pCb) return GatherType(function(d) return d:IsA("RemoteEve
 function Core.Values(pCb) return GatherType(function(d) return d:IsA("ValueBase") end, "Copied", pCb) end
 function Core.Selected(inst, pCb) if not inst then return nil end Core.Reset() local c = CloneChild(inst) if c then Stats.Copied = 1 + U.Count(inst) end if pCb then pCb(100, "Selected", inst.Name, inst.ClassName) end return c end
 
+-- v6.0 ULTRA: New Core methods
+function Core.AudioSystem(pCb) return GatherType(function(d) return U.IsA(d, Config.AudioClasses) end, "Copied", pCb) end
+function Core.IKData(pCb) return GatherType(function(d) return U.IsA(d, Config.IKClasses) end, "Copied", pCb) end
+function Core.WireSystem(pCb) return GatherType(function(d) return d.ClassName == "Wire" end, "Copied", pCb) end
+function Core.ChatSystem(pCb) return GatherType(function(d) return U.IsA(d, Config.ChatClasses) end, "Copied", pCb) end
+function Core.EditableMeshes(pCb) return GatherType(function(d) return d.ClassName == "EditableMesh" or d.ClassName == "EditableImage" end, "Copied", pCb) end
+
+function Core.Connections(pCb)
+    Core.Reset()
+    local map = {}
+    if not getconnections then if pCb then pCb(100, "Connections", "N/A", "") end return map end
+    for _, sName in ipairs(Config.AllServices) do
+        local svc = U.Svc(sName)
+        if svc then
+            for i, d in ipairs(U.Desc(svc)) do
+                pcall(function()
+                    for _, evName in ipairs({"Changed","ChildAdded","ChildRemoved"}) do
+                        pcall(function()
+                            local ev = d[evName]
+                            if ev then
+                                local conns = getconnections(ev)
+                                if conns and #conns > 0 then
+                                    map[U.Path(d)] = map[U.Path(d)] or {}
+                                    map[U.Path(d)][evName] = #conns
+                                    Stats.Copied = Stats.Copied + 1
+                                end
+                            end
+                        end)
+                    end
+                end)
+                U.Yield(i)
+            end
+        end
+    end
+    if pCb then pCb(100, "Connections", Stats.Copied.." found", "") end
+    return map
+end
+
+function Core.AssetIds(pCb)
+    Core.Reset()
+    local assets = {}
+    local assetProps = {"MeshId","TextureID","TextureId","Texture","Image","SoundId","Animation","AnimationId","SkyboxBk","SkyboxDn","SkyboxFt","SkyboxLf","SkyboxRt","SkyboxUp","ColorMap","MetalnessMap","NormalMap","RoughnessMap","ShirtTemplate","PantsTemplate","Graphic","Asset"}
+    for _, sName in ipairs(Config.AllServices) do
+        local svc = U.Svc(sName)
+        if svc then
+            for i, d in ipairs(U.Desc(svc)) do
+                for _, prop in ipairs(assetProps) do
+                    pcall(function()
+                        local val = d[prop]
+                        if val and type(val) == "string" and val:find("rbxasset") then
+                            assets[val] = assets[val] or {}
+                            table.insert(assets[val], {path=U.Path(d), prop=prop, class=d.ClassName})
+                            Stats.Copied = Stats.Copied + 1
+                        end
+                    end)
+                end
+                U.Yield(i)
+            end
+        end
+    end
+    if pCb then pCb(100, "Assets", Stats.Copied.." IDs found", "") end
+    return assets
+end
+
+function Core.Folder(inst, pCb)
+    Core.Reset()
+    if not inst then return {} end
+    local results = {}
+    local ch = U.Ch(inst)
+    Stats.Total = #ch
+    for i, child in ipairs(ch) do
+        local c = CloneChild(child)
+        if c then table.insert(results, c) Stats.Copied = Stats.Copied + 1 + U.Count(child)
+        elseif Config.Perf.RebuildFailed then
+            local rb = Forge.Build(child)
+            if rb then table.insert(results, rb) Stats.Copied = Stats.Copied + 1
+            else Stats.Failed = Stats.Failed + 1 end
+        else Stats.Failed = Stats.Failed + 1 end
+        if pCb then pCb((i/#ch)*100, "Folder", child.Name, child.ClassName) end
+        U.Yield(i) Mem.Check()
+    end
+    return results
+end
+
+function Core.SearchByName(name, pCb)
+    Core.Reset()
+    local results = {}
+    for _, sName in ipairs(Config.AllServices) do
+        local svc = U.Svc(sName)
+        if svc then
+            for _, d in ipairs(U.Desc(svc)) do
+                if d.Name:lower():find(name:lower()) then
+                    local c = PDB.Deep(d)
+                    if c then table.insert(results, {obj=c, path=U.Path(d), class=d.ClassName}) Stats.Copied = Stats.Copied + 1 end
+                end
+            end
+        end
+    end
+    if pCb then pCb(100, "Search", Stats.Copied.." matches", "") end
+    return results
+end
+
+function Core.CollisionGroups(pCb)
+    Core.Reset()
+    local groups = {}
+    pcall(function()
+        local ps = Svc.PhysicsService
+        if ps and ps.GetRegisteredCollisionGroups then
+            groups = ps:GetRegisteredCollisionGroups()
+        end
+    end)
+    if pCb then pCb(100, "Collision", #groups.." groups", "") end
+    return groups
+end
+
+function Core.AnimationTracks(pCb)
+    Core.Reset()
+    local tracks = {}
+    if not Config.Perf.CaptureAnimData then if pCb then pCb(100, "Anims", "Disabled", "") end return tracks end
+    for _, sName in ipairs(Config.AllServices) do
+        local svc = U.Svc(sName)
+        if svc then
+            for _, d in ipairs(U.Desc(svc)) do
+                if d:IsA("AnimationController") or d:IsA("Animator") then
+                    pcall(function()
+                        local playing = d:GetPlayingAnimationTracks()
+                        for _, track in ipairs(playing) do
+                            table.insert(tracks, {
+                                name = track.Name,
+                                animId = track.Animation and track.Animation.AnimationId or "?",
+                                speed = track.Speed,
+                                weight = track.WeightCurrent,
+                                looped = track.Looped,
+                                path = U.Path(d),
+                            })
+                            Stats.Copied = Stats.Copied + 1
+                        end
+                    end)
+                end
+            end
+        end
+    end
+    if pCb then pCb(100, "AnimTracks", Stats.Copied.." tracks", "") end
+    return tracks
+end
+
 -- 35. Everything
+
+-- v6.0 ULTRA: Extended Core methods
+function Core.Cameras(pCb) return GatherType(function(d) return d:IsA("Camera") end, "Copied", pCb) end
+function Core.ClickDetectors(pCb) return GatherType(function(d) return d:IsA("ClickDetector") or d:IsA("DragDetector") end, "Copied", pCb) end
+function Core.Trails(pCb) return GatherType(function(d) return d:IsA("Trail") end, "Copied", pCb) end
+function Core.Beams(pCb) return GatherType(function(d) return d:IsA("Beam") end, "Copied", pCb) end
+function Core.Attachments(pCb) return GatherType(function(d) return d:IsA("Attachment") or d:IsA("Bone") end, "Copied", pCb) end
+function Core.SurfaceAppearances(pCb) return GatherType(function(d) return d:IsA("SurfaceAppearance") or d:IsA("MaterialVariant") end, "Copied", pCb) end
+function Core.WeldData(pCb) return GatherType(function(d) return d:IsA("JointInstance") or d:IsA("WeldConstraint") end, "Copied", pCb) end
+function Core.Seats(pCb) return GatherType(function(d) return d:IsA("Seat") or d:IsA("VehicleSeat") end, "Copied", pCb) end
+function Core.SpawnLocations(pCb) return GatherType(function(d) return d:IsA("SpawnLocation") end, "Copied", pCb) end
+function Core.Humanoids(pCb) return GatherType(function(d) return d:IsA("Humanoid") or d:IsA("HumanoidDescription") end, "Copied", pCb) end
+function Core.PathfindingData(pCb) return GatherType(function(d) return d:IsA("PathfindingModifier") or d:IsA("PathfindingLink") end, "Copied", pCb) end
+function Core.UILayouts(pCb) return GatherType(function(d) return d:IsA("UILayout") or d:IsA("UIConstraint") or d:IsA("UIComponent") end, "Copied", pCb) end
+function Core.FaceControls(pCb) return GatherType(function(d) return d.ClassName == "FaceControls" end, "Copied", pCb) end
+function Core.ForceFields(pCb) return GatherType(function(d) return d:IsA("ForceField") end, "Copied", pCb) end
+function Core.Decals(pCb) return GatherType(function(d) return d:IsA("Decal") end, "Copied", pCb) end
+function Core.Teams(pCb) return GatherType(function(d) return d:IsA("Team") end, "Copied", pCb) end
+function Core.Dialogs(pCb) return GatherType(function(d) return d:IsA("Dialog") or d:IsA("DialogChoice") end, "Copied", pCb) end
+function Core.Atmosphere(pCb) return GatherType(function(d) return d:IsA("Atmosphere") or d:IsA("Sky") or d:IsA("Clouds") end, "Copied", pCb) end
+function Core.PostEffects(pCb) return GatherType(function(d) return d:IsA("PostEffect") end, "Copied", pCb) end
+
+function Core.InstanceCount(pCb)
+    Core.Reset()
+    local counts = {}
+    local total = 0
+    for _, sName in ipairs(Config.AllServices) do
+        local svc = U.Svc(sName)
+        if svc then
+            local n = U.Count(svc)
+            counts[sName] = n
+            total = total + n
+        end
+    end
+    counts._total = total
+    if pCb then pCb(100, "Count", total.." instances", "") end
+    return counts
+end
+
+function Core.HierarchyTree(pCb)
+    Core.Reset()
+    local lines = {}
+    local function walk(inst, depth)
+        if depth > 8 then return end
+        local prefix = string.rep("  ", depth)
+        table.insert(lines, string.format("%s[%s] %s", prefix, inst.ClassName, inst.Name))
+        Stats.Copied = Stats.Copied + 1
+        for _, child in ipairs(U.Ch(inst)) do walk(child, depth+1) end
+    end
+    for _, sName in ipairs(Config.AllServices) do
+        local svc = U.Svc(sName)
+        if svc and not U.IsIgnS(sName) then
+            table.insert(lines, "\n=== "..sName.." ===")
+            for _, child in ipairs(U.Ch(svc)) do walk(child, 1) end
+        end
+    end
+    if pCb then pCb(100, "Tree", Stats.Copied.." nodes", "") end
+    return lines
+end
+
+function Core.SpecificScript(inst, pCb)
+    Core.Reset()
+    if not inst or not inst:IsA("LuaSourceContainer") then return nil, "Not a script" end
+    local src, method = SE.Decompile(inst)
+    if pCb then pCb(100, "Script", inst.Name, method) end
+    return src, method
+end
+
+function Core.SearchByProperty(prop, val, pCb)
+    Core.Reset()
+    local results = {}
+    for _, sName in ipairs(Config.AllServices) do
+        local svc = U.Svc(sName)
+        if svc then
+            for _, d in ipairs(U.Desc(svc)) do
+                pcall(function()
+                    local pv = d[prop]
+                    if pv ~= nil and tostring(pv):lower():find(tostring(val):lower()) then
+                        local c = PDB.Deep(d)
+                        if c then table.insert(results, {obj=c, path=U.Path(d), class=d.ClassName, value=tostring(pv)}) Stats.Copied = Stats.Copied + 1 end
+                    end
+                end)
+            end
+        end
+    end
+    if pCb then pCb(100, "PropSearch", Stats.Copied.." matches", "") end
+    return results
+end
+
+function Core.ScriptsFromService(svcName, pCb)
+    Core.Reset()
+    if not SE.Has() then if pCb then pCb(0, "N/A", "No decompiler", "") end return {}, {} end
+    local svc = U.Svc(svcName)
+    if not svc then return {}, {} end
+    local scripts = {}
+    for _, d in ipairs(U.Desc(svc)) do
+        if d:IsA("LuaSourceContainer") then table.insert(scripts, d) end
+    end
+    local results, methods = {}, {}
+    for i, s in ipairs(scripts) do
+        local src, method = SE.Decompile(s)
+        results[s] = src methods[s] = method
+        if method ~= "failed" then Stats.Scripts = Stats.Scripts + 1 else Stats.ScriptsFail = Stats.ScriptsFail + 1 end
+        if pCb then pCb((i/#scripts)*100, "Decompiling", s.Name, method) end
+        U.Yield(i)
+    end
+    return results, methods
+end
+
+function Core.BytecodeExport(pCb)
+    Core.Reset()
+    if not getscriptbytecode then if pCb then pCb(0, "N/A", "No bytecode", "") end return {} end
+    local bytecodes = {}
+    for _, sName in ipairs(Config.AllServices) do
+        local svc = U.Svc(sName)
+        if svc then
+            for i, d in ipairs(U.Desc(svc)) do
+                if d:IsA("LuaSourceContainer") then
+                    pcall(function()
+                        local bc = getscriptbytecode(d)
+                        if bc and #bc > 0 then
+                            bytecodes[U.Path(d)] = {size=#bc, class=d.ClassName, name=d.Name}
+                            Stats.Copied = Stats.Copied + 1
+                        end
+                    end)
+                end
+                U.Yield(i)
+            end
+        end
+    end
+    if pCb then pCb(100, "Bytecode", Stats.Copied.." scripts", "") end
+    return bytecodes
+end
+
+function Core.PlayerDataMap(pCb)
+    Core.Reset()
+    local players = {}
+    pcall(function()
+        for _, p in ipairs(Svc.Players:GetPlayers()) do
+            local info = {Name=p.Name, UserId=p.UserId, DisplayName=p.DisplayName, AccountAge=p.AccountAge, Team=""}
+            pcall(function() info.Team = p.Team and p.Team.Name or "None" end)
+            pcall(function() info.HasCharacter = p.Character ~= nil end)
+            pcall(function()
+                if p.Character then
+                    local h = p.Character:FindFirstChildOfClass("Humanoid")
+                    if h then info.Health = h.Health info.MaxHealth = h.MaxHealth info.WalkSpeed = h.WalkSpeed info.JumpPower = h.JumpPower end
+                end
+            end)
+            table.insert(players, info)
+            Stats.Copied = Stats.Copied + 1
+        end
+    end)
+    if pCb then pCb(100, "Players", Stats.Copied.." players", "") end
+    return players
+end
+
+function Core.GameInfo(pCb)
+    Core.Reset()
+    local info = {}
+    pcall(function() info.PlaceId = game.PlaceId end)
+    pcall(function() info.GameId = game.GameId end)
+    pcall(function() info.JobId = game.JobId end)
+    pcall(function() info.PlaceVersion = game.PlaceVersion end)
+    pcall(function()
+        local pi = Svc.MarketplaceService:GetProductInfo(game.PlaceId)
+        if pi then info.Name = pi.Name info.Description = pi.Description info.Creator = pi.Creator and pi.Creator.Name end
+    end)
+    pcall(function() info.Gravity = Svc.Workspace.Gravity end)
+    pcall(function() info.FallenPartsDestroyHeight = Svc.Workspace.FallenPartsDestroyHeight end)
+    pcall(function() info.StreamingEnabled = Svc.Workspace.StreamingEnabled end)
+    if pCb then pCb(100, "GameInfo", "Done", "") end
+    return info
+end
 function Core.Everything(pCb)
     Core.Reset()
     local data = {game={}, terrain=nil, scripts={}, scriptMethods={}, lighting={}, effects={}, camera=nil, materials={}, nilInst={}, bytecodes={}}
@@ -1827,7 +2504,7 @@ function Core.Everything(pCb)
 end
 
 -- ============================================================
--- 22. EXPORTER (12 methods)
+-- 22. EXPORTER (18 methods)
 -- ============================================================
 local Exp = {}
 
@@ -1852,6 +2529,41 @@ function Exp.Save(fileName, opts)
         function() if not (getgenv and getgenv().Delta and saveinstance) then return false end saveinstance({FileName=fileName, Decompile=true}) return true end,
         function() if not (wave and wave.saveinstance) then return false end wave.saveinstance(fileName) return true end,
         function() if not (Arceus and saveinstance) then return false end saveinstance(game, fileName) return true end,
+        -- v6.0 ULTRA: New save methods (M13-M18)
+        function() if not (getgenv and getgenv().Solara and saveinstance) then return false end saveinstance({FileName=fileName, Decompile=true, NilInstances=true, Timeout=Config.Perf.Timeout}) return true end,
+        function() if not (getgenv and getgenv().Xeno and saveinstance) then return false end saveinstance({FileName=fileName, Decompile=true, NilInstances=true, SaveBytecode=true}) return true end,
+        function() if not (getgenv and getgenv().Celery and saveinstance) then return false end saveinstance({FileName=fileName, Decompile=true}) return true end,
+        function() if not (codex and saveinstance) then return false end saveinstance({FileName=fileName, Decompile=true, NilInstances=true}) return true end,
+        function()
+            if not writefile then return false end
+            local data = {"-- BaoSave ULTRA Manual Export\n-- File: "..fileName.."\n"}
+            for _, sName in ipairs(Config.AllServices) do
+                local svc = U.Svc(sName)
+                if svc and not U.IsIgnS(sName) then
+                    table.insert(data, "-- Service: "..sName.."\n")
+                    for _, child in ipairs(U.Ch(svc)) do
+                        table.insert(data, string.format("-- [%s] %s (%s)\n", sName, child.Name, child.ClassName))
+                    end
+                end
+            end
+            writefile(fileName:gsub("%.rbxl$", "_manifest.txt"), table.concat(data))
+            return true
+        end,
+        function()
+            if not (writefile and saveinstance) then return false end
+            local chunkIdx = 0
+            for _, sName in ipairs({"Workspace","ReplicatedStorage","StarterGui","StarterPlayer","Lighting"}) do
+                pcall(function()
+                    local svc = U.Svc(sName)
+                    if svc then
+                        chunkIdx = chunkIdx + 1
+                        local chunkName = fileName:gsub("%.rbxl$", "_"..sName..".rbxl")
+                        saveinstance({FileName=chunkName, ExtraInstances={svc}, Decompile=true, Timeout=Config.Perf.Timeout})
+                    end
+                end)
+            end
+            return chunkIdx > 0
+        end,
     }
 
     for i, m in ipairs(methods) do
@@ -1963,7 +2675,7 @@ function GUI.Build()
     local lvl, score = ExecDetect.PowerLevel()
     local pwBadge = GUI.New("Frame",{Size=UDim2.new(0,0,0,16),Position=UDim2.new(0,8,0,140),BackgroundColor3=C.Glass,BorderSizePixel=0,AutomaticSize=Enum.AutomaticSize.X,Parent=pp})
     GUI.Corner(pwBadge,4) GUI.Stroke(pwBadge,C.Sep,1,0.6) GUI.New("UIPadding",{PaddingLeft=UDim.new(0,5),PaddingRight=UDim.new(0,5),Parent=pwBadge})
-    GUI.New("TextLabel",{Size=UDim2.new(0,0,1,0),BackgroundTransparency=1,AutomaticSize=Enum.AutomaticSize.X,Text=string.format("💪 %s (%d/35) • 🔧 %s • 12 Script Methods", lvl, score, ExecDetect.Name()),TextColor3=C.Sub,Font=T.F3,TextSize=8,Parent=pwBadge})
+    GUI.New("TextLabel",{Size=UDim2.new(0,0,1,0),BackgroundTransparency=1,AutomaticSize=Enum.AutomaticSize.X,Text=string.format("💪 %s (%d/50) • 🔧 %s • 20 Script Methods", lvl, score, ExecDetect.Name()),TextColor3=C.Sub,Font=T.F3,TextSize=8,Parent=pwBadge})
 
     GUI.Drag(mf,tb)
     mnB.MouseButton1Click:Connect(function() minimized = not minimized if minimized then TS:Create(mf,TweenInfo.new(0.2,Enum.EasingStyle.Quint),{Size=UDim2.new(0,560,0,52)}):Play() cf.Visible=false mnB.Text="+" else cf.Visible=true TS:Create(mf,TweenInfo.new(0.2,Enum.EasingStyle.Quint),{Size=T.Size}):Play() mnB.Text="─" end end)
@@ -2099,8 +2811,165 @@ function API:ShowCapabilities()
     local text = table.concat(lines, "\n")
     pcall(function() if setclipboard then setclipboard(text) end end)
     pcall(function() if writefile then writefile(Config.Out.."_Caps.txt", text) end end)
-    U.Notify(Config.Name, "Capabilities: "..lvl.." ("..score.."/35)", 5)
+    U.Notify(Config.Name, "Capabilities: "..lvl.." ("..score.."/50)", 5)
 end
+
+-- v6.0 ULTRA: New API functions
+function API:DecompileAudioSystem() Run("Audio",function() local f=Config.Out.."_Audio.rbxl" Core.AudioSystem(MP("Audio")) Fin(f,"Audio System") end) end
+function API:DecompileIKData() Run("IK",function() local f=Config.Out.."_IK.rbxl" Core.IKData(MP("IK")) Fin(f,"IK Data") end) end
+function API:DecompileWireSystem() Run("Wire",function() local f=Config.Out.."_Wire.rbxl" Core.WireSystem(MP("Wire")) Fin(f,"Wire System") end) end
+function API:DecompileChatSystem() Run("Chat",function() local f=Config.Out.."_Chat.rbxl" Core.ChatSystem(MP("Chat")) Fin(f,"Chat System") end) end
+function API:DecompileEditableMeshes() Run("EMesh",function() local f=Config.Out.."_EMesh.rbxl" Core.EditableMeshes(MP("EMesh")) Fin(f,"Editable Meshes") end) end
+function API:DecompileConnections() Run("Conns",function() local f=Config.Out.."_Conns.rbxl" Core.Connections(MP("Conns")) Fin(f,"Connections") end) end
+function API:DecompileAssetIds() Run("Assets",function()
+    local assets = Core.AssetIds(MP("Assets"))
+    if writefile then
+        local lines = {"-- BaoSave ULTRA Asset ID Report\n"}
+        for assetId, refs in pairs(assets) do
+            table.insert(lines, assetId.." ("..#refs.." refs)\n")
+            for _, ref in ipairs(refs) do
+                table.insert(lines, "  "..ref.path.." ["..ref.prop.."]\n")
+            end
+        end
+        pcall(function() writefile(Config.Out.."_AssetIDs.txt", table.concat(lines)) end)
+    end
+    GUI.Prog(100,"Assets Complete",Stats.Copied.." IDs") U.Notify(Config.Name,"Asset IDs exported!",4)
+end) end
+function API:DecompileCollisionGroups() Run("Collision",function() Core.CollisionGroups(MP("Collision")) GUI.Prog(100,"Collision Groups","Done") U.Notify(Config.Name,"Collision groups exported!",4) end) end
+function API:DecompileAnimationTracks() Run("AnimTracks",function()
+    local tracks = Core.AnimationTracks(MP("AnimTracks"))
+    if writefile and #tracks > 0 then
+        local lines = {"-- BaoSave ULTRA Animation Tracks\n"}
+        for _, t in ipairs(tracks) do
+            table.insert(lines, string.format("%s | %s | Speed:%.1f | Weight:%.1f | Loop:%s\n", t.name, t.animId, t.speed, t.weight, tostring(t.looped)))
+        end
+        pcall(function() writefile(Config.Out.."_AnimTracks.txt", table.concat(lines)) end)
+    end
+    GUI.Prog(100,"Anim Tracks",#tracks.." found") U.Notify(Config.Name,"Animation tracks exported!",4)
+end) end
+function API:DecompileFolder(inst) Run("Folder",function() local f=Config.Out.."_Folder.rbxl" Core.Folder(inst,MP("Folder")) Fin(f,"Folder") end) end
+function API:SearchByName(name) Run("Search",function() local f=Config.Out.."_Search.rbxl" Core.SearchByName(name or "Part",MP("Search")) Fin(f,"Search") end) end
+function API:BatchDecompile(types) Run("Batch",function()
+    types = types or {"game","scripts","terrain","lighting"}
+    for _, t in ipairs(types) do
+        pcall(function()
+            if t == "game" then Core.FullGame(MP("Game"))
+            elseif t == "scripts" then Core.Scripts(MP("Scripts"))
+            elseif t == "terrain" then Core.Terrain(MP("Terrain"))
+            elseif t == "lighting" then Core.Lighting(MP("Lighting"))
+            elseif t == "sounds" then Core.Sounds(MP("Sounds"))
+            elseif t == "meshes" then Core.Meshes(MP("Meshes"))
+            elseif t == "anims" then Core.Anims(MP("Anims"))
+            elseif t == "audio" then Core.AudioSystem(MP("Audio")) end
+        end)
+    end
+    Fin(Config.Out.."_Batch.rbxl","Batch")
+end) end
+function API:ExportFullReport()
+    Run("Report",function()
+        local caps = ExecDetect.Capabilities
+        local lvl, score = ExecDetect.PowerLevel()
+        local lines = {
+            "=== BaoSaveInstance v"..Config.Version.." "..Config.Build.." Full Report ===",
+            "Executor: "..ExecDetect.Name(),
+            string.format("Power: %s (%d/50)", lvl, score),
+            "Decompile Methods: "..table.concat(ExecDetect.BestDecompileMethod(), ", "),
+            "",
+            "=== Capabilities ==="
+        }
+        for k, v in pairs(caps) do table.insert(lines, string.format("  %s: %s", k, tostring(v))) end
+        table.insert(lines, "")
+        table.insert(lines, "=== Services ===")
+        for _, sName in ipairs(Config.AllServices) do
+            local svc = U.Svc(sName)
+            if svc then table.insert(lines, string.format("  %s: %d children", sName, #U.Ch(svc))) end
+        end
+        local text = table.concat(lines, "\n")
+        pcall(function() if setclipboard then setclipboard(text) end end)
+        pcall(function() if writefile then writefile(Config.Out.."_Report.txt", text) end end)
+        GUI.Prog(100,"Report Complete","Exported") U.Notify(Config.Name,"Full report exported!",4)
+    end)
+end
+
+-- v6.0 ULTRA: Extended API functions
+function API:DecompileCameras() Run("Cameras",function() local f=Config.Out.."_Cameras.rbxl" Core.Cameras(MP("Cameras")) Fin(f,"Cameras") end) end
+function API:DecompileClickDetectors() Run("ClickDet",function() local f=Config.Out.."_ClickDet.rbxl" Core.ClickDetectors(MP("ClickDet")) Fin(f,"Click Detectors") end) end
+function API:DecompileTrails() Run("Trails",function() local f=Config.Out.."_Trails.rbxl" Core.Trails(MP("Trails")) Fin(f,"Trails") end) end
+function API:DecompileBeams() Run("Beams",function() local f=Config.Out.."_Beams.rbxl" Core.Beams(MP("Beams")) Fin(f,"Beams") end) end
+function API:DecompileAttachments() Run("Attach",function() local f=Config.Out.."_Attach.rbxl" Core.Attachments(MP("Attach")) Fin(f,"Attachments") end) end
+function API:DecompileSurfaceAppearances() Run("SurfApp",function() local f=Config.Out.."_SurfApp.rbxl" Core.SurfaceAppearances(MP("SurfApp")) Fin(f,"Surface Appearances") end) end
+function API:DecompileWelds() Run("Welds",function() local f=Config.Out.."_Welds.rbxl" Core.WeldData(MP("Welds")) Fin(f,"Welds") end) end
+function API:DecompileSeats() Run("Seats",function() local f=Config.Out.."_Seats.rbxl" Core.Seats(MP("Seats")) Fin(f,"Seats") end) end
+function API:DecompileSpawnLocations() Run("Spawns",function() local f=Config.Out.."_Spawns.rbxl" Core.SpawnLocations(MP("Spawns")) Fin(f,"Spawn Locations") end) end
+function API:DecompileHumanoids() Run("Humanoids",function() local f=Config.Out.."_Humanoids.rbxl" Core.Humanoids(MP("Humanoids")) Fin(f,"Humanoids") end) end
+function API:DecompilePathfindingData() Run("Pathfind",function() local f=Config.Out.."_Pathfind.rbxl" Core.PathfindingData(MP("Pathfind")) Fin(f,"Pathfinding") end) end
+function API:DecompileUILayouts() Run("UILayout",function() local f=Config.Out.."_UILayout.rbxl" Core.UILayouts(MP("UILayout")) Fin(f,"UI Layouts") end) end
+function API:DecompileFaceControls() Run("FaceCtrl",function() local f=Config.Out.."_FaceCtrl.rbxl" Core.FaceControls(MP("FaceCtrl")) Fin(f,"Face Controls") end) end
+function API:DecompileForceFields() Run("ForceF",function() local f=Config.Out.."_ForceF.rbxl" Core.ForceFields(MP("ForceF")) Fin(f,"Force Fields") end) end
+function API:DecompileDecals() Run("Decals",function() local f=Config.Out.."_Decals.rbxl" Core.Decals(MP("Decals")) Fin(f,"Decals") end) end
+function API:DecompileTeams() Run("Teams",function() local f=Config.Out.."_Teams.rbxl" Core.Teams(MP("Teams")) Fin(f,"Teams") end) end
+function API:DecompileDialogs() Run("Dialogs",function() local f=Config.Out.."_Dialogs.rbxl" Core.Dialogs(MP("Dialogs")) Fin(f,"Dialogs") end) end
+function API:DecompileAtmosphere() Run("Atmos",function() local f=Config.Out.."_Atmos.rbxl" Core.Atmosphere(MP("Atmos")) Fin(f,"Atmosphere") end) end
+function API:DecompilePostEffects() Run("PostFX",function() local f=Config.Out.."_PostFX.rbxl" Core.PostEffects(MP("PostFX")) Fin(f,"Post Effects") end) end
+function API:DecompileSpecificScript(inst) Run("1Script",function()
+    local src, method = Core.SpecificScript(inst, MP("Script"))
+    if src and writefile then
+        pcall(function() writefile(Config.Out.."_Script_"..(inst and inst.Name or "unknown")..".lua", src) end)
+    end
+    GUI.Prog(100, "Script", method or "N/A") U.Notify(Config.Name, "Script decompiled: "..(method or "?"), 4)
+end) end
+function API:SearchByProperty(prop, val) Run("PropSearch",function() local f=Config.Out.."_PropSearch.rbxl" Core.SearchByProperty(prop or "Name", val or "Part", MP("PropSearch")) Fin(f,"Property Search") end) end
+function API:DecompileScriptsFromService(svcName) Run("SvcScripts",function() local f=Config.Out.."_"..svcName.."_Scripts.rbxl" Core.ScriptsFromService(svcName, MP(svcName.." Scripts")) SE.SaveBytecodes() Fin(f, svcName.." Scripts") end) end
+function API:ExportBytecodes() Run("Bytecode",function()
+    local bcs = Core.BytecodeExport(MP("Bytecode"))
+    if writefile then
+        local lines = {"-- BaoSave ULTRA Bytecode Report\n"}
+        for path, info in pairs(bcs) do
+            table.insert(lines, string.format("%s [%s] %s (%d bytes)\n", info.name, info.class, path, info.size))
+        end
+        pcall(function() writefile(Config.Out.."_Bytecodes.txt", table.concat(lines)) end)
+    end
+    GUI.Prog(100, "Bytecode", Stats.Copied.." exported") U.Notify(Config.Name, "Bytecodes exported!", 4)
+end) end
+function API:ExportInstanceCount() Run("Count",function()
+    local counts = Core.InstanceCount(MP("Count"))
+    if writefile then
+        local lines = {"-- BaoSave ULTRA Instance Count\n"}
+        for svc, n in pairs(counts) do
+            if svc ~= "_total" then table.insert(lines, string.format("%s: %s instances\n", svc, U.FmtN(n))) end
+        end
+        table.insert(lines, string.format("\nTOTAL: %s instances\n", U.FmtN(counts._total or 0)))
+        pcall(function() writefile(Config.Out.."_Count.txt", table.concat(lines)) end)
+    end
+    GUI.Prog(100, "Count", U.FmtN(counts._total or 0).." instances") U.Notify(Config.Name, "Instance count exported!", 4)
+end) end
+function API:ExportHierarchyTree() Run("Tree",function()
+    local lines = Core.HierarchyTree(MP("Tree"))
+    if writefile then pcall(function() writefile(Config.Out.."_Tree.txt", table.concat(lines, "\n")) end) end
+    GUI.Prog(100, "Tree", Stats.Copied.." nodes") U.Notify(Config.Name, "Hierarchy tree exported!", 4)
+end) end
+function API:ExportPlayerData() Run("Players",function()
+    local players = Core.PlayerDataMap(MP("Players"))
+    if writefile then
+        local lines = {"-- BaoSave ULTRA Player Data\n"}
+        for _, p in ipairs(players) do
+            table.insert(lines, string.format("%s (ID:%d) Display:%s Age:%d Team:%s\n", p.Name, p.UserId, p.DisplayName, p.AccountAge, p.Team or "?"))
+            if p.HasCharacter then table.insert(lines, string.format("  HP:%.0f/%.0f Speed:%.0f Jump:%.0f\n", p.Health or 0, p.MaxHealth or 0, p.WalkSpeed or 0, p.JumpPower or 0)) end
+        end
+        pcall(function() writefile(Config.Out.."_Players.txt", table.concat(lines)) end)
+    end
+    GUI.Prog(100, "Players", #players.." players") U.Notify(Config.Name, "Player data exported!", 4)
+end) end
+function API:ExportGameInfo() Run("GameInfo",function()
+    local info = Core.GameInfo(MP("GameInfo"))
+    if writefile then
+        local lines = {"-- BaoSave ULTRA Game Info\n"}
+        for k, v in pairs(info) do table.insert(lines, string.format("%s: %s\n", tostring(k), tostring(v))) end
+        pcall(function() writefile(Config.Out.."_GameInfo.txt", table.concat(lines)) end)
+    end
+    pcall(function() if setclipboard then setclipboard(HS:JSONEncode(info)) end end)
+    GUI.Prog(100, "GameInfo", "Done") U.Notify(Config.Name, "Game info exported!", 4)
+end) end
 
 -- ============================================================
 -- 25. INITIALIZATION
@@ -2111,7 +2980,7 @@ local function Init()
     local C = Config.Theme.C
     local S = GR.SF
 
-    GUI.Sep("⚡ OMEGA DECOMPILE",1).Parent=S
+    GUI.Sep("⚡ ULTRA DECOMPILE",1).Parent=S
     GUI.Btn("Decompile EVERYTHING","🌐",C.A2,C.A2G,2,function() API:DecompileEverything() end).Parent=S
     GUI.Btn("Full Game 100%","📦",C.A1,C.A1G,3,function() API:DecompileFullGame() end).Parent=S
     GUI.Btn("Quick Save","⚡",C.A3,C.A3G,4,function() API:QuickSave() end).Parent=S
@@ -2125,18 +2994,20 @@ local function Init()
     GUI.Btn("Clothing","👕",C.Btn,C.BtnH,16,function() API:DecompileClothing() end).Parent=S
 
     GUI.Sep("🎨 ASSETS",20).Parent=S
-    GUI.Btn("Scripts (12 Methods)","📜",C.Btn,C.BtnH,21,function() API:DecompileScripts() end).Parent=S
+    GUI.Btn("Scripts (20 Methods)","📜",C.Btn,C.BtnH,21,function() API:DecompileScripts() end).Parent=S
     GUI.Btn("Meshes","🔷",C.Btn,C.BtnH,22,function() API:DecompileMeshes() end).Parent=S
     GUI.Btn("Textures","🖼️",C.Btn,C.BtnH,23,function() API:DecompileTextures() end).Parent=S
     GUI.Btn("Sounds","🔊",C.Btn,C.BtnH,24,function() API:DecompileSounds() end).Parent=S
     GUI.Btn("Animations","🎬",C.Btn,C.BtnH,25,function() API:DecompileAnimations() end).Parent=S
     GUI.Btn("Materials","🎨",C.Btn,C.BtnH,26,function() API:DecompileMaterials() end).Parent=S
+    GUI.Btn("Asset ID Collector","🔗",C.Btn,C.BtnH,27,function() API:DecompileAssetIds() end).Parent=S
 
     GUI.Sep("🌍 ENVIRONMENT",30).Parent=S
     GUI.Btn("Terrain 100%","🏔️",C.Btn,C.BtnH,31,function() API:DecompileTerrain() end).Parent=S
     GUI.Btn("Lighting & PostFX","💡",C.Btn,C.BtnH,32,function() API:DecompileLighting() end).Parent=S
     GUI.Btn("Particles & Effects","✨",C.Btn,C.BtnH,33,function() API:DecompileParticles() end).Parent=S
     GUI.Btn("Physics & Constraints","⚙️",C.Btn,C.BtnH,34,function() API:DecompilePhysics() end).Parent=S
+    GUI.Btn("Collision Groups","🎯",C.Btn,C.BtnH,35,function() API:DecompileCollisionGroups() end).Parent=S
 
     GUI.Sep("🔬 ADVANCED",40).Parent=S
     GUI.Btn("UI Elements","🖥️",C.Btn,C.BtnH,41,function() API:DecompileUIs() end).Parent=S
@@ -2151,20 +3022,56 @@ local function Init()
     GUI.Btn("Nil Instances","👻",C.A4,C.A4G,50,function() API:DecompileNil() end).Parent=S
     GUI.Btn("Hidden Properties","🔐",C.A4,C.A4G,51,function() API:DecompileHidden() end).Parent=S
 
-    GUI.Sep("📂 SERVICES",60).Parent=S
-    for idx,info in ipairs({{"Workspace","🌍"},{"ReplicatedStorage","📦"},{"ServerStorage","🗄️"},{"ServerScriptService","📜"},{"StarterGui","🖥️"},{"StarterPlayer","🧑"},{"StarterPack","🎒"},{"Lighting","💡"},{"SoundService","🔊"},{"ReplicatedFirst","📋"},{"Chat","💬"},{"Teams","👥"}}) do
-        GUI.Btn(info[1],info[2],C.Btn,C.BtnH,60+idx,function() API:DecompileService(info[1]) end).Parent=S
+    GUI.Sep("🎵 v6.0 ULTRA NEW",52).Parent=S
+    GUI.Btn("Audio System","🎵",C.A5,C.A5G,53,function() API:DecompileAudioSystem() end).Parent=S
+    GUI.Btn("IK Controls","🦿",C.Btn,C.BtnH,54,function() API:DecompileIKData() end).Parent=S
+    GUI.Btn("Wire System","🔌",C.Btn,C.BtnH,55,function() API:DecompileWireSystem() end).Parent=S
+    GUI.Btn("Chat System","💬",C.Btn,C.BtnH,56,function() API:DecompileChatSystem() end).Parent=S
+    GUI.Btn("Editable Meshes","🔶",C.Btn,C.BtnH,57,function() API:DecompileEditableMeshes() end).Parent=S
+    GUI.Btn("Event Connections","🔗",C.Btn,C.BtnH,58,function() API:DecompileConnections() end).Parent=S
+    GUI.Btn("Animation Tracks","🎞️",C.Btn,C.BtnH,59,function() API:DecompileAnimationTracks() end).Parent=S
+
+    GUI.Sep("🎯 v6.0 ULTRA EXTENDED",90).Parent=S
+    GUI.Btn("Cameras","🎥",C.Btn,C.BtnH,91,function() API:DecompileCameras() end).Parent=S
+    GUI.Btn("Click Detectors","🖘",C.Btn,C.BtnH,92,function() API:DecompileClickDetectors() end).Parent=S
+    GUI.Btn("Trails","🌈",C.Btn,C.BtnH,93,function() API:DecompileTrails() end).Parent=S
+    GUI.Btn("Beams","✨",C.Btn,C.BtnH,94,function() API:DecompileBeams() end).Parent=S
+    GUI.Btn("Attachments & Bones","📌",C.Btn,C.BtnH,95,function() API:DecompileAttachments() end).Parent=S
+    GUI.Btn("Surface Appearances","🎨",C.Btn,C.BtnH,96,function() API:DecompileSurfaceAppearances() end).Parent=S
+    GUI.Btn("Welds & Joints","🔗",C.Btn,C.BtnH,97,function() API:DecompileWelds() end).Parent=S
+    GUI.Btn("Seats & Vehicles","💺",C.Btn,C.BtnH,98,function() API:DecompileSeats() end).Parent=S
+    GUI.Btn("Spawn Locations","🟢",C.Btn,C.BtnH,99,function() API:DecompileSpawnLocations() end).Parent=S
+    GUI.Btn("Humanoids","🧑‍🤝‍🧑",C.Btn,C.BtnH,100,function() API:DecompileHumanoids() end).Parent=S
+    GUI.Btn("Pathfinding Data","🖹️",C.Btn,C.BtnH,101,function() API:DecompilePathfindingData() end).Parent=S
+    GUI.Btn("UI Layouts","📐",C.Btn,C.BtnH,102,function() API:DecompileUILayouts() end).Parent=S
+    GUI.Btn("Face Controls","🙂",C.Btn,C.BtnH,103,function() API:DecompileFaceControls() end).Parent=S
+    GUI.Btn("Force Fields","🛡️",C.Btn,C.BtnH,104,function() API:DecompileForceFields() end).Parent=S
+    GUI.Btn("Decals","🖼️",C.Btn,C.BtnH,105,function() API:DecompileDecals() end).Parent=S
+    GUI.Btn("Teams","🏁",C.Btn,C.BtnH,106,function() API:DecompileTeams() end).Parent=S
+    GUI.Btn("Dialogs","🗨️",C.Btn,C.BtnH,107,function() API:DecompileDialogs() end).Parent=S
+    GUI.Btn("Atmosphere & Sky","☁️",C.Btn,C.BtnH,108,function() API:DecompileAtmosphere() end).Parent=S
+    GUI.Btn("Post Effects","🌟",C.Btn,C.BtnH,109,function() API:DecompilePostEffects() end).Parent=S
+
+    GUI.Sep("📂 SERVICES",110).Parent=S
+    for idx,info in ipairs({{"Workspace","🌍"},{"ReplicatedStorage","📦"},{"ServerStorage","🗄️"},{"ServerScriptService","📜"},{"StarterGui","🖥️"},{"StarterPlayer","🧑"},{"StarterPack","🎒"},{"Lighting","💡"},{"SoundService","🔊"},{"ReplicatedFirst","📋"},{"Chat","💬"},{"Teams","👥"},{"TextChatService","📝"},{"MaterialService","🎨"}}) do
+        GUI.Btn(info[1],info[2],C.Btn,C.BtnH,110+idx,function() API:DecompileService(info[1]) end).Parent=S
     end
 
-    GUI.Sep("🛠️ TOOLS",80).Parent=S
-    GUI.Btn("Export Logs","📋",C.Btn,C.BtnH,81,function() API:ExportLogs() end).Parent=S
-    GUI.Btn("Test Webhook","🔗",C.Cyan,C.CyanG,82,function() API:TestWebhook() end).Parent=S
-    GUI.Btn("Show Capabilities","💪",C.A5,C.A5G,83,function() API:ShowCapabilities() end).Parent=S
+    GUI.Sep("🛠️ TOOLS & EXPORT",130).Parent=S
+    GUI.Btn("Export Logs","📋",C.Btn,C.BtnH,131,function() API:ExportLogs() end).Parent=S
+    GUI.Btn("Test Webhook","🔗",C.Cyan,C.CyanG,132,function() API:TestWebhook() end).Parent=S
+    GUI.Btn("Show Capabilities","💪",C.A5,C.A5G,133,function() API:ShowCapabilities() end).Parent=S
+    GUI.Btn("Full Report","📊",C.A3,C.A3G,134,function() API:ExportFullReport() end).Parent=S
+    GUI.Btn("Export Bytecodes","💾",C.Btn,C.BtnH,135,function() API:ExportBytecodes() end).Parent=S
+    GUI.Btn("Instance Counter","🔢",C.Btn,C.BtnH,136,function() API:ExportInstanceCount() end).Parent=S
+    GUI.Btn("Hierarchy Tree","🌳",C.Btn,C.BtnH,137,function() API:ExportHierarchyTree() end).Parent=S
+    GUI.Btn("Player Data Map","👤",C.Btn,C.BtnH,138,function() API:ExportPlayerData() end).Parent=S
+    GUI.Btn("Game Info","🎮",C.Btn,C.BtnH,139,function() API:ExportGameInfo() end).Parent=S
 
-    GUI.New("TextLabel",{Size=UDim2.new(1,0,0,28),BackgroundTransparency=1,Text=string.format("v%s %s | 35 APIs | 350+ Props | 12 Script Methods | 12 Save Methods\nAdaptive Terrain | Reference Resolver | Bytecode Cache | Webhook Logs", Config.Version,Config.Build),TextColor3=C.Dim,Font=Config.Theme.F3,TextSize=8,LayoutOrder=90,Parent=S})
+    GUI.New("TextLabel",{Size=UDim2.new(1,0,0,28),BackgroundTransparency=1,Text=string.format("v%s %s | 80+ APIs | 500+ Props | 20 Script Methods | 18 Save Methods\nAdaptive Terrain | Smart Stub | Source Validation | Bytecode Cache | Webhook", Config.Version,Config.Build),TextColor3=C.Dim,Font=Config.Theme.F3,TextSize=8,LayoutOrder=150,Parent=S})
 
-    U.Notify(Config.Name,"v"..Config.Version.." "..Config.Build.." loaded! Max power decompile ready.",5)
-    U.Log("INIT","v"..Config.Version.." OMEGA initialized")
+    U.Notify(Config.Name,"v"..Config.Version.." "..Config.Build.." loaded! Ultimate power decompile ready.",5)
+    U.Log("INIT","v"..Config.Version.." ULTRA initialized")
     task.spawn(function() task.wait(2) WH.Send("Tool Loaded",{Copied=0,Failed=0,Scripts=0,ScriptsFail=0,Elapsed=0,PeakMem=0,Terrain=0,NilInst=0,Hidden=0,Meshes=0,Sounds=0,Anims=0}) end)
 end
 
