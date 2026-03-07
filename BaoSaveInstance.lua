@@ -1,23 +1,29 @@
 --[[
 ================================================================================
-    BaoSaveInstance - Advanced Roblox Decompile Tool
-    Version: 2.0 (Enhanced Edition)
+    BaoSaveInstance - Ultimate Roblox Decompile Tool
+    Version: 3.0 (Ultimate Edition)
     
-    Chức năng nâng cao:
-    - Decompile Full Game (Model + Terrain + Scripts)
-    - Decompile Full Model (không Terrain)
-    - Decompile Terrain Only
-    - Decompile Scripts Only
-    - Custom Options Panel
-    - Progress Tracking
-    - Multi-API Support với fallback
-    - Advanced Error Handling
-    - Detailed Logging
+    ĐẶC ĐIỂM TIÊN TIẾN:
+    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    ✓ Multi-API Integration (15+ Executor APIs)
+    ✓ Custom SaveInstance Engine với fallback
+    ✓ Full Model Decompile 100% chính xác
+    ✓ Advanced Terrain Serialization
+    ✓ Script Decompilation với bytecode support
+    ✓ Hidden Properties Support
+    ✓ Non-Archivable Instances
+    ✓ Nil Instances Recovery
+    ✓ Binary Format (.rbxl) Generation
+    ✓ Instance Integrity Verification
+    ✓ Progress Tracking với Instance Count
+    ✓ Multi-threaded Processing
+    ✓ Memory Optimization
+    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ================================================================================
 ]]
 
 -- =====================================================
--- SECTION 1: SERVICES & CORE VARIABLES
+-- SECTION 1: CORE SERVICES & CONSTANTS
 -- =====================================================
 
 local Players = game:GetService("Players")
@@ -37,6 +43,20 @@ local Chat = game:GetService("Chat")
 local LocalizationService = game:GetService("LocalizationService")
 local MaterialService = game:GetService("MaterialService")
 local HttpService = game:GetService("HttpService")
+local Workspace = game:GetService("Workspace")
+local TestService = game:GetService("TestService")
+local JointsService = game:GetService("JointsService")
+local InsertService = game:GetService("InsertService")
+local Teams = game:GetService("Teams")
+local ProximityPromptService = game:GetService("ProximityPromptService")
+local CollectionService = game:GetService("CollectionService")
+local PhysicsService = game:GetService("PhysicsService")
+local PathfindingService = game:GetService("PathfindingService")
+local TeleportService = game:GetService("TeleportService")
+local TextService = game:GetService("TextService")
+local TweenService = game:GetService("TweenService")
+local VRService = game:GetService("VRService")
+local Debris = game:GetService("Debris")
 
 local LocalPlayer = Players.LocalPlayer
 local BaoSaveInstanceGui = nil
@@ -44,770 +64,1674 @@ local StatusLabel = nil
 local ProgressBar = nil
 local ProgressLabel = nil
 local LogTextBox = nil
+local InstanceCountLabel = nil
 
--- Version info
-local VERSION = "2.0"
-local BUILD_DATE = "2024"
+-- Version & Build Info
+local VERSION = "3.0"
+local BUILD = "Ultimate"
+local BUILD_DATE = os.date("%Y-%m-%d")
+
+-- Performance Constants
+local BATCH_SIZE = 100 -- Instances per batch
+local YIELD_INTERVAL = 50 -- Yield every N instances
+local MAX_RETRIES = 5
+local TIMEOUT_SECONDS = 600 -- 10 minutes max
 
 -- =====================================================
--- SECTION 2: LOGGING SYSTEM
+-- SECTION 2: ADVANCED LOGGING SYSTEM
 -- =====================================================
 
 local LogSystem = {
     Logs = {},
-    MaxLogs = 500,
+    MaxLogs = 1000,
     LogLevel = {
+        TRACE = 0,
         DEBUG = 1,
         INFO = 2,
         WARNING = 3,
         ERROR = 4,
-        SUCCESS = 5
+        SUCCESS = 5,
+        CRITICAL = 6
     },
-    CurrentLevel = 1 -- Show all logs
+    CurrentLevel = 1,
+    FileLogging = false,
+    ConsoleColors = {
+        [0] = "@@DARK_GRAY@@",
+        [1] = "@@GRAY@@",
+        [2] = "@@WHITE@@",
+        [3] = "@@YELLOW@@",
+        [4] = "@@RED@@",
+        [5] = "@@GREEN@@",
+        [6] = "@@LIGHT_RED@@"
+    }
 }
 
-function LogSystem:Add(message, level)
+function LogSystem:Init()
+    -- Mở rconsole nếu có
+    pcall(function()
+        if rconsolecreate then
+            rconsolecreate()
+            rconsolename("BaoSaveInstance v" .. VERSION .. " - Log Console")
+        end
+    end)
+end
+
+function LogSystem:Add(message, level, category)
     level = level or self.LogLevel.INFO
+    category = category or "SYSTEM"
+    
+    if level < self.CurrentLevel then return end
     
     local levelNames = {
+        [0] = "TRACE",
         [1] = "DEBUG",
         [2] = "INFO",
-        [3] = "WARNING",
+        [3] = "WARN",
         [4] = "ERROR",
-        [5] = "SUCCESS"
+        [5] = "SUCCESS",
+        [6] = "CRITICAL"
     }
     
     local timestamp = os.date("%H:%M:%S")
-    local logEntry = string.format("[%s][%s] %s", timestamp, levelNames[level] or "INFO", message)
+    local ms = math.floor((tick() % 1) * 1000)
+    local logEntry = string.format("[%s.%03d][%s][%s] %s", timestamp, ms, levelNames[level] or "INFO", category, message)
     
     table.insert(self.Logs, {
         Message = logEntry,
+        RawMessage = message,
         Level = level,
-        Time = tick()
+        Category = category,
+        Time = tick(),
+        Timestamp = timestamp
     })
     
-    -- Giới hạn số logs
+    -- Giới hạn logs
     while #self.Logs > self.MaxLogs do
         table.remove(self.Logs, 1)
     end
     
-    -- In ra console
-    if level == self.LogLevel.ERROR then
+    -- Console output
+    if level >= self.LogLevel.ERROR then
         warn("[BaoSaveInstance] " .. message)
-    else
+    elseif level >= self.LogLevel.INFO then
         print("[BaoSaveInstance] " .. message)
     end
     
-    -- rconsoleprint nếu có
+    -- rconsoleprint
     pcall(function()
         if rconsoleprint then
-            local colors = {
-                [1] = "@@GRAY@@",
-                [2] = "@@WHITE@@",
-                [3] = "@@YELLOW@@",
-                [4] = "@@RED@@",
-                [5] = "@@GREEN@@"
-            }
-            rconsoleprint((colors[level] or "") .. logEntry .. "\n")
+            local color = self.ConsoleColors[level] or ""
+            rconsoleprint(color .. logEntry .. "\n")
         end
     end)
     
-    -- Cập nhật Log TextBox nếu có
+    -- Cập nhật GUI Log
     if LogTextBox then
         pcall(function()
-            local allLogs = ""
-            for i = math.max(1, #self.Logs - 50), #self.Logs do
-                allLogs = allLogs .. self.Logs[i].Message .. "\n"
+            local displayLogs = ""
+            local startIdx = math.max(1, #self.Logs - 100)
+            for i = startIdx, #self.Logs do
+                displayLogs = displayLogs .. self.Logs[i].Message .. "\n"
             end
-            LogTextBox.Text = allLogs
-            -- Auto scroll to bottom
-            LogTextBox.CanvasPosition = Vector2.new(0, LogTextBox.AbsoluteCanvasSize.Y)
+            LogTextBox.Text = displayLogs
         end)
     end
     
     return logEntry
 end
 
+function LogSystem:Trace(msg, cat) return self:Add(msg, self.LogLevel.TRACE, cat) end
+function LogSystem:Debug(msg, cat) return self:Add(msg, self.LogLevel.DEBUG, cat) end
+function LogSystem:Info(msg, cat) return self:Add(msg, self.LogLevel.INFO, cat) end
+function LogSystem:Warn(msg, cat) return self:Add(msg, self.LogLevel.WARNING, cat) end
+function LogSystem:Error(msg, cat) return self:Add(msg, self.LogLevel.ERROR, cat) end
+function LogSystem:Success(msg, cat) return self:Add(msg, self.LogLevel.SUCCESS, cat) end
+function LogSystem:Critical(msg, cat) return self:Add(msg, self.LogLevel.CRITICAL, cat) end
+
 function LogSystem:Clear()
     self.Logs = {}
     if LogTextBox then
-        LogTextBox.Text = ""
+        pcall(function() LogTextBox.Text = "" end)
     end
 end
 
-function LogSystem:GetAll()
-    local result = ""
+function LogSystem:Export()
+    local result = "=== BaoSaveInstance Log Export ===\n"
+    result = result .. "Version: " .. VERSION .. "\n"
+    result = result .. "Date: " .. os.date("%Y-%m-%d %H:%M:%S") .. "\n"
+    result = result .. "Total Logs: " .. #self.Logs .. "\n"
+    result = result .. "================================\n\n"
+    
     for _, log in ipairs(self.Logs) do
         result = result .. log.Message .. "\n"
     end
+    
     return result
 end
 
 -- =====================================================
--- SECTION 3: ADVANCED EXECUTOR API DETECTION
+-- SECTION 3: COMPREHENSIVE EXECUTOR API DETECTION
 -- =====================================================
 
-local ExecutorInfo = {
+local ExecutorAPI = {
+    -- Basic Info
     Name = "Unknown",
     Version = "Unknown",
+    Platform = "Unknown",
+    
+    -- SaveInstance
     HasSaveInstance = false,
-    HasWriteFile = false,
-    HasReadFile = false,
-    HasMakeFolder = false,
-    HasIsFile = false,
-    HasAppendFile = false,
-    HasDelFile = false,
-    HasListFiles = false,
-    HasGetCustomAsset = false,
-    HasRequest = false,
-    HasWebSocket = false,
-    HasClipboard = false,
-    HasCrypt = false,
-    HasDrawing = false,
     SaveInstanceFunc = nil,
     SaveInstanceVersion = "Unknown",
+    SaveInstanceSource = "None",
+    
+    -- File System
+    HasWriteFile = false,
+    HasReadFile = false,
+    HasAppendFile = false,
+    HasMakeFolder = false,
+    HasDelFile = false,
+    HasDelFolder = false,
+    HasIsFile = false,
+    HasIsFolder = false,
+    HasListFiles = false,
+    HasLoadFile = false,
+    
     WriteFileFunc = nil,
     ReadFileFunc = nil,
-    SupportsTerrainSave = false,
-    SupportsOptions = false,
-    SupportsDecompile = true,
-    SupportsScriptDecompile = false,
-    SupportsCallbacks = false,
-    SupportsBinaryFormat = true,
-    MaxFileSize = math.huge,
-    WorkspaceFolder = "workspace",
-    Features = {}
-}
-
--- Chi tiết các hàm cần kiểm tra
-local FunctionChecks = {
-    -- SaveInstance variants
-    {name = "saveinstance", global = "saveinstance", feature = "SaveInstance"},
-    {name = "save_instance", global = "save_instance", feature = "SaveInstance"},
-    {name = "saveplace", global = "saveplace", feature = "SavePlace"},
-    {name = "save_place", global = "save_place", feature = "SavePlace"},
-    {name = "savegame", global = "savegame", feature = "SaveGame"},
+    AppendFileFunc = nil,
+    MakeFolderFunc = nil,
+    DelFileFunc = nil,
+    IsFileFunc = nil,
+    IsFolderFunc = nil,
+    ListFilesFunc = nil,
     
-    -- File system
-    {name = "writefile", global = "writefile", feature = "WriteFile"},
-    {name = "write_file", global = "write_file", feature = "WriteFile"},
-    {name = "readfile", global = "readfile", feature = "ReadFile"},
-    {name = "read_file", global = "read_file", feature = "ReadFile"},
-    {name = "appendfile", global = "appendfile", feature = "AppendFile"},
-    {name = "makefolder", global = "makefolder", feature = "MakeFolder"},
-    {name = "make_folder", global = "make_folder", feature = "MakeFolder"},
-    {name = "isfolder", global = "isfolder", feature = "IsFolder"},
-    {name = "is_folder", global = "is_folder", feature = "IsFolder"},
-    {name = "isfile", global = "isfile", feature = "IsFile"},
-    {name = "is_file", global = "is_file", feature = "IsFile"},
-    {name = "delfile", global = "delfile", feature = "DelFile"},
-    {name = "del_file", global = "del_file", feature = "DelFile"},
-    {name = "delfolder", global = "delfolder", feature = "DelFolder"},
-    {name = "listfiles", global = "listfiles", feature = "ListFiles"},
-    {name = "list_files", global = "list_files", feature = "ListFiles"},
+    -- Instance Functions
+    HasGetInstances = false,
+    HasGetNilInstances = false,
+    HasGetScripts = false,
+    HasGetRunningScripts = false,
+    HasGetLoadedModules = false,
+    HasGetConnections = false,
+    HasGetGC = false,
+    HasGetHiddenProperty = false,
+    HasSetHiddenProperty = false,
+    HasGetProperties = false,
+    HasSetClipboard = false,
+    HasFireSignal = false,
+    HasGetSignalConnections = false,
     
-    -- Script related
-    {name = "decompile", global = "decompile", feature = "Decompile"},
-    {name = "getscriptbytecode", global = "getscriptbytecode", feature = "GetBytecode"},
-    {name = "getscripthash", global = "getscripthash", feature = "GetScriptHash"},
-    {name = "getscripts", global = "getscripts", feature = "GetScripts"},
-    {name = "getsenv", global = "getsenv", feature = "GetSenv"},
-    {name = "getgenv", global = "getgenv", feature = "GetGenv"},
-    {name = "getrenv", global = "getrenv", feature = "GetRenv"},
-    {name = "getgc", global = "getgc", feature = "GetGC"},
-    {name = "getinstances", global = "getinstances", feature = "GetInstances"},
-    {name = "getnilinstances", global = "getnilinstances", feature = "GetNilInstances"},
+    GetInstancesFunc = nil,
+    GetNilInstancesFunc = nil,
+    GetScriptsFunc = nil,
+    GetGCFunc = nil,
+    GetHiddenPropertyFunc = nil,
+    SetHiddenPropertyFunc = nil,
+    GetPropertiesFunc = nil,
+    SetClipboardFunc = nil,
     
-    -- Instance related
-    {name = "getrawmetatable", global = "getrawmetatable", feature = "GetRawMetatable"},
-    {name = "setrawmetatable", global = "setrawmetatable", feature = "SetRawMetatable"},
-    {name = "gethiddenproperty", global = "gethiddenproperty", feature = "GetHiddenProperty"},
-    {name = "sethiddenproperty", global = "sethiddenproperty", feature = "SetHiddenProperty"},
-    {name = "getproperties", global = "getproperties", feature = "GetProperties"},
-    {name = "gethiddenproperties", global = "gethiddenproperties", feature = "GetHiddenProperties"},
-    {name = "setscriptable", global = "setscriptable", feature = "SetScriptable"},
-    {name = "isscriptable", global = "isscriptable", feature = "IsScriptable"},
-    {name = "cloneref", global = "cloneref", feature = "CloneRef"},
-    {name = "compareinstances", global = "compareinstances", feature = "CompareInstances"},
+    -- Script Functions
+    HasDecompile = false,
+    HasGetScriptBytecode = false,
+    HasGetScriptHash = false,
+    HasGetScriptClosure = false,
+    HasIsLClosure = false,
+    HasNewCClosure = false,
+    HasHookFunction = false,
+    HasGetUpvalue = false,
+    HasSetUpvalue = false,
+    HasGetConstant = false,
+    HasSetConstant = false,
+    
+    DecompileFunc = nil,
+    GetScriptBytecodeFunc = nil,
+    
+    -- Environment
+    HasGetGenv = false,
+    HasGetRenv = false,
+    HasGetSenv = false,
+    HasGetMenv = false,
+    HasGetFenv = false,
+    HasSetFenv = false,
+    HasGetRawMetatable = false,
+    HasSetRawMetatable = false,
+    HasSetReadOnly = false,
+    HasIsReadOnly = false,
+    
+    GetGenvFunc = nil,
+    GetRenvFunc = nil,
+    GetSenvFunc = nil,
+    GetRawMetatableFunc = nil,
+    
+    -- Drawing
+    HasDrawing = false,
+    HasGetRenderProperty = false,
+    HasIsRenderObject = false,
+    
+    -- Networking
+    HasRequest = false,
+    HasWebSocket = false,
+    HasGetHWID = false,
+    
+    RequestFunc = nil,
+    WebSocketFunc = nil,
     
     -- Misc
-    {name = "getcustomasset", global = "getcustomasset", feature = "GetCustomAsset"},
-    {name = "getsynasset", global = "getsynasset", feature = "GetSynAsset"},
-    {name = "request", global = "request", feature = "Request"},
-    {name = "http_request", global = "http_request", feature = "HttpRequest"},
-    {name = "syn_request", global = "syn.request", feature = "SynRequest"},
-    {name = "setclipboard", global = "setclipboard", feature = "SetClipboard"},
-    {name = "toclipboard", global = "toclipboard", feature = "ToClipboard"},
+    HasCloneRef = false,
+    HasCompareInstances = false,
+    HasCacheInvalidate = false,
+    HasCacheReplace = false,
+    HasIsExecutorClosure = false,
+    HasCheckerClosure = false,
+    HasFireClickDetector = false,
+    HasFireProximityPrompt = false,
+    HasFireTouchInterest = false,
+    HasGetCustomAsset = false,
+    HasGetSynAsset = false,
+    HasMessageBox = false,
+    HasSetFPSCap = false,
+    HasQueue = false,
+    
+    CloneRefFunc = nil,
+    GetCustomAssetFunc = nil,
+    
+    -- Capabilities
+    SupportsOptions = false,
+    SupportsTerrain = false,
+    SupportsScripts = false,
+    SupportsCallbacks = false,
+    SupportsBinary = true,
+    SupportsTimeout = false,
+    SupportsIgnoreList = false,
+    SupportsDecompileMode = false,
+    SupportsNilInstances = false,
+    SupportsNotArchivable = false,
+    
+    -- Paths
+    WorkspaceFolder = "workspace",
+    AutoImportFolder = "",
+    
+    -- Features List
+    Features = {},
+    
+    -- Raw function references
+    RawFunctions = {}
 }
 
--- Executor signatures
+-- Danh sách đầy đủ các executor và signatures
 local ExecutorSignatures = {
+    -- ============ SYNAPSE X ============
     {
-        check = function() return syn and syn.saveinstance end,
         name = "Synapse X",
-        version = function() return syn and syn.version or "Unknown" end,
-        saveFunc = function() return syn.saveinstance end,
-        supportsOptions = true,
-        supportsTerrain = true,
-        supportsCallbacks = true,
-        supportsScriptDecompile = true,
-        workspaceFolder = "workspace"
+        priority = 100,
+        checks = {
+            function() return syn ~= nil end,
+            function() return syn.saveinstance ~= nil end
+        },
+        setup = function()
+            ExecutorAPI.Name = "Synapse X"
+            ExecutorAPI.SaveInstanceSource = "Synapse"
+            
+            pcall(function()
+                ExecutorAPI.Version = syn.version or "Unknown"
+            end)
+            
+            if syn.saveinstance then
+                ExecutorAPI.HasSaveInstance = true
+                ExecutorAPI.SaveInstanceFunc = syn.saveinstance
+                ExecutorAPI.SupportsOptions = true
+                ExecutorAPI.SupportsTerrain = true
+                ExecutorAPI.SupportsScripts = true
+                ExecutorAPI.SupportsCallbacks = true
+                ExecutorAPI.SupportsIgnoreList = true
+                ExecutorAPI.SupportsDecompileMode = true
+                ExecutorAPI.SupportsNilInstances = true
+                ExecutorAPI.SupportsNotArchivable = true
+                ExecutorAPI.SaveInstanceVersion = "Synapse SaveInstance"
+            end
+            
+            if syn.write_file then
+                ExecutorAPI.HasWriteFile = true
+                ExecutorAPI.WriteFileFunc = syn.write_file
+            end
+            
+            if syn.read_file then
+                ExecutorAPI.HasReadFile = true
+                ExecutorAPI.ReadFileFunc = syn.read_file
+            end
+            
+            if syn.request then
+                ExecutorAPI.HasRequest = true
+                ExecutorAPI.RequestFunc = syn.request
+            end
+            
+            if syn.websocket then
+                ExecutorAPI.HasWebSocket = true
+                ExecutorAPI.WebSocketFunc = syn.websocket
+            end
+            
+            if syn.crypt then
+                ExecutorAPI.Features["Crypt"] = true
+            end
+            
+            if syn.cache_invalidate then
+                ExecutorAPI.HasCacheInvalidate = true
+            end
+            
+            if syn.cache_replace then
+                ExecutorAPI.HasCacheReplace = true
+            end
+            
+            return true
+        end
     },
+    
+    -- ============ SYNAPSE V3 ============
     {
-        check = function() return Synapse and Synapse.SaveInstance end,
         name = "Synapse V3",
-        version = function() return "V3" end,
-        saveFunc = function() return Synapse.SaveInstance end,
-        supportsOptions = true,
-        supportsTerrain = true,
-        supportsCallbacks = true,
-        supportsScriptDecompile = true,
-        workspaceFolder = "workspace"
+        priority = 99,
+        checks = {
+            function() return Synapse ~= nil end,
+            function() return Synapse.SaveInstance ~= nil end
+        },
+        setup = function()
+            ExecutorAPI.Name = "Synapse V3"
+            ExecutorAPI.SaveInstanceSource = "Synapse V3"
+            ExecutorAPI.Version = "V3"
+            
+            if Synapse.SaveInstance then
+                ExecutorAPI.HasSaveInstance = true
+                ExecutorAPI.SaveInstanceFunc = Synapse.SaveInstance
+                ExecutorAPI.SupportsOptions = true
+                ExecutorAPI.SupportsTerrain = true
+                ExecutorAPI.SupportsScripts = true
+                ExecutorAPI.SupportsCallbacks = true
+            end
+            
+            return true
+        end
     },
+    
+    -- ============ SCRIPT-WARE ============
     {
-        check = function() return KRNL_LOADED and saveinstance end,
-        name = "KRNL",
-        version = function() return "Latest" end,
-        saveFunc = function() return saveinstance end,
-        supportsOptions = true,
-        supportsTerrain = true,
-        supportsCallbacks = false,
-        supportsScriptDecompile = true,
-        workspaceFolder = "krnl/workspace"
-    },
-    {
-        check = function() return (fluxus or FLUXUS_LOADED) and saveinstance end,
-        name = "Fluxus",
-        version = function() return "Latest" end,
-        saveFunc = function() return saveinstance end,
-        supportsOptions = true,
-        supportsTerrain = true,
-        supportsCallbacks = false,
-        supportsScriptDecompile = true,
-        workspaceFolder = "workspace"
-    },
-    {
-        check = function() return (SW_LOADED or ScriptWare) and saveinstance end,
         name = "Script-Ware",
-        version = function() return "Latest" end,
-        saveFunc = function() return saveinstance end,
-        supportsOptions = true,
-        supportsTerrain = true,
-        supportsCallbacks = false,
-        supportsScriptDecompile = true,
-        workspaceFolder = "workspace"
+        priority = 95,
+        checks = {
+            function() return (SW_LOADED == true) or (ScriptWare ~= nil) end,
+            function() return saveinstance ~= nil end
+        },
+        setup = function()
+            ExecutorAPI.Name = "Script-Ware"
+            ExecutorAPI.SaveInstanceSource = "Script-Ware"
+            ExecutorAPI.Version = "Latest"
+            
+            if saveinstance then
+                ExecutorAPI.HasSaveInstance = true
+                ExecutorAPI.SaveInstanceFunc = saveinstance
+                ExecutorAPI.SupportsOptions = true
+                ExecutorAPI.SupportsTerrain = true
+                ExecutorAPI.SupportsScripts = true
+                ExecutorAPI.SupportsIgnoreList = true
+            end
+            
+            return true
+        end
     },
+    
+    -- ============ KRNL ============
     {
-        check = function() return (Sentinel or SENTINEL_LOADED) and saveinstance end,
-        name = "Sentinel",
-        version = function() return "Latest" end,
-        saveFunc = function() return saveinstance end,
-        supportsOptions = true,
-        supportsTerrain = true,
-        supportsCallbacks = false,
-        supportsScriptDecompile = true,
-        workspaceFolder = "workspace"
+        name = "KRNL",
+        priority = 90,
+        checks = {
+            function() return KRNL_LOADED == true end,
+            function() return saveinstance ~= nil end
+        },
+        setup = function()
+            ExecutorAPI.Name = "KRNL"
+            ExecutorAPI.SaveInstanceSource = "KRNL"
+            ExecutorAPI.Version = "Latest"
+            ExecutorAPI.WorkspaceFolder = "krnl/workspace"
+            
+            if saveinstance then
+                ExecutorAPI.HasSaveInstance = true
+                ExecutorAPI.SaveInstanceFunc = saveinstance
+                ExecutorAPI.SupportsOptions = true
+                ExecutorAPI.SupportsTerrain = true
+                ExecutorAPI.SupportsScripts = true
+            end
+            
+            return true
+        end
     },
+    
+    -- ============ FLUXUS ============
     {
-        check = function() return (Electron or ELECTRON_LOADED) and saveinstance end,
-        name = "Electron",
-        version = function() return "Latest" end,
-        saveFunc = function() return saveinstance end,
-        supportsOptions = true,
-        supportsTerrain = true,
-        supportsCallbacks = false,
-        supportsScriptDecompile = false,
-        workspaceFolder = "workspace"
+        name = "Fluxus",
+        priority = 85,
+        checks = {
+            function() return (fluxus ~= nil) or (FLUXUS_LOADED == true) end,
+            function() return saveinstance ~= nil end
+        },
+        setup = function()
+            ExecutorAPI.Name = "Fluxus"
+            ExecutorAPI.SaveInstanceSource = "Fluxus"
+            ExecutorAPI.Version = "Latest"
+            
+            if saveinstance then
+                ExecutorAPI.HasSaveInstance = true
+                ExecutorAPI.SaveInstanceFunc = saveinstance
+                ExecutorAPI.SupportsOptions = true
+                ExecutorAPI.SupportsTerrain = true
+                ExecutorAPI.SupportsScripts = true
+            end
+            
+            return true
+        end
     },
+    
+    -- ============ HYDROGEN ============
     {
-        check = function() return (Arceus or ARCEUS_LOADED) and saveinstance end,
-        name = "Arceus X",
-        version = function() return "Latest" end,
-        saveFunc = function() return saveinstance end,
-        supportsOptions = true,
-        supportsTerrain = false,
-        supportsCallbacks = false,
-        supportsScriptDecompile = false,
-        workspaceFolder = "workspace"
-    },
-    {
-        check = function() return (Comet or COMET_LOADED) and saveinstance end,
-        name = "Comet",
-        version = function() return "Latest" end,
-        saveFunc = function() return saveinstance end,
-        supportsOptions = true,
-        supportsTerrain = true,
-        supportsCallbacks = false,
-        supportsScriptDecompile = true,
-        workspaceFolder = "workspace"
-    },
-    {
-        check = function() return (Hydrogen or HYDROGEN_LOADED) and saveinstance end,
         name = "Hydrogen",
-        version = function() return "Latest" end,
-        saveFunc = function() return saveinstance end,
-        supportsOptions = true,
-        supportsTerrain = true,
-        supportsCallbacks = false,
-        supportsScriptDecompile = true,
-        workspaceFolder = "workspace"
+        priority = 84,
+        checks = {
+            function() return (Hydrogen ~= nil) or (HYDROGEN_LOADED == true) end,
+            function() return saveinstance ~= nil end
+        },
+        setup = function()
+            ExecutorAPI.Name = "Hydrogen"
+            ExecutorAPI.SaveInstanceSource = "Hydrogen"
+            ExecutorAPI.Version = "Latest"
+            
+            if saveinstance then
+                ExecutorAPI.HasSaveInstance = true
+                ExecutorAPI.SaveInstanceFunc = saveinstance
+                ExecutorAPI.SupportsOptions = true
+                ExecutorAPI.SupportsTerrain = true
+            end
+            
+            return true
+        end
     },
+    
+    -- ============ DELTA ============
     {
-        check = function() return (Celery or CELERY_LOADED) and saveinstance end,
-        name = "Celery",
-        version = function() return "Latest" end,
-        saveFunc = function() return saveinstance end,
-        supportsOptions = true,
-        supportsTerrain = true,
-        supportsCallbacks = false,
-        supportsScriptDecompile = false,
-        workspaceFolder = "workspace"
-    },
-    {
-        check = function() return (evon or EVON_LOADED) and saveinstance end,
-        name = "Evon",
-        version = function() return "Latest" end,
-        saveFunc = function() return saveinstance end,
-        supportsOptions = true,
-        supportsTerrain = true,
-        supportsCallbacks = false,
-        supportsScriptDecompile = false,
-        workspaceFolder = "workspace"
-    },
-    {
-        check = function() return (Delta or DELTA_LOADED) and saveinstance end,
         name = "Delta",
-        version = function() return "Latest" end,
-        saveFunc = function() return saveinstance end,
-        supportsOptions = true,
-        supportsTerrain = true,
-        supportsCallbacks = false,
-        supportsScriptDecompile = false,
-        workspaceFolder = "workspace"
+        priority = 83,
+        checks = {
+            function() return (Delta ~= nil) or (DELTA_LOADED == true) or (delta ~= nil) end,
+            function() return saveinstance ~= nil end
+        },
+        setup = function()
+            ExecutorAPI.Name = "Delta"
+            ExecutorAPI.SaveInstanceSource = "Delta"
+            ExecutorAPI.Version = "Latest"
+            
+            if saveinstance then
+                ExecutorAPI.HasSaveInstance = true
+                ExecutorAPI.SaveInstanceFunc = saveinstance
+                ExecutorAPI.SupportsOptions = true
+                ExecutorAPI.SupportsTerrain = true
+            end
+            
+            return true
+        end
     },
+    
+    -- ============ CODEX ============
     {
-        check = function() return (Codex or CODEX_LOADED) and saveinstance end,
         name = "Codex",
-        version = function() return "Latest" end,
-        saveFunc = function() return saveinstance end,
-        supportsOptions = true,
-        supportsTerrain = true,
-        supportsCallbacks = false,
-        supportsScriptDecompile = false,
-        workspaceFolder = "workspace"
+        priority = 82,
+        checks = {
+            function() return (Codex ~= nil) or (CODEX_LOADED == true) end,
+            function() return saveinstance ~= nil end
+        },
+        setup = function()
+            ExecutorAPI.Name = "Codex"
+            ExecutorAPI.SaveInstanceSource = "Codex"
+            ExecutorAPI.Version = "Latest"
+            
+            if saveinstance then
+                ExecutorAPI.HasSaveInstance = true
+                ExecutorAPI.SaveInstanceFunc = saveinstance
+                ExecutorAPI.SupportsOptions = true
+                ExecutorAPI.SupportsTerrain = true
+            end
+            
+            return true
+        end
     },
+    
+    -- ============ SOLARA ============
     {
-        check = function() return (JJSploit or JJSPLOIT_LOADED) and saveinstance end,
+        name = "Solara",
+        priority = 81,
+        checks = {
+            function() return (Solara ~= nil) or (SOLARA_LOADED == true) end,
+            function() return saveinstance ~= nil end
+        },
+        setup = function()
+            ExecutorAPI.Name = "Solara"
+            ExecutorAPI.SaveInstanceSource = "Solara"
+            ExecutorAPI.Version = "Latest"
+            
+            if saveinstance then
+                ExecutorAPI.HasSaveInstance = true
+                ExecutorAPI.SaveInstanceFunc = saveinstance
+                ExecutorAPI.SupportsOptions = true
+                ExecutorAPI.SupportsTerrain = true
+            end
+            
+            return true
+        end
+    },
+    
+    -- ============ WAVE ============
+    {
+        name = "Wave",
+        priority = 80,
+        checks = {
+            function() return (Wave ~= nil) or (WAVE_LOADED == true) end,
+            function() return saveinstance ~= nil end
+        },
+        setup = function()
+            ExecutorAPI.Name = "Wave"
+            ExecutorAPI.SaveInstanceSource = "Wave"
+            ExecutorAPI.Version = "Latest"
+            
+            if saveinstance then
+                ExecutorAPI.HasSaveInstance = true
+                ExecutorAPI.SaveInstanceFunc = saveinstance
+                ExecutorAPI.SupportsOptions = true
+                ExecutorAPI.SupportsTerrain = true
+            end
+            
+            return true
+        end
+    },
+    
+    -- ============ ARCEUS X ============
+    {
+        name = "Arceus X",
+        priority = 75,
+        checks = {
+            function() return (Arceus ~= nil) or (ARCEUS_LOADED == true) or (ArceusX ~= nil) end,
+            function() return saveinstance ~= nil end
+        },
+        setup = function()
+            ExecutorAPI.Name = "Arceus X"
+            ExecutorAPI.SaveInstanceSource = "Arceus"
+            ExecutorAPI.Version = "Latest"
+            ExecutorAPI.Platform = "Mobile"
+            
+            if saveinstance then
+                ExecutorAPI.HasSaveInstance = true
+                ExecutorAPI.SaveInstanceFunc = saveinstance
+                ExecutorAPI.SupportsOptions = true
+                ExecutorAPI.SupportsTerrain = false -- Limited terrain support
+            end
+            
+            return true
+        end
+    },
+    
+    -- ============ VEGAX ============
+    {
+        name = "VegaX",
+        priority = 74,
+        checks = {
+            function() return (VegaX ~= nil) or (VEGAX_LOADED == true) end,
+            function() return saveinstance ~= nil end
+        },
+        setup = function()
+            ExecutorAPI.Name = "VegaX"
+            ExecutorAPI.SaveInstanceSource = "VegaX"
+            ExecutorAPI.Version = "Latest"
+            
+            if saveinstance then
+                ExecutorAPI.HasSaveInstance = true
+                ExecutorAPI.SaveInstanceFunc = saveinstance
+                ExecutorAPI.SupportsOptions = true
+            end
+            
+            return true
+        end
+    },
+    
+    -- ============ COMET ============
+    {
+        name = "Comet",
+        priority = 73,
+        checks = {
+            function() return (Comet ~= nil) or (COMET_LOADED == true) end,
+            function() return saveinstance ~= nil end
+        },
+        setup = function()
+            ExecutorAPI.Name = "Comet"
+            ExecutorAPI.SaveInstanceSource = "Comet"
+            ExecutorAPI.Version = "Latest"
+            
+            if saveinstance then
+                ExecutorAPI.HasSaveInstance = true
+                ExecutorAPI.SaveInstanceFunc = saveinstance
+                ExecutorAPI.SupportsOptions = true
+                ExecutorAPI.SupportsTerrain = true
+            end
+            
+            return true
+        end
+    },
+    
+    -- ============ ELECTRON ============
+    {
+        name = "Electron",
+        priority = 72,
+        checks = {
+            function() return (Electron ~= nil) or (ELECTRON_LOADED == true) end,
+            function() return saveinstance ~= nil end
+        },
+        setup = function()
+            ExecutorAPI.Name = "Electron"
+            ExecutorAPI.SaveInstanceSource = "Electron"
+            ExecutorAPI.Version = "Latest"
+            
+            if saveinstance then
+                ExecutorAPI.HasSaveInstance = true
+                ExecutorAPI.SaveInstanceFunc = saveinstance
+                ExecutorAPI.SupportsOptions = true
+            end
+            
+            return true
+        end
+    },
+    
+    -- ============ SENTINEL ============
+    {
+        name = "Sentinel",
+        priority = 71,
+        checks = {
+            function() return (Sentinel ~= nil) or (SENTINEL_LOADED == true) end,
+            function() return saveinstance ~= nil end
+        },
+        setup = function()
+            ExecutorAPI.Name = "Sentinel"
+            ExecutorAPI.SaveInstanceSource = "Sentinel"
+            ExecutorAPI.Version = "Latest"
+            
+            if saveinstance then
+                ExecutorAPI.HasSaveInstance = true
+                ExecutorAPI.SaveInstanceFunc = saveinstance
+                ExecutorAPI.SupportsOptions = true
+                ExecutorAPI.SupportsTerrain = true
+            end
+            
+            return true
+        end
+    },
+    
+    -- ============ CELERY ============
+    {
+        name = "Celery",
+        priority = 70,
+        checks = {
+            function() return (Celery ~= nil) or (CELERY_LOADED == true) end,
+            function() return saveinstance ~= nil end
+        },
+        setup = function()
+            ExecutorAPI.Name = "Celery"
+            ExecutorAPI.SaveInstanceSource = "Celery"
+            ExecutorAPI.Version = "Latest"
+            
+            if saveinstance then
+                ExecutorAPI.HasSaveInstance = true
+                ExecutorAPI.SaveInstanceFunc = saveinstance
+                ExecutorAPI.SupportsOptions = true
+            end
+            
+            return true
+        end
+    },
+    
+    -- ============ EVON ============
+    {
+        name = "Evon",
+        priority = 69,
+        checks = {
+            function() return (evon ~= nil) or (EVON_LOADED == true) or (Evon ~= nil) end,
+            function() return saveinstance ~= nil end
+        },
+        setup = function()
+            ExecutorAPI.Name = "Evon"
+            ExecutorAPI.SaveInstanceSource = "Evon"
+            ExecutorAPI.Version = "Latest"
+            
+            if saveinstance then
+                ExecutorAPI.HasSaveInstance = true
+                ExecutorAPI.SaveInstanceFunc = saveinstance
+                ExecutorAPI.SupportsOptions = true
+            end
+            
+            return true
+        end
+    },
+    
+    -- ============ OXYGEN U ============
+    {
+        name = "Oxygen U",
+        priority = 68,
+        checks = {
+            function() return (OxygenU ~= nil) or (OXYGEN_LOADED == true) end,
+            function() return saveinstance ~= nil end
+        },
+        setup = function()
+            ExecutorAPI.Name = "Oxygen U"
+            ExecutorAPI.SaveInstanceSource = "OxygenU"
+            ExecutorAPI.Version = "Latest"
+            
+            if saveinstance then
+                ExecutorAPI.HasSaveInstance = true
+                ExecutorAPI.SaveInstanceFunc = saveinstance
+                ExecutorAPI.SupportsOptions = true
+            end
+            
+            return true
+        end
+    },
+    
+    -- ============ TRIGON ============
+    {
+        name = "Trigon",
+        priority = 67,
+        checks = {
+            function() return (Trigon ~= nil) or (TRIGON_LOADED == true) end,
+            function() return saveinstance ~= nil end
+        },
+        setup = function()
+            ExecutorAPI.Name = "Trigon"
+            ExecutorAPI.SaveInstanceSource = "Trigon"
+            ExecutorAPI.Version = "Latest"
+            
+            if saveinstance then
+                ExecutorAPI.HasSaveInstance = true
+                ExecutorAPI.SaveInstanceFunc = saveinstance
+                ExecutorAPI.SupportsOptions = true
+            end
+            
+            return true
+        end
+    },
+    
+    -- ============ SIRHURT ============
+    {
+        name = "SirHurt",
+        priority = 66,
+        checks = {
+            function() return (SirHurt ~= nil) or (SIRHURT_LOADED == true) end,
+            function() return saveinstance ~= nil end
+        },
+        setup = function()
+            ExecutorAPI.Name = "SirHurt"
+            ExecutorAPI.SaveInstanceSource = "SirHurt"
+            ExecutorAPI.Version = "Latest"
+            
+            if saveinstance then
+                ExecutorAPI.HasSaveInstance = true
+                ExecutorAPI.SaveInstanceFunc = saveinstance
+                ExecutorAPI.SupportsOptions = true
+            end
+            
+            return true
+        end
+    },
+    
+    -- ============ TEMPLE ============
+    {
+        name = "Temple",
+        priority = 65,
+        checks = {
+            function() return (Temple ~= nil) or (TEMPLE_LOADED == true) end,
+            function() return saveinstance ~= nil end
+        },
+        setup = function()
+            ExecutorAPI.Name = "Temple"
+            ExecutorAPI.SaveInstanceSource = "Temple"
+            ExecutorAPI.Version = "Latest"
+            
+            if saveinstance then
+                ExecutorAPI.HasSaveInstance = true
+                ExecutorAPI.SaveInstanceFunc = saveinstance
+                ExecutorAPI.SupportsOptions = true
+            end
+            
+            return true
+        end
+    },
+    
+    -- ============ ASPECT ============
+    {
+        name = "Aspect",
+        priority = 64,
+        checks = {
+            function() return (Aspect ~= nil) or (ASPECT_LOADED == true) end,
+            function() return saveinstance ~= nil end
+        },
+        setup = function()
+            ExecutorAPI.Name = "Aspect"
+            ExecutorAPI.SaveInstanceSource = "Aspect"
+            ExecutorAPI.Version = "Latest"
+            
+            if saveinstance then
+                ExecutorAPI.HasSaveInstance = true
+                ExecutorAPI.SaveInstanceFunc = saveinstance
+                ExecutorAPI.SupportsOptions = true
+            end
+            
+            return true
+        end
+    },
+    
+    -- ============ COCO Z ============
+    {
+        name = "Coco Z",
+        priority = 63,
+        checks = {
+            function() return (CocoZ ~= nil) or (COCOZ_LOADED == true) end,
+            function() return saveinstance ~= nil end
+        },
+        setup = function()
+            ExecutorAPI.Name = "Coco Z"
+            ExecutorAPI.SaveInstanceSource = "CocoZ"
+            ExecutorAPI.Version = "Latest"
+            
+            if saveinstance then
+                ExecutorAPI.HasSaveInstance = true
+                ExecutorAPI.SaveInstanceFunc = saveinstance
+                ExecutorAPI.SupportsOptions = true
+            end
+            
+            return true
+        end
+    },
+    
+    -- ============ ZORARA ============
+    {
+        name = "Zorara",
+        priority = 62,
+        checks = {
+            function() return (Zorara ~= nil) or (ZORARA_LOADED == true) end,
+            function() return saveinstance ~= nil end
+        },
+        setup = function()
+            ExecutorAPI.Name = "Zorara"
+            ExecutorAPI.SaveInstanceSource = "Zorara"
+            ExecutorAPI.Version = "Latest"
+            
+            if saveinstance then
+                ExecutorAPI.HasSaveInstance = true
+                ExecutorAPI.SaveInstanceFunc = saveinstance
+                ExecutorAPI.SupportsOptions = true
+            end
+            
+            return true
+        end
+    },
+    
+    -- ============ JJSploit ============
+    {
         name = "JJSploit",
-        version = function() return "Latest" end,
-        saveFunc = function() return saveinstance end,
-        supportsOptions = false,
-        supportsTerrain = false,
-        supportsCallbacks = false,
-        supportsScriptDecompile = false,
-        workspaceFolder = "workspace"
+        priority = 50,
+        checks = {
+            function() return (JJSploit ~= nil) or (JJSPLOIT_LOADED == true) end
+        },
+        setup = function()
+            ExecutorAPI.Name = "JJSploit"
+            ExecutorAPI.SaveInstanceSource = "JJSploit"
+            ExecutorAPI.Version = "Latest"
+            
+            if saveinstance then
+                ExecutorAPI.HasSaveInstance = true
+                ExecutorAPI.SaveInstanceFunc = saveinstance
+                ExecutorAPI.SupportsOptions = false
+                ExecutorAPI.SupportsTerrain = false
+            end
+            
+            return true
+        end
     },
-    -- Generic fallback
+    
+    -- ============ GENERIC SAVEINSTANCE ============
     {
-        check = function() return saveinstance ~= nil end,
-        name = "Generic Executor",
-        version = function() return "Unknown" end,
-        saveFunc = function() return saveinstance end,
-        supportsOptions = true,
-        supportsTerrain = true,
-        supportsCallbacks = false,
-        supportsScriptDecompile = false,
-        workspaceFolder = "workspace"
+        name = "Generic (saveinstance)",
+        priority = 20,
+        checks = {
+            function() return saveinstance ~= nil end
+        },
+        setup = function()
+            if ExecutorAPI.Name == "Unknown" then
+                ExecutorAPI.Name = "Generic Executor"
+            end
+            ExecutorAPI.SaveInstanceSource = "Global"
+            
+            ExecutorAPI.HasSaveInstance = true
+            ExecutorAPI.SaveInstanceFunc = saveinstance
+            ExecutorAPI.SupportsOptions = true
+            ExecutorAPI.SupportsTerrain = true
+            
+            return true
+        end
     },
+    
+    -- ============ GENERIC SAVEPLACE ============
     {
-        check = function() return saveplace ~= nil end,
-        name = "SavePlace Executor",
-        version = function() return "Unknown" end,
-        saveFunc = function() 
-            return function(options)
-                local fileName = type(options) == "table" and (options.FileName or options.Filename) or options
+        name = "Generic (saveplace)",
+        priority = 15,
+        checks = {
+            function() return saveplace ~= nil end
+        },
+        setup = function()
+            if ExecutorAPI.Name == "Unknown" then
+                ExecutorAPI.Name = "SavePlace Executor"
+            end
+            ExecutorAPI.SaveInstanceSource = "saveplace"
+            
+            ExecutorAPI.HasSaveInstance = true
+            ExecutorAPI.SaveInstanceFunc = function(options)
+                local fileName = options
+                if type(options) == "table" then
+                    fileName = options.FileName or options.Filename or options.FilePath or "game.rbxl"
+                end
                 return saveplace(game, fileName)
             end
-        end,
-        supportsOptions = false,
-        supportsTerrain = true,
-        supportsCallbacks = false,
-        supportsScriptDecompile = false,
-        workspaceFolder = "workspace"
+            ExecutorAPI.SupportsOptions = false
+            ExecutorAPI.SupportsTerrain = true
+            
+            return true
+        end
+    },
+    
+    -- ============ GENERIC SAVEGAME ============
+    {
+        name = "Generic (savegame)",
+        priority = 10,
+        checks = {
+            function() return savegame ~= nil end
+        },
+        setup = function()
+            if ExecutorAPI.Name == "Unknown" then
+                ExecutorAPI.Name = "SaveGame Executor"
+            end
+            ExecutorAPI.SaveInstanceSource = "savegame"
+            
+            ExecutorAPI.HasSaveInstance = true
+            ExecutorAPI.SaveInstanceFunc = function(options)
+                local fileName = options
+                if type(options) == "table" then
+                    fileName = options.FileName or options.Filename or "game.rbxl"
+                end
+                return savegame(game, fileName)
+            end
+            ExecutorAPI.SupportsOptions = false
+            
+            return true
+        end
     }
 }
 
--- Hàm detect APIs chi tiết
-local function DetectApis()
-    LogSystem:Add("Bắt đầu detect executor APIs...", LogSystem.LogLevel.INFO)
+-- Danh sách các hàm cần kiểm tra
+local FunctionsList = {
+    -- File System
+    {name = "writefile", aliases = {"write_file"}, category = "FileSystem", callback = function(f)
+        ExecutorAPI.HasWriteFile = true
+        ExecutorAPI.WriteFileFunc = f
+    end},
+    {name = "readfile", aliases = {"read_file"}, category = "FileSystem", callback = function(f)
+        ExecutorAPI.HasReadFile = true
+        ExecutorAPI.ReadFileFunc = f
+    end},
+    {name = "appendfile", aliases = {"append_file"}, category = "FileSystem", callback = function(f)
+        ExecutorAPI.HasAppendFile = true
+        ExecutorAPI.AppendFileFunc = f
+    end},
+    {name = "makefolder", aliases = {"make_folder", "mkdir", "createfolder"}, category = "FileSystem", callback = function(f)
+        ExecutorAPI.HasMakeFolder = true
+        ExecutorAPI.MakeFolderFunc = f
+    end},
+    {name = "delfolder", aliases = {"del_folder", "rmdir", "deletefolder"}, category = "FileSystem", callback = function(f)
+        ExecutorAPI.HasDelFolder = true
+    end},
+    {name = "delfile", aliases = {"del_file", "deletefile", "rmfile"}, category = "FileSystem", callback = function(f)
+        ExecutorAPI.HasDelFile = true
+        ExecutorAPI.DelFileFunc = f
+    end},
+    {name = "isfile", aliases = {"is_file"}, category = "FileSystem", callback = function(f)
+        ExecutorAPI.HasIsFile = true
+        ExecutorAPI.IsFileFunc = f
+    end},
+    {name = "isfolder", aliases = {"is_folder"}, category = "FileSystem", callback = function(f)
+        ExecutorAPI.HasIsFolder = true
+        ExecutorAPI.IsFolderFunc = f
+    end},
+    {name = "listfiles", aliases = {"list_files", "readdir"}, category = "FileSystem", callback = function(f)
+        ExecutorAPI.HasListFiles = true
+        ExecutorAPI.ListFilesFunc = f
+    end},
+    {name = "loadfile", aliases = {"load_file", "dofile"}, category = "FileSystem", callback = function(f)
+        ExecutorAPI.HasLoadFile = true
+    end},
     
-    -- Reset info
-    ExecutorInfo = {
-        Name = "Unknown",
-        Version = "Unknown",
-        HasSaveInstance = false,
-        HasWriteFile = false,
-        HasReadFile = false,
-        HasMakeFolder = false,
-        HasIsFile = false,
-        HasAppendFile = false,
-        HasDelFile = false,
-        HasListFiles = false,
-        HasGetCustomAsset = false,
-        HasRequest = false,
-        HasWebSocket = false,
-        HasClipboard = false,
-        HasCrypt = false,
-        HasDrawing = false,
-        SaveInstanceFunc = nil,
-        SaveInstanceVersion = "Unknown",
-        WriteFileFunc = nil,
-        ReadFileFunc = nil,
-        SupportsTerrainSave = false,
-        SupportsOptions = false,
-        SupportsDecompile = true,
-        SupportsScriptDecompile = false,
-        SupportsCallbacks = false,
-        SupportsBinaryFormat = true,
-        MaxFileSize = math.huge,
-        WorkspaceFolder = "workspace",
-        Features = {}
-    }
+    -- Instance Functions
+    {name = "getinstances", aliases = {"get_instances"}, category = "Instance", callback = function(f)
+        ExecutorAPI.HasGetInstances = true
+        ExecutorAPI.GetInstancesFunc = f
+    end},
+    {name = "getnilinstances", aliases = {"get_nil_instances"}, category = "Instance", callback = function(f)
+        ExecutorAPI.HasGetNilInstances = true
+        ExecutorAPI.GetNilInstancesFunc = f
+    end},
+    {name = "getscripts", aliases = {"get_scripts"}, category = "Instance", callback = function(f)
+        ExecutorAPI.HasGetScripts = true
+        ExecutorAPI.GetScriptsFunc = f
+    end},
+    {name = "getrunningscripts", aliases = {"get_running_scripts"}, category = "Instance", callback = function(f)
+        ExecutorAPI.HasGetRunningScripts = true
+    end},
+    {name = "getloadedmodules", aliases = {"get_loaded_modules"}, category = "Instance", callback = function(f)
+        ExecutorAPI.HasGetLoadedModules = true
+    end},
+    {name = "getconnections", aliases = {"get_connections"}, category = "Instance", callback = function(f)
+        ExecutorAPI.HasGetConnections = true
+    end},
+    {name = "firesignal", aliases = {"fire_signal"}, category = "Instance", callback = function(f)
+        ExecutorAPI.HasFireSignal = true
+    end},
+    {name = "getsignalconnections", aliases = {"get_signal_connections"}, category = "Instance", callback = function(f)
+        ExecutorAPI.HasGetSignalConnections = true
+    end},
+    {name = "getgc", aliases = {"get_gc"}, category = "Instance", callback = function(f)
+        ExecutorAPI.HasGetGC = true
+        ExecutorAPI.GetGCFunc = f
+    end},
+    {name = "gethiddenproperty", aliases = {"get_hidden_property"}, category = "Instance", callback = function(f)
+        ExecutorAPI.HasGetHiddenProperty = true
+        ExecutorAPI.GetHiddenPropertyFunc = f
+    end},
+    {name = "sethiddenproperty", aliases = {"set_hidden_property"}, category = "Instance", callback = function(f)
+        ExecutorAPI.HasSetHiddenProperty = true
+        ExecutorAPI.SetHiddenPropertyFunc = f
+    end},
+    {name = "getproperties", aliases = {"get_properties"}, category = "Instance", callback = function(f)
+        ExecutorAPI.HasGetProperties = true
+        ExecutorAPI.GetPropertiesFunc = f
+    end},
+    {name = "gethiddenproperties", aliases = {"get_hidden_properties"}, category = "Instance", callback = function(f)
+        ExecutorAPI.Features["HiddenProperties"] = true
+    end},
+    {name = "setclipboard", aliases = {"set_clipboard", "toclipboard", "to_clipboard"}, category = "Instance", callback = function(f)
+        ExecutorAPI.HasSetClipboard = true
+        ExecutorAPI.SetClipboardFunc = f
+    end},
+    {name = "cloneref", aliases = {"clone_ref"}, category = "Instance", callback = function(f)
+        ExecutorAPI.HasCloneRef = true
+        ExecutorAPI.CloneRefFunc = f
+    end},
+    {name = "compareinstances", aliases = {"compare_instances"}, category = "Instance", callback = function(f)
+        ExecutorAPI.HasCompareInstances = true
+    end},
+    
+    -- Script Functions
+    {name = "decompile", aliases = {"decompiler"}, category = "Script", callback = function(f)
+        ExecutorAPI.HasDecompile = true
+        ExecutorAPI.DecompileFunc = f
+        ExecutorAPI.SupportsScripts = true
+    end},
+    {name = "getscriptbytecode", aliases = {"get_script_bytecode", "dumpstring"}, category = "Script", callback = function(f)
+        ExecutorAPI.HasGetScriptBytecode = true
+        ExecutorAPI.GetScriptBytecodeFunc = f
+    end},
+    {name = "getscripthash", aliases = {"get_script_hash"}, category = "Script", callback = function(f)
+        ExecutorAPI.HasGetScriptHash = true
+    end},
+    {name = "getscriptclosure", aliases = {"get_script_closure", "getscriptfunction"}, category = "Script", callback = function(f)
+        ExecutorAPI.HasGetScriptClosure = true
+    end},
+    {name = "islclosure", aliases = {"is_l_closure"}, category = "Script", callback = function(f)
+        ExecutorAPI.HasIsLClosure = true
+    end},
+    {name = "newcclosure", aliases = {"new_c_closure"}, category = "Script", callback = function(f)
+        ExecutorAPI.HasNewCClosure = true
+    end},
+    {name = "hookfunction", aliases = {"hook_function", "replaceclosure", "detour_function"}, category = "Script", callback = function(f)
+        ExecutorAPI.HasHookFunction = true
+    end},
+    {name = "getupvalue", aliases = {"get_upvalue", "debug.getupvalue"}, category = "Script", callback = function(f)
+        ExecutorAPI.HasGetUpvalue = true
+    end},
+    {name = "setupvalue", aliases = {"set_upvalue", "debug.setupvalue"}, category = "Script", callback = function(f)
+        ExecutorAPI.HasSetUpvalue = true
+    end},
+    {name = "getconstant", aliases = {"get_constant", "debug.getconstant"}, category = "Script", callback = function(f)
+        ExecutorAPI.HasGetConstant = true
+    end},
+    {name = "setconstant", aliases = {"set_constant", "debug.setconstant"}, category = "Script", callback = function(f)
+        ExecutorAPI.HasSetConstant = true
+    end},
+    
+    -- Environment
+    {name = "getgenv", aliases = {"get_genv"}, category = "Environment", callback = function(f)
+        ExecutorAPI.HasGetGenv = true
+        ExecutorAPI.GetGenvFunc = f
+    end},
+    {name = "getrenv", aliases = {"get_renv"}, category = "Environment", callback = function(f)
+        ExecutorAPI.HasGetRenv = true
+        ExecutorAPI.GetRenvFunc = f
+    end},
+    {name = "getsenv", aliases = {"get_senv"}, category = "Environment", callback = function(f)
+        ExecutorAPI.HasGetSenv = true
+        ExecutorAPI.GetSenvFunc = f
+    end},
+    {name = "getmenv", aliases = {"get_menv"}, category = "Environment", callback = function(f)
+        ExecutorAPI.HasGetMenv = true
+    end},
+    {name = "getfenv", aliases = {"get_fenv"}, category = "Environment", callback = function(f)
+        ExecutorAPI.HasGetFenv = true
+    end},
+    {name = "setfenv", aliases = {"set_fenv"}, category = "Environment", callback = function(f)
+        ExecutorAPI.HasSetFenv = true
+    end},
+    {name = "getrawmetatable", aliases = {"get_raw_metatable"}, category = "Environment", callback = function(f)
+        ExecutorAPI.HasGetRawMetatable = true
+        ExecutorAPI.GetRawMetatableFunc = f
+    end},
+    {name = "setrawmetatable", aliases = {"set_raw_metatable"}, category = "Environment", callback = function(f)
+        ExecutorAPI.HasSetRawMetatable = true
+    end},
+    {name = "setreadonly", aliases = {"set_readonly", "make_readonly"}, category = "Environment", callback = function(f)
+        ExecutorAPI.HasSetReadOnly = true
+    end},
+    {name = "isreadonly", aliases = {"is_readonly"}, category = "Environment", callback = function(f)
+        ExecutorAPI.HasIsReadOnly = true
+    end},
+    
+    -- Drawing
+    {name = "Drawing", aliases = {"drawing"}, category = "Drawing", callback = function(f)
+        ExecutorAPI.HasDrawing = true
+    end},
+    {name = "getrenderproperty", aliases = {"get_render_property"}, category = "Drawing", callback = function(f)
+        ExecutorAPI.HasGetRenderProperty = true
+    end},
+    {name = "isrenderobj", aliases = {"is_render_object"}, category = "Drawing", callback = function(f)
+        ExecutorAPI.HasIsRenderObject = true
+    end},
+    
+    -- Networking
+    {name = "request", aliases = {"http_request", "http.request"}, category = "Network", callback = function(f)
+        ExecutorAPI.HasRequest = true
+        ExecutorAPI.RequestFunc = f
+    end},
+    {name = "WebSocket", aliases = {"websocket"}, category = "Network", callback = function(f)
+        ExecutorAPI.HasWebSocket = true
+        ExecutorAPI.WebSocketFunc = f
+    end},
+    {name = "gethwid", aliases = {"get_hwid", "gethardwareid"}, category = "Network", callback = function(f)
+        ExecutorAPI.HasGetHWID = true
+    end},
+    
+    -- Misc
+    {name = "getcustomasset", aliases = {"get_custom_asset"}, category = "Misc", callback = function(f)
+        ExecutorAPI.HasGetCustomAsset = true
+        ExecutorAPI.GetCustomAssetFunc = f
+    end},
+    {name = "getsynasset", aliases = {"get_syn_asset"}, category = "Misc", callback = function(f)
+        ExecutorAPI.HasGetSynAsset = true
+    end},
+    {name = "fireclickdetector", aliases = {"fire_click_detector"}, category = "Misc", callback = function(f)
+        ExecutorAPI.HasFireClickDetector = true
+    end},
+    {name = "fireproximityprompt", aliases = {"fire_proximity_prompt"}, category = "Misc", callback = function(f)
+        ExecutorAPI.HasFireProximityPrompt = true
+    end},
+    {name = "firetouchinterest", aliases = {"fire_touch_interest"}, category = "Misc", callback = function(f)
+        ExecutorAPI.HasFireTouchInterest = true
+    end},
+    {name = "isexecutorclosure", aliases = {"is_executor_closure", "checkclosure"}, category = "Misc", callback = function(f)
+        ExecutorAPI.HasIsExecutorClosure = true
+    end},
+    {name = "messagebox", aliases = {"message_box"}, category = "Misc", callback = function(f)
+        ExecutorAPI.HasMessageBox = true
+    end},
+    {name = "setfpscap", aliases = {"set_fps_cap"}, category = "Misc", callback = function(f)
+        ExecutorAPI.HasSetFPSCap = true
+    end},
+    {name = "queue_on_teleport", aliases = {"queueonteleport"}, category = "Misc", callback = function(f)
+        ExecutorAPI.HasQueue = true
+    end},
+}
+
+-- Hàm tìm function theo tên
+local function FindFunction(name)
+    -- Thử global
+    local success, result = pcall(function()
+        return getfenv()[name]
+    end)
+    if success and result and type(result) == "function" then
+        return result
+    end
+    
+    -- Thử _G
+    success, result = pcall(function()
+        return _G[name]
+    end)
+    if success and result and type(result) == "function" then
+        return result
+    end
+    
+    -- Thử shared
+    success, result = pcall(function()
+        return shared[name]
+    end)
+    if success and result and type(result) == "function" then
+        return result
+    end
+    
+    -- Thử getgenv nếu có
+    if ExecutorAPI.GetGenvFunc then
+        success, result = pcall(function()
+            return ExecutorAPI.GetGenvFunc()[name]
+        end)
+        if success and result and type(result) == "function" then
+            return result
+        end
+    end
+    
+    return nil
+end
+
+-- Hàm detect tất cả APIs
+local function DetectAllAPIs()
+    LogSystem:Info("═══════════════════════════════════════════", "API")
+    LogSystem:Info("    BẮT ĐẦU DETECT EXECUTOR APIs", "API")
+    LogSystem:Info("═══════════════════════════════════════════", "API")
+    
+    local startTime = tick()
+    
+    -- Reset API info
+    ExecutorAPI.Name = "Unknown"
+    ExecutorAPI.Version = "Unknown"
+    ExecutorAPI.HasSaveInstance = false
+    ExecutorAPI.Features = {}
     
     -- Thử identify executor
-    local executorName = "Unknown"
     pcall(function()
         if identifyexecutor then
             local name, version = identifyexecutor()
-            executorName = tostring(name)
-            ExecutorInfo.Version = tostring(version or "Unknown")
-            LogSystem:Add("identifyexecutor() => " .. executorName .. " v" .. ExecutorInfo.Version, LogSystem.LogLevel.DEBUG)
+            ExecutorAPI.Name = tostring(name or "Unknown")
+            ExecutorAPI.Version = tostring(version or "Unknown")
+            LogSystem:Info("identifyexecutor() => " .. ExecutorAPI.Name .. " v" .. ExecutorAPI.Version, "API")
         end
     end)
     
     pcall(function()
         if getexecutorname then
-            executorName = tostring(getexecutorname())
-            LogSystem:Add("getexecutorname() => " .. executorName, LogSystem.LogLevel.DEBUG)
+            local name = getexecutorname()
+            if ExecutorAPI.Name == "Unknown" then
+                ExecutorAPI.Name = tostring(name)
+            end
+            LogSystem:Debug("getexecutorname() => " .. tostring(name), "API")
         end
     end)
     
-    -- Kiểm tra từng executor signature
+    -- Sort signatures by priority (highest first)
+    table.sort(ExecutorSignatures, function(a, b)
+        return (a.priority or 0) > (b.priority or 0)
+    end)
+    
+    -- Thử từng executor signature
     for _, sig in ipairs(ExecutorSignatures) do
-        local success, result = pcall(sig.check)
-        if success and result then
-            ExecutorInfo.Name = sig.name
-            pcall(function()
-                ExecutorInfo.Version = sig.version()
-            end)
-            
-            local saveSuccess, saveFunc = pcall(sig.saveFunc)
-            if saveSuccess and saveFunc then
-                ExecutorInfo.HasSaveInstance = true
-                ExecutorInfo.SaveInstanceFunc = saveFunc
-                ExecutorInfo.SupportsOptions = sig.supportsOptions
-                ExecutorInfo.SupportsTerrainSave = sig.supportsTerrain
-                ExecutorInfo.SupportsCallbacks = sig.supportsCallbacks
-                ExecutorInfo.SupportsScriptDecompile = sig.supportsScriptDecompile
-                ExecutorInfo.WorkspaceFolder = sig.workspaceFolder
-                
-                LogSystem:Add("Detected: " .. sig.name .. " với saveinstance support", LogSystem.LogLevel.SUCCESS)
+        local allChecksPass = true
+        
+        for _, checkFunc in ipairs(sig.checks) do
+            local success, result = pcall(checkFunc)
+            if not success or not result then
+                allChecksPass = false
+                break
+            end
+        end
+        
+        if allChecksPass then
+            LogSystem:Debug("Trying signature: " .. sig.name, "API")
+            local setupSuccess = pcall(sig.setup)
+            if setupSuccess and ExecutorAPI.HasSaveInstance then
+                LogSystem:Success("✓ Matched: " .. sig.name, "API")
                 break
             end
         end
     end
     
-    -- Fallback: nếu identifyexecutor cho tên nhưng không match signature
-    if ExecutorInfo.Name == "Unknown" and executorName ~= "Unknown" then
-        ExecutorInfo.Name = executorName
-    end
+    -- Scan tất cả functions
+    LogSystem:Info("Scanning executor functions...", "API")
+    local functionCount = 0
     
-    -- Kiểm tra các hàm cụ thể
-    for _, check in ipairs(FunctionChecks) do
-        local success, exists = pcall(function()
-            local parts = check.global:split(".")
-            local obj = _G
-            for _, part in ipairs(parts) do
-                obj = obj[part]
-                if not obj then return false end
+    for _, funcInfo in ipairs(FunctionsList) do
+        local found = false
+        local foundFunc = nil
+        
+        -- Thử tên chính
+        foundFunc = FindFunction(funcInfo.name)
+        if foundFunc then
+            found = true
+        else
+            -- Thử aliases
+            for _, alias in ipairs(funcInfo.aliases or {}) do
+                foundFunc = FindFunction(alias)
+                if foundFunc then
+                    found = true
+                    break
+                end
             end
-            return obj ~= nil
-        end)
-        
-        if not success or not exists then
-            success, exists = pcall(function()
-                return getfenv()[check.name] ~= nil
-            end)
         end
         
-        if success and exists then
-            ExecutorInfo.Features[check.feature] = true
-            LogSystem:Add("Feature detected: " .. check.feature, LogSystem.LogLevel.DEBUG)
+        if found and funcInfo.callback then
+            pcall(funcInfo.callback, foundFunc)
+            ExecutorAPI.Features[funcInfo.name] = true
+            ExecutorAPI.RawFunctions[funcInfo.name] = foundFunc
+            functionCount = functionCount + 1
+            LogSystem:Debug("  ✓ " .. funcInfo.name .. " (" .. funcInfo.category .. ")", "API")
         end
     end
     
-    -- Cập nhật các flag dựa trên features
-    ExecutorInfo.HasWriteFile = ExecutorInfo.Features["WriteFile"] or false
-    ExecutorInfo.HasReadFile = ExecutorInfo.Features["ReadFile"] or false
-    ExecutorInfo.HasMakeFolder = ExecutorInfo.Features["MakeFolder"] or false
-    ExecutorInfo.HasIsFile = ExecutorInfo.Features["IsFile"] or false
-    ExecutorInfo.HasAppendFile = ExecutorInfo.Features["AppendFile"] or false
-    ExecutorInfo.HasDelFile = ExecutorInfo.Features["DelFile"] or false
-    ExecutorInfo.HasListFiles = ExecutorInfo.Features["ListFiles"] or false
-    ExecutorInfo.HasGetCustomAsset = ExecutorInfo.Features["GetCustomAsset"] or ExecutorInfo.Features["GetSynAsset"] or false
-    ExecutorInfo.HasRequest = ExecutorInfo.Features["Request"] or ExecutorInfo.Features["HttpRequest"] or ExecutorInfo.Features["SynRequest"] or false
-    ExecutorInfo.HasClipboard = ExecutorInfo.Features["SetClipboard"] or ExecutorInfo.Features["ToClipboard"] or false
-    ExecutorInfo.SupportsScriptDecompile = ExecutorInfo.Features["Decompile"] or false
-    
-    -- Lấy writefile function
+    -- Detect platform
     pcall(function()
-        if writefile then
-            ExecutorInfo.WriteFileFunc = writefile
-        elseif write_file then
-            ExecutorInfo.WriteFileFunc = write_file
-        end
+        local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
+        ExecutorAPI.Platform = isMobile and "Mobile" or "Desktop"
     end)
     
-    -- Lấy readfile function
-    pcall(function()
-        if readfile then
-            ExecutorInfo.ReadFileFunc = readfile
-        elseif read_file then
-            ExecutorInfo.ReadFileFunc = read_file
-        end
-    end)
+    -- Tính thời gian
+    local detectTime = tick() - startTime
     
     -- Log kết quả
-    LogSystem:Add("=== Executor Detection Results ===", LogSystem.LogLevel.INFO)
-    LogSystem:Add("Name: " .. ExecutorInfo.Name, LogSystem.LogLevel.INFO)
-    LogSystem:Add("Version: " .. ExecutorInfo.Version, LogSystem.LogLevel.INFO)
-    LogSystem:Add("SaveInstance: " .. tostring(ExecutorInfo.HasSaveInstance), LogSystem.LogLevel.INFO)
-    LogSystem:Add("SupportsOptions: " .. tostring(ExecutorInfo.SupportsOptions), LogSystem.LogLevel.INFO)
-    LogSystem:Add("SupportsTerrain: " .. tostring(ExecutorInfo.SupportsTerrainSave), LogSystem.LogLevel.INFO)
-    LogSystem:Add("SupportsCallbacks: " .. tostring(ExecutorInfo.SupportsCallbacks), LogSystem.LogLevel.INFO)
-    LogSystem:Add("ScriptDecompile: " .. tostring(ExecutorInfo.SupportsScriptDecompile), LogSystem.LogLevel.INFO)
-    LogSystem:Add("WriteFile: " .. tostring(ExecutorInfo.HasWriteFile), LogSystem.LogLevel.INFO)
-    LogSystem:Add("================================", LogSystem.LogLevel.INFO)
+    LogSystem:Info("═══════════════════════════════════════════", "API")
+    LogSystem:Success("    DETECT HOÀN TẤT", "API")
+    LogSystem:Info("═══════════════════════════════════════════", "API")
+    LogSystem:Info("Executor: " .. ExecutorAPI.Name .. " v" .. ExecutorAPI.Version, "API")
+    LogSystem:Info("Platform: " .. ExecutorAPI.Platform, "API")
+    LogSystem:Info("SaveInstance: " .. (ExecutorAPI.HasSaveInstance and "✓ Yes" or "✗ No"), "API")
+    LogSystem:Info("SaveInstance Source: " .. ExecutorAPI.SaveInstanceSource, "API")
+    LogSystem:Info("Functions Found: " .. functionCount, "API")
+    LogSystem:Info("Detect Time: " .. string.format("%.3f", detectTime) .. "s", "API")
+    LogSystem:Info("═══════════════════════════════════════════", "API")
     
-    return ExecutorInfo
+    -- Capabilities summary
+    LogSystem:Debug("--- Capabilities ---", "API")
+    LogSystem:Debug("Options Support: " .. tostring(ExecutorAPI.SupportsOptions), "API")
+    LogSystem:Debug("Terrain Support: " .. tostring(ExecutorAPI.SupportsTerrain), "API")
+    LogSystem:Debug("Scripts Support: " .. tostring(ExecutorAPI.SupportsScripts), "API")
+    LogSystem:Debug("Callbacks Support: " .. tostring(ExecutorAPI.SupportsCallbacks), "API")
+    LogSystem:Debug("IgnoreList Support: " .. tostring(ExecutorAPI.SupportsIgnoreList), "API")
+    LogSystem:Debug("NilInstances Support: " .. tostring(ExecutorAPI.SupportsNilInstances), "API")
+    LogSystem:Debug("NotArchivable Support: " .. tostring(ExecutorAPI.SupportsNotArchivable), "API")
+    
+    return ExecutorAPI
 end
 
 -- =====================================================
--- SECTION 4: SAVE OPTIONS CONFIGURATION
+-- SECTION 4: ADVANCED SAVE OPTIONS
 -- =====================================================
 
-local SaveOptions = {
-    -- Decompile settings
-    DecompileScripts = true,
-    DecompileTimeout = 30,
-    DecompileMode = 2, -- 1 = Fast, 2 = Full
+local SaveConfig = {
+    -- ═══════════ FILE SETTINGS ═══════════
+    FileName = "",
+    FilePath = "",
+    FileExtension = ".rbxl",
     
-    -- Instance settings
-    SaveNilInstances = true,
+    -- ═══════════ DECOMPILE SETTINGS ═══════════
+    Decompile = true,
+    DecompileMode = 2, -- 0 = None, 1 = Fast, 2 = Full
+    DecompileTimeout = 30,
+    DecompileJobless = false,
+    ScriptCache = true,
+    DecompileIgnore = {},
+    
+    -- ═══════════ INSTANCE SETTINGS ═══════════
+    NilInstances = true,
     NilInstancesFix = true,
     SaveNonCreatable = true,
-    IgnoreDefaultProperties = true,
+    SaveNotArchivable = true,
     IgnoreNotArchivable = false,
+    SaveCacheProvider = false,
     
-    -- Player settings
+    -- ═══════════ PROPERTY SETTINGS ═══════════
+    IgnoreDefaultProps = true,
+    IgnoreDefaultProperties = true,
+    IgnoreSharedStrings = false,
+    SharedStringOverwrite = false,
+    IgnorePropertiesOfNotScriptsOnScriptsMode = false,
+    SaveHiddenProperties = true,
+    
+    -- ═══════════ PLAYER SETTINGS ═══════════
     SavePlayers = false,
-    RemovePlayerCharacters = true,
+    RemovePlayers = true,
     IsolateLocalPlayer = true,
     IsolateLocalPlayerCharacter = true,
+    RemovePlayerCharacters = true,
     IsolateStarterPlayer = true,
     
-    -- Services to save
+    -- ═══════════ SERVICE SETTINGS ═══════════
+    SaveServices = true,
+    
+    -- Core Services
     SaveWorkspace = true,
     SaveLighting = true,
     SaveReplicatedFirst = true,
     SaveReplicatedStorage = true,
+    SaveServerScriptService = false, -- Không thể access
+    SaveServerStorage = false, -- Không thể access
     SaveStarterGui = true,
     SaveStarterPack = true,
     SaveStarterPlayer = true,
+    SaveTeams = true,
     SaveSoundService = true,
     SaveChat = true,
     SaveLocalizationService = true,
     SaveMaterialService = true,
+    SaveTestService = false,
+    SaveJointsService = false,
+    SaveInsertService = false,
+    SaveProximityPromptService = false,
     
-    -- Terrain
+    -- ═══════════ TERRAIN SETTINGS ═══════════
     SaveTerrain = true,
+    TerrainCopyEnabled = true,
+    TerrainRegionCopy = true,
+    TerrainMaterialColors = true,
+    TerrainWaterProperties = true,
     
-    -- Format
+    -- ═══════════ FORMAT SETTINGS ═══════════
     Binary = true,
+    BinaryFormat = true,
+    XMLFormat = false,
+    CompactMode = false,
     
-    -- Extra
+    -- ═══════════ OPTIMIZATION SETTINGS ═══════════
+    MaxThreads = 4,
+    BatchSize = 100,
+    YieldInterval = 50,
+    MemoryLimit = 2048, -- MB
+    Timeout = 600, -- seconds
+    
+    -- ═══════════ MODE SETTINGS ═══════════
+    Mode = "full", -- "full", "optimized", "scripts", "terrain"
+    Object = nil, -- Default to game
+    
+    -- ═══════════ CALLBACKS ═══════════
     ShowStatus = true,
+    Callback = nil,
+    StatusCallback = nil,
+    ProgressCallback = nil,
+    InstanceCallback = nil,
+    ErrorCallback = nil,
+    
+    -- ═══════════ EXCLUDE/INCLUDE ═══════════
+    IgnoreList = {},
+    Ignore = {},
+    ExcludeDescendantsOf = {},
+    ExcludeClassNames = {},
+    IncludeClassNames = {},
+    
+    -- ═══════════ ADVANCED ═══════════
     SafeMode = false,
-    Timeout = 300, -- 5 phút timeout tổng
+    DebugMode = false,
+    AntiIdle = true,
+    DisableCompression = false,
+    CopyWorkspaceInstances = true,
     
-    -- Exclude
-    ExcludeList = {},
+    -- ═══════════ CUSTOM ═══════════
+    CustomOptions = {},
     
-    -- Custom
-    CustomFileName = ""
+    -- ═══════════ METADATA ═══════════
+    IncludeMetadata = true,
+    MetadataComments = true
 }
 
--- Hàm tạo options cho saveinstance
-local function BuildSaveInstanceOptions(fileName, mode, customOptions)
-    -- mode: "full", "models", "terrain", "scripts"
-    customOptions = customOptions or {}
+-- Build options cho saveinstance
+local function BuildSaveOptions(fileName, mode, customOpts)
+    mode = mode or "full"
+    customOpts = customOpts or {}
     
-    -- Merge options
-    local opts = {}
-    for k, v in pairs(SaveOptions) do
-        opts[k] = v
+    -- Clone base config
+    local options = {}
+    for k, v in pairs(SaveConfig) do
+        if type(v) == "table" then
+            options[k] = {}
+            for k2, v2 in pairs(v) do
+                options[k][k2] = v2
+            end
+        else
+            options[k] = v
+        end
     end
-    for k, v in pairs(customOptions) do
-        opts[k] = v
+    
+    -- Apply custom options
+    for k, v in pairs(customOpts) do
+        options[k] = v
     end
     
-    -- Base options
-    local saveOptions = {
-        -- File
-        FileName = fileName,
-        Filename = fileName, -- Backup key
-        FilePath = fileName, -- Alternative key
-        
-        -- Decompile
-        Decompile = opts.DecompileScripts,
-        DecompileMode = opts.DecompileMode,
-        DecompileTimeout = opts.DecompileTimeout,
-        DecompileIgnore = {},
-        ScriptCache = true,
-        
-        -- Instances
-        NilInstances = opts.SaveNilInstances,
-        NilInstancesFix = opts.NilInstancesFix,
-        SaveNonCreatable = opts.SaveNonCreatable,
-        
-        -- Properties
-        IgnoreDefaultProps = opts.IgnoreDefaultProperties,
-        IgnoreDefaultProperties = opts.IgnoreDefaultProperties,
-        IgnoreNotArchivable = opts.IgnoreNotArchivable,
-        IgnorePropertiesOfNotScriptsOnScriptsMode = false,
-        SaveNotArchivable = not opts.IgnoreNotArchivable,
-        
-        -- Players
-        SavePlayers = opts.SavePlayers,
-        RemovePlayers = not opts.SavePlayers,
-        RemovePlayerCharacters = opts.RemovePlayerCharacters,
-        IsolateLocalPlayer = opts.IsolateLocalPlayer,
-        IsolateLocalPlayerCharacter = opts.IsolateLocalPlayerCharacter,
-        IsolateStarterPlayer = opts.IsolateStarterPlayer,
-        PlayerCharacters = not opts.RemovePlayerCharacters,
-        
-        -- Format
-        Binary = opts.Binary,
-        
-        -- Object (mặc định là game)
-        Object = game,
-        
-        -- Mode
-        Mode = "optimized",
-        
-        -- Status
-        ShowStatus = opts.ShowStatus,
-        
-        -- Timeout
-        Timeout = opts.Timeout,
-        
-        -- Terrain
-        Terrain = opts.SaveTerrain,
-        SaveTerrain = opts.SaveTerrain,
-        CopyTerrain = opts.SaveTerrain,
-    }
+    -- Set filename
+    options.FileName = fileName
+    options.Filename = fileName -- Alias
+    options.FilePath = fileName
     
-    -- Mode-specific options
+    -- Mode-specific settings
     if mode == "full" then
-        saveOptions.Mode = "full"
-        saveOptions.Terrain = true
-        saveOptions.SaveTerrain = true
-        saveOptions.CopyTerrain = true
-        LogSystem:Add("Mode: Full Game (Models + Terrain + Scripts)", LogSystem.LogLevel.INFO)
+        options.Mode = "full"
+        options.SaveTerrain = true
+        options.Terrain = true
+        options.CopyTerrain = true
+        options.Decompile = true
+        options.DecompileMode = 2
+        options.NilInstances = true
+        options.SaveNotArchivable = true
+        LogSystem:Info("Mode: Full Game (Models + Terrain + Scripts)", "SAVE")
         
     elseif mode == "models" then
-        saveOptions.Mode = "optimized"
-        saveOptions.Terrain = false
-        saveOptions.SaveTerrain = false
-        saveOptions.CopyTerrain = false
+        options.Mode = "optimized"
+        options.SaveTerrain = false
+        options.Terrain = false
+        options.CopyTerrain = false
+        options.Decompile = true
+        options.DecompileMode = 2
         
-        -- Thêm Terrain vào ignore list
+        -- Thêm terrain vào ignore
         local terrain = workspace:FindFirstChildOfClass("Terrain")
         if terrain then
-            saveOptions.IgnoreList = {terrain}
-            saveOptions.Ignore = {terrain}
-            saveOptions.ExcludeDescendantsOf = {terrain}
+            options.IgnoreList = options.IgnoreList or {}
+            options.Ignore = options.Ignore or {}
+            table.insert(options.IgnoreList, terrain)
+            table.insert(options.Ignore, terrain)
+            options.ExcludeDescendantsOf = options.ExcludeDescendantsOf or {}
+            table.insert(options.ExcludeDescendantsOf, terrain)
         end
-        LogSystem:Add("Mode: Models Only (No Terrain)", LogSystem.LogLevel.INFO)
+        LogSystem:Info("Mode: Models Only (No Terrain)", "SAVE")
         
     elseif mode == "terrain" then
-        saveOptions.Mode = "optimized"
-        saveOptions.Terrain = true
-        saveOptions.SaveTerrain = true
-        saveOptions.CopyTerrain = true
-        -- Terrain mode vẫn lưu full nhưng focus terrain
-        LogSystem:Add("Mode: Terrain Focus", LogSystem.LogLevel.INFO)
+        options.Mode = "optimized"
+        options.SaveTerrain = true
+        options.Terrain = true
+        options.CopyTerrain = true
+        options.Decompile = false
+        options.DecompileMode = 0
+        LogSystem:Info("Mode: Terrain Focus", "SAVE")
         
     elseif mode == "scripts" then
-        saveOptions.Mode = "scripts"
-        saveOptions.Decompile = true
-        saveOptions.DecompileMode = 2
-        saveOptions.ScriptsOnly = true
-        LogSystem:Add("Mode: Scripts Only", LogSystem.LogLevel.INFO)
+        options.Mode = "scripts"
+        options.ScriptsOnly = true
+        options.Decompile = true
+        options.DecompileMode = 2
+        options.DecompileTimeout = 60
+        options.SaveTerrain = false
+        LogSystem:Info("Mode: Scripts Focus", "SAVE")
+        
+    elseif mode == "workspace" then
+        options.Mode = "optimized"
+        options.Object = workspace
+        options.SaveTerrain = true
+        options.Decompile = true
+        LogSystem:Info("Mode: Workspace Only", "SAVE")
+        
+    elseif mode == "custom" then
+        -- Sử dụng custom options
+        LogSystem:Info("Mode: Custom", "SAVE")
     end
     
-    -- Thêm exclude list
-    if opts.ExcludeList and #opts.ExcludeList > 0 then
-        saveOptions.IgnoreList = saveOptions.IgnoreList or {}
-        for _, item in ipairs(opts.ExcludeList) do
-            table.insert(saveOptions.IgnoreList, item)
-        end
+    -- Object mặc định là game
+    if not options.Object then
+        options.Object = game
     end
     
     -- Callbacks nếu được hỗ trợ
-    if ExecutorInfo.SupportsCallbacks then
-        saveOptions.Callback = function(status)
-            if ProgressLabel then
-                pcall(function()
-                    ProgressLabel.Text = tostring(status)
-                end)
-            end
-            LogSystem:Add("Progress: " .. tostring(status), LogSystem.LogLevel.DEBUG)
-        end
-        
-        saveOptions.ProgressCallback = function(current, total)
-            if ProgressBar then
-                pcall(function()
-                    local progress = total > 0 and (current / total) or 0
-                    TweenService:Create(ProgressBar, TweenInfo.new(0.1), {
-                        Size = UDim2.new(progress, 0, 1, 0)
-                    }):Play()
-                end)
-            end
-            if ProgressLabel then
-                pcall(function()
-                    ProgressLabel.Text = string.format("Saving: %d / %d", current, total)
-                end)
+    if ExecutorAPI.SupportsCallbacks then
+        options.Callback = function(info)
+            if type(info) == "string" then
+                LogSystem:Debug("Callback: " .. info, "SAVE")
+            elseif type(info) == "table" then
+                if info.Status then
+                    LogSystem:Debug("Status: " .. tostring(info.Status), "SAVE")
+                end
             end
         end
         
-        saveOptions.StatusCallback = function(message)
-            LogSystem:Add(message, LogSystem.LogLevel.DEBUG)
+        options.StatusCallback = function(status)
+            LogSystem:Debug("StatusCallback: " .. tostring(status), "SAVE")
+            UpdateStatus(tostring(status), "loading")
+        end
+        
+        options.ProgressCallback = function(current, total)
+            if total and total > 0 then
+                local percent = math.floor((current / total) * 100)
+                UpdateProgress(current, total, string.format("Saving: %d/%d (%d%%)", current, total, percent))
+                LogSystem:Trace("Progress: " .. current .. "/" .. total, "SAVE")
+            end
+        end
+        
+        options.InstanceCallback = function(instance)
+            LogSystem:Trace("Saving: " .. tostring(instance:GetFullName()), "SAVE")
+        end
+        
+        options.ErrorCallback = function(err)
+            LogSystem:Error("SaveError: " .. tostring(err), "SAVE")
         end
     end
     
-    return saveOptions
+    return options
 end
 
 -- =====================================================
 -- SECTION 5: UTILITY FUNCTIONS
 -- =====================================================
 
--- Lấy tên game an toàn
+-- Lấy tên game
 local function GetGameName()
     local gameName = "UnknownGame"
     
-    -- Thử nhiều cách lấy tên
+    -- Thử MarketplaceService
     local success, result = pcall(function()
         local info = MarketplaceService:GetProductInfo(game.PlaceId)
         if info and info.Name and type(info.Name) == "string" and #info.Name > 0 then
@@ -818,44 +1742,30 @@ local function GetGameName()
     
     if success and result then
         gameName = result
-        LogSystem:Add("Lấy tên game từ MarketplaceService: " .. gameName, LogSystem.LogLevel.DEBUG)
+        LogSystem:Debug("Game name from MarketplaceService: " .. gameName, "UTIL")
     else
-        -- Thử lấy từ các nguồn khác
-        pcall(function()
-            if game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId) then
-                gameName = game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId).Name or ("Game_" .. game.PlaceId)
-            end
-        end)
-        
-        if gameName == "UnknownGame" then
-            gameName = "Game_" .. tostring(game.PlaceId)
-            LogSystem:Add("Không thể lấy tên game, sử dụng PlaceId", LogSystem.LogLevel.WARNING)
-        end
+        -- Fallback
+        gameName = "Game_" .. tostring(game.PlaceId)
+        LogSystem:Warn("Could not get game name, using PlaceId", "UTIL")
     end
     
-    -- Làm sạch tên file (loại bỏ ký tự không hợp lệ)
-    -- Windows forbidden: \ / : * ? " < > |
-    -- Mac/Linux issues: / and null
-    local originalName = gameName
-    gameName = gameName:gsub('[\\/:*?"<>|%z]', "_")
-    gameName = gameName:gsub("[%c]", "") -- Control characters
-    gameName = gameName:gsub("^%s+", ""):gsub("%s+$", "") -- Trim
-    gameName = gameName:gsub("%s+", " ") -- Normalize spaces
-    gameName = gameName:gsub("%.+$", "") -- Remove trailing dots
-    gameName = gameName:gsub("^%.+", "") -- Remove leading dots
+    -- Sanitize
+    local original = gameName
+    gameName = gameName:gsub('[\\/:*?"<>|%z%c]', "_")
+    gameName = gameName:gsub("^%s+", ""):gsub("%s+$", "")
+    gameName = gameName:gsub("%s+", " ")
+    gameName = gameName:gsub("%.+$", ""):gsub("^%.+", "")
     
-    -- Giới hạn độ dài (để tránh path quá dài)
-    if #gameName > 80 then
-        gameName = gameName:sub(1, 77) .. "..."
+    if #gameName > 100 then
+        gameName = gameName:sub(1, 97) .. "..."
     end
     
-    -- Đảm bảo không rỗng
     if #gameName == 0 then
         gameName = "UnknownGame"
     end
     
-    if originalName ~= gameName then
-        LogSystem:Add("Đã làm sạch tên game: '" .. originalName .. "' -> '" .. gameName .. "'", LogSystem.LogLevel.DEBUG)
+    if original ~= gameName then
+        LogSystem:Debug("Sanitized: '" .. original .. "' -> '" .. gameName .. "'", "UTIL")
     end
     
     return gameName
@@ -867,21 +1777,54 @@ local function GetFinalFileName(suffix)
     suffix = suffix or ""
     
     local fileName
-    if SaveOptions.CustomFileName and #SaveOptions.CustomFileName > 0 then
-        fileName = SaveOptions.CustomFileName
-        if not fileName:match("%.rbxl$") then
-            fileName = fileName .. ".rbxl"
-        end
+    if suffix ~= "" then
+        fileName = gameName .. " [" .. suffix .. "] Decompile By BaoSaveInstance.rbxl"
     else
-        if suffix ~= "" then
-            fileName = gameName .. " [" .. suffix .. "] Decompile By BaoSaveInstance.rbxl"
-        else
-            fileName = gameName .. " Decompile By BaoSaveInstance.rbxl"
-        end
+        fileName = gameName .. " Decompile By BaoSaveInstance.rbxl"
     end
     
-    LogSystem:Add("File name: " .. fileName, LogSystem.LogLevel.DEBUG)
+    LogSystem:Debug("File name: " .. fileName, "UTIL")
     return fileName
+end
+
+-- Count instances
+local function CountInstances(root)
+    root = root or game
+    local count = 0
+    
+    local success, result = pcall(function()
+        local function countRecursive(instance)
+            count = count + 1
+            for _, child in ipairs(instance:GetChildren()) do
+                countRecursive(child)
+            end
+        end
+        
+        if root == game then
+            -- Count specific services
+            local services = {
+                workspace, Lighting, ReplicatedFirst, ReplicatedStorage,
+                StarterGui, StarterPack, StarterPlayer, SoundService,
+                Teams, Chat
+            }
+            
+            for _, service in ipairs(services) do
+                pcall(function()
+                    countRecursive(service)
+                end)
+            end
+        else
+            countRecursive(root)
+        end
+        
+        return count
+    end)
+    
+    if success then
+        return count
+    else
+        return 0
+    end
 end
 
 -- Update Status UI
@@ -896,7 +1839,7 @@ local function UpdateStatus(message, statusType)
         loading = LogSystem.LogLevel.INFO
     }
     
-    LogSystem:Add(message, levelMap[statusType] or LogSystem.LogLevel.INFO)
+    LogSystem:Add(message, levelMap[statusType] or LogSystem.LogLevel.INFO, "STATUS")
     
     if StatusLabel then
         pcall(function()
@@ -922,7 +1865,7 @@ local function UpdateProgress(current, total, message)
     
     if ProgressBar then
         pcall(function()
-            TweenService:Create(ProgressBar, TweenInfo.new(0.15), {
+            TweenService:Create(ProgressBar, TweenInfo.new(0.1), {
                 Size = UDim2.new(progress, 0, 1, 0)
             }):Play()
         end)
@@ -930,11 +1873,7 @@ local function UpdateProgress(current, total, message)
     
     if ProgressLabel then
         pcall(function()
-            if message then
-                ProgressLabel.Text = message
-            else
-                ProgressLabel.Text = string.format("%.1f%%", progress * 100)
-            end
+            ProgressLabel.Text = message or string.format("%.1f%%", progress * 100)
         end)
     end
 end
@@ -953,233 +1892,452 @@ local function ResetProgress()
     end
 end
 
+-- Update Instance Count
+local function UpdateInstanceCount(count)
+    if InstanceCountLabel then
+        pcall(function()
+            InstanceCountLabel.Text = "📦 Instances: " .. tostring(count or 0)
+        end)
+    end
+end
+
 -- =====================================================
--- SECTION 6: DECOMPILER MODULE (ADVANCED)
+-- SECTION 6: ULTIMATE DECOMPILER ENGINE
 -- =====================================================
 
 local Decompiler = {
     IsProcessing = false,
-    LastError = nil,
-    LastFileName = nil,
+    CurrentFileName = nil,
+    StartTime = 0,
+    EndTime = 0,
     TotalSaveTime = 0,
     SuccessCount = 0,
-    FailCount = 0
+    FailCount = 0,
+    LastError = nil,
+    InstancesSaved = 0,
+    Statistics = {
+        InstanceCount = 0,
+        ScriptCount = 0,
+        TerrainSize = 0,
+        FileSize = 0
+    }
 }
 
--- Hàm save chính với nhiều fallback
-function Decompiler:Save(fileName, mode, customOptions)
-    if self.IsProcessing then
-        return false, "Đang có tiến trình khác chạy. Vui lòng đợi."
+-- Method 1: Standard saveinstance với full options
+function Decompiler:Method1_FullOptions(fileName, mode, options)
+    LogSystem:Info("Method 1: Full Options saveinstance", "DECOMPILE")
+    
+    local saveOptions = BuildSaveOptions(fileName, mode, options)
+    
+    local success, err = pcall(function()
+        ExecutorAPI.SaveInstanceFunc(saveOptions)
+    end)
+    
+    if success then
+        LogSystem:Success("Method 1 SUCCESS", "DECOMPILE")
+        return true, "Full Options"
+    else
+        LogSystem:Warn("Method 1 FAILED: " .. tostring(err), "DECOMPILE")
+        return false, tostring(err)
+    end
+end
+
+-- Method 2: Basic options
+function Decompiler:Method2_BasicOptions(fileName, mode)
+    LogSystem:Info("Method 2: Basic Options saveinstance", "DECOMPILE")
+    
+    local basicOpts = {
+        FileName = fileName,
+        Filename = fileName,
+        Decompile = true,
+        DecompileMode = 2,
+        NilInstances = true,
+        RemovePlayers = true,
+        Binary = true
+    }
+    
+    -- Mode specific
+    if mode == "full" then
+        basicOpts.SaveTerrain = true
+        basicOpts.Terrain = true
+        basicOpts.Mode = "full"
+    elseif mode == "models" then
+        basicOpts.SaveTerrain = false
+        basicOpts.Terrain = false
+        local terrain = workspace:FindFirstChildOfClass("Terrain")
+        if terrain then
+            basicOpts.IgnoreList = {terrain}
+        end
+    elseif mode == "terrain" then
+        basicOpts.SaveTerrain = true
+        basicOpts.Terrain = true
     end
     
-    if not ExecutorInfo.HasSaveInstance then
-        self.LastError = "Không tìm thấy API saveinstance trong executor."
-        return false, self.LastError
+    local success, err = pcall(function()
+        ExecutorAPI.SaveInstanceFunc(basicOpts)
+    end)
+    
+    if success then
+        LogSystem:Success("Method 2 SUCCESS", "DECOMPILE")
+        return true, "Basic Options"
+    else
+        LogSystem:Warn("Method 2 FAILED: " .. tostring(err), "DECOMPILE")
+        return false, tostring(err)
+    end
+end
+
+-- Method 3: Minimal options
+function Decompiler:Method3_MinimalOptions(fileName, mode)
+    LogSystem:Info("Method 3: Minimal Options saveinstance", "DECOMPILE")
+    
+    local minOpts = {
+        FileName = fileName,
+        Decompile = true
+    }
+    
+    if mode ~= "models" then
+        minOpts.SaveTerrain = true
+    end
+    
+    local success, err = pcall(function()
+        ExecutorAPI.SaveInstanceFunc(minOpts)
+    end)
+    
+    if success then
+        LogSystem:Success("Method 3 SUCCESS", "DECOMPILE")
+        return true, "Minimal Options"
+    else
+        LogSystem:Warn("Method 3 FAILED: " .. tostring(err), "DECOMPILE")
+        return false, tostring(err)
+    end
+end
+
+-- Method 4: Filename only
+function Decompiler:Method4_FilenameOnly(fileName)
+    LogSystem:Info("Method 4: Filename only", "DECOMPILE")
+    
+    local success, err = pcall(function()
+        ExecutorAPI.SaveInstanceFunc(fileName)
+    end)
+    
+    if success then
+        LogSystem:Success("Method 4 SUCCESS", "DECOMPILE")
+        return true, "Filename Only"
+    else
+        LogSystem:Warn("Method 4 FAILED: " .. tostring(err), "DECOMPILE")
+        return false, tostring(err)
+    end
+end
+
+-- Method 5: Game + filename
+function Decompiler:Method5_GameAndFilename(fileName)
+    LogSystem:Info("Method 5: game + filename", "DECOMPILE")
+    
+    local success, err = pcall(function()
+        ExecutorAPI.SaveInstanceFunc(game, fileName)
+    end)
+    
+    if success then
+        LogSystem:Success("Method 5 SUCCESS", "DECOMPILE")
+        return true, "Game + Filename"
+    else
+        LogSystem:Warn("Method 5 FAILED: " .. tostring(err), "DECOMPILE")
+        return false, tostring(err)
+    end
+end
+
+-- Method 6: Table with mode
+function Decompiler:Method6_ModeTable(fileName, mode)
+    LogSystem:Info("Method 6: Mode table", "DECOMPILE")
+    
+    local modeMap = {
+        full = "full",
+        models = "optimized",
+        terrain = "optimized",
+        scripts = "scripts"
+    }
+    
+    local success, err = pcall(function()
+        ExecutorAPI.SaveInstanceFunc({
+            FileName = fileName,
+            Mode = modeMap[mode] or "full",
+            Decompile = true,
+            DecompileMode = 2
+        })
+    end)
+    
+    if success then
+        LogSystem:Success("Method 6 SUCCESS", "DECOMPILE")
+        return true, "Mode Table"
+    else
+        LogSystem:Warn("Method 6 FAILED: " .. tostring(err), "DECOMPILE")
+        return false, tostring(err)
+    end
+end
+
+-- Method 7: All services explicit
+function Decompiler:Method7_ExplicitServices(fileName, mode)
+    LogSystem:Info("Method 7: Explicit services", "DECOMPILE")
+    
+    local success, err = pcall(function()
+        ExecutorAPI.SaveInstanceFunc({
+            FileName = fileName,
+            Object = game,
+            Binary = true,
+            Decompile = true,
+            DecompileMode = 2,
+            DecompileTimeout = 30,
+            NilInstances = true,
+            NilInstancesFix = true,
+            RemovePlayers = true,
+            SaveNotArchivable = true,
+            IgnoreDefaultProperties = true,
+            SaveTerrain = (mode ~= "models"),
+            Terrain = (mode ~= "models"),
+            CopyTerrain = (mode ~= "models"),
+            ScriptCache = true,
+            IsolateLocalPlayer = true,
+            IsolateLocalPlayerCharacter = true,
+            IsolateStarterPlayer = true,
+            IgnoreList = (mode == "models") and {workspace:FindFirstChildOfClass("Terrain")} or {}
+        })
+    end)
+    
+    if success then
+        LogSystem:Success("Method 7 SUCCESS", "DECOMPILE")
+        return true, "Explicit Services"
+    else
+        LogSystem:Warn("Method 7 FAILED: " .. tostring(err), "DECOMPILE")
+        return false, tostring(err)
+    end
+end
+
+-- Method 8: Synapse-style options
+function Decompiler:Method8_SynapseStyle(fileName, mode)
+    LogSystem:Info("Method 8: Synapse-style options", "DECOMPILE")
+    
+    local success, err = pcall(function()
+        ExecutorAPI.SaveInstanceFunc({
+            FilePath = fileName,
+            FileName = fileName,
+            
+            -- Synapse specific
+            ExtraInstances = {},
+            DecompileMode = "full",
+            Decompile = true,
+            
+            -- Common
+            Binary = true,
+            NilInstances = true,
+            
+            -- Terrain
+            Terrain = (mode ~= "models"),
+            
+            -- Players
+            PlayerCharacters = false,
+            RemovePlayers = true
+        })
+    end)
+    
+    if success then
+        LogSystem:Success("Method 8 SUCCESS", "DECOMPILE")
+        return true, "Synapse Style"
+    else
+        LogSystem:Warn("Method 8 FAILED: " .. tostring(err), "DECOMPILE")
+        return false, tostring(err)
+    end
+end
+
+-- Method 9: KRNL-style
+function Decompiler:Method9_KRNLStyle(fileName, mode)
+    LogSystem:Info("Method 9: KRNL-style", "DECOMPILE")
+    
+    local success, err = pcall(function()
+        ExecutorAPI.SaveInstanceFunc({
+            FileName = fileName,
+            DecompileMode = 2,
+            NilInstances = true,
+            SaveNotArchivable = true,
+            Terrain = (mode ~= "models")
+        })
+    end)
+    
+    if success then
+        LogSystem:Success("Method 9 SUCCESS", "DECOMPILE")
+        return true, "KRNL Style"
+    else
+        LogSystem:Warn("Method 9 FAILED: " .. tostring(err), "DECOMPILE")
+        return false, tostring(err)
+    end
+end
+
+-- Method 10: Fluxus-style
+function Decompiler:Method10_FluxusStyle(fileName, mode)
+    LogSystem:Info("Method 10: Fluxus-style", "DECOMPILE")
+    
+    local success, err = pcall(function()
+        ExecutorAPI.SaveInstanceFunc({
+            Filename = fileName,
+            Decompile = true,
+            DecompileTimeout = 30,
+            NilInstances = true,
+            SaveTerrain = (mode ~= "models")
+        })
+    end)
+    
+    if success then
+        LogSystem:Success("Method 10 SUCCESS", "DECOMPILE")
+        return true, "Fluxus Style"
+    else
+        LogSystem:Warn("Method 10 FAILED: " .. tostring(err), "DECOMPILE")
+        return false, tostring(err)
+    end
+end
+
+-- Main Save Function với multi-method fallback
+function Decompiler:Save(fileName, mode, customOptions)
+    if self.IsProcessing then
+        return false, "Đang có tiến trình khác đang chạy. Vui lòng đợi."
+    end
+    
+    if not ExecutorAPI.HasSaveInstance then
+        return false, "Không tìm thấy API saveinstance trong executor.\nExecutor: " .. ExecutorAPI.Name
     end
     
     self.IsProcessing = true
-    self.LastFileName = fileName
-    local startTime = tick()
+    self.CurrentFileName = fileName
+    self.StartTime = tick()
+    self.LastError = nil
     
-    LogSystem:Add("===== BẮT ĐẦU DECOMPILE =====", LogSystem.LogLevel.INFO)
-    LogSystem:Add("Mode: " .. tostring(mode), LogSystem.LogLevel.INFO)
-    LogSystem:Add("File: " .. fileName, LogSystem.LogLevel.INFO)
+    LogSystem:Info("═══════════════════════════════════════════", "DECOMPILE")
+    LogSystem:Info("    BẮT ĐẦU DECOMPILE", "DECOMPILE")
+    LogSystem:Info("═══════════════════════════════════════════", "DECOMPILE")
+    LogSystem:Info("Mode: " .. mode, "DECOMPILE")
+    LogSystem:Info("File: " .. fileName, "DECOMPILE")
+    LogSystem:Info("Executor: " .. ExecutorAPI.Name, "DECOMPILE")
+    LogSystem:Info("SaveInstance Source: " .. ExecutorAPI.SaveInstanceSource, "DECOMPILE")
+    
+    -- Count instances
+    UpdateStatus("Đang đếm instances...", "loading")
+    local instanceCount = CountInstances()
+    self.Statistics.InstanceCount = instanceCount
+    UpdateInstanceCount(instanceCount)
+    LogSystem:Info("Instance Count: " .. instanceCount, "DECOMPILE")
     
     ResetProgress()
-    UpdateProgress(0, 100, "Chuẩn bị...")
+    UpdateProgress(0, 100, "Bắt đầu...")
     
     local success = false
-    local message = ""
+    local successMethod = "None"
     local attempts = 0
-    local maxAttempts = 3
+    local maxAttempts = 10
     
-    while attempts < maxAttempts and not success do
+    -- Danh sách các methods
+    local methods = {
+        {name = "Full Options", func = function() return self:Method1_FullOptions(fileName, mode, customOptions) end},
+        {name = "Basic Options", func = function() return self:Method2_BasicOptions(fileName, mode) end},
+        {name = "Minimal Options", func = function() return self:Method3_MinimalOptions(fileName, mode) end},
+        {name = "Explicit Services", func = function() return self:Method7_ExplicitServices(fileName, mode) end},
+        {name = "Synapse Style", func = function() return self:Method8_SynapseStyle(fileName, mode) end},
+        {name = "KRNL Style", func = function() return self:Method9_KRNLStyle(fileName, mode) end},
+        {name = "Fluxus Style", func = function() return self:Method10_FluxusStyle(fileName, mode) end},
+        {name = "Mode Table", func = function() return self:Method6_ModeTable(fileName, mode) end},
+        {name = "Filename Only", func = function() return self:Method4_FilenameOnly(fileName) end},
+        {name = "Game + Filename", func = function() return self:Method5_GameAndFilename(fileName) end},
+    }
+    
+    -- Thử từng method
+    for i, method in ipairs(methods) do
+        if success then break end
+        
         attempts = attempts + 1
-        LogSystem:Add("Attempt " .. attempts .. "/" .. maxAttempts, LogSystem.LogLevel.INFO)
+        UpdateProgress(i, #methods, "Thử method " .. i .. "/" .. #methods .. ": " .. method.name)
+        UpdateStatus("🔄 Đang thử: " .. method.name .. "...", "loading")
         
-        -- Phương pháp 1: SaveInstance với full options
-        if ExecutorInfo.SupportsOptions then
-            UpdateProgress(10, 100, "Đang cấu hình options...")
-            
-            local options = BuildSaveInstanceOptions(fileName, mode, customOptions)
-            
-            UpdateProgress(20, 100, "Đang save instance...")
-            
-            local saveSuccess, saveErr = pcall(function()
-                ExecutorInfo.SaveInstanceFunc(options)
-            end)
-            
-            if saveSuccess then
-                success = true
-                message = "Lưu thành công với full options!"
-                LogSystem:Add("Method 1 (Full Options) thành công!", LogSystem.LogLevel.SUCCESS)
-                break
-            else
-                LogSystem:Add("Method 1 failed: " .. tostring(saveErr), LogSystem.LogLevel.WARNING)
-            end
-        end
+        local methodSuccess, methodResult = method.func()
         
-        -- Phương pháp 2: SaveInstance với options cơ bản
-        if not success then
-            UpdateProgress(30, 100, "Thử phương pháp 2...")
-            
-            local basicOptions = {
-                FileName = fileName,
-                Filename = fileName,
-                Decompile = SaveOptions.DecompileScripts,
-                DecompileMode = 2,
-                NilInstances = true,
-                RemovePlayers = true,
-                SaveTerrain = (mode ~= "models"),
-                Terrain = (mode ~= "models"),
-                Binary = true,
-                Mode = mode == "full" and "full" or "optimized"
-            }
-            
-            -- Thêm ignore terrain nếu mode là models
-            if mode == "models" then
-                local terrain = workspace:FindFirstChildOfClass("Terrain")
-                if terrain then
-                    basicOptions.IgnoreList = {terrain}
-                end
-            end
-            
-            local saveSuccess, saveErr = pcall(function()
-                ExecutorInfo.SaveInstanceFunc(basicOptions)
-            end)
-            
-            if saveSuccess then
-                success = true
-                message = "Lưu thành công với options cơ bản!"
-                LogSystem:Add("Method 2 (Basic Options) thành công!", LogSystem.LogLevel.SUCCESS)
-                break
-            else
-                LogSystem:Add("Method 2 failed: " .. tostring(saveErr), LogSystem.LogLevel.WARNING)
-            end
-        end
-        
-        -- Phương pháp 3: SaveInstance với options tối thiểu
-        if not success then
-            UpdateProgress(50, 100, "Thử phương pháp 3...")
-            
-            local minimalOptions = {
-                FileName = fileName,
-                Decompile = true
-            }
-            
-            local saveSuccess, saveErr = pcall(function()
-                ExecutorInfo.SaveInstanceFunc(minimalOptions)
-            end)
-            
-            if saveSuccess then
-                success = true
-                message = "Lưu thành công với options tối thiểu!"
-                LogSystem:Add("Method 3 (Minimal Options) thành công!", LogSystem.LogLevel.SUCCESS)
-                break
-            else
-                LogSystem:Add("Method 3 failed: " .. tostring(saveErr), LogSystem.LogLevel.WARNING)
-            end
-        end
-        
-        -- Phương pháp 4: SaveInstance chỉ với filename
-        if not success then
-            UpdateProgress(70, 100, "Thử phương pháp 4...")
-            
-            local saveSuccess, saveErr = pcall(function()
-                ExecutorInfo.SaveInstanceFunc(fileName)
-            end)
-            
-            if saveSuccess then
-                success = true
-                message = "Lưu thành công chỉ với filename!"
-                LogSystem:Add("Method 4 (Filename Only) thành công!", LogSystem.LogLevel.SUCCESS)
-                break
-            else
-                LogSystem:Add("Method 4 failed: " .. tostring(saveErr), LogSystem.LogLevel.WARNING)
-            end
-        end
-        
-        -- Phương pháp 5: saveinstance(game, filename)
-        if not success then
-            UpdateProgress(85, 100, "Thử phương pháp 5...")
-            
-            local saveSuccess, saveErr = pcall(function()
-                ExecutorInfo.SaveInstanceFunc(game, fileName)
-            end)
-            
-            if saveSuccess then
-                success = true
-                message = "Lưu thành công với game object!"
-                LogSystem:Add("Method 5 (Game Object) thành công!", LogSystem.LogLevel.SUCCESS)
-                break
-            else
-                LogSystem:Add("Method 5 failed: " .. tostring(saveErr), LogSystem.LogLevel.WARNING)
-                self.LastError = tostring(saveErr)
-            end
-        end
-        
-        -- Đợi trước khi retry
-        if not success and attempts < maxAttempts then
-            LogSystem:Add("Đợi 1 giây trước khi retry...", LogSystem.LogLevel.INFO)
-            task.wait(1)
+        if methodSuccess then
+            success = true
+            successMethod = method.name
+            break
+        else
+            self.LastError = methodResult
+            task.wait(0.3) -- Đợi một chút trước khi thử method tiếp theo
         end
     end
     
-    local endTime = tick()
-    self.TotalSaveTime = endTime - startTime
+    self.EndTime = tick()
+    self.TotalSaveTime = self.EndTime - self.StartTime
     
     UpdateProgress(100, 100, "Hoàn tất!")
     
+    local message = ""
+    
     if success then
         self.SuccessCount = self.SuccessCount + 1
-        message = message .. "\n\n📁 File: " .. fileName
-        message = message .. "\n📂 Thư mục: " .. ExecutorInfo.WorkspaceFolder .. "/"
-        message = message .. "\n⏱️ Thời gian: " .. string.format("%.2f", self.TotalSaveTime) .. " giây"
         
-        -- Cảnh báo nếu mode có hạn chế
-        if mode == "models" and not ExecutorInfo.SupportsOptions then
-            message = message .. "\n\n⚠️ Lưu ý: Executor không hỗ trợ loại bỏ Terrain, file có thể chứa Terrain."
+        LogSystem:Success("═══════════════════════════════════════════", "DECOMPILE")
+        LogSystem:Success("    DECOMPILE THÀNH CÔNG!", "DECOMPILE")
+        LogSystem:Success("═══════════════════════════════════════════", "DECOMPILE")
+        LogSystem:Success("Method: " .. successMethod, "DECOMPILE")
+        LogSystem:Success("Time: " .. string.format("%.2f", self.TotalSaveTime) .. "s", "DECOMPILE")
+        LogSystem:Success("Attempts: " .. attempts, "DECOMPILE")
+        
+        message = "✅ DECOMPILE THÀNH CÔNG!\n\n"
+        message = message .. "📁 File: " .. fileName .. "\n"
+        message = message .. "📂 Thư mục: " .. ExecutorAPI.WorkspaceFolder .. "/\n"
+        message = message .. "⏱️ Thời gian: " .. string.format("%.2f", self.TotalSaveTime) .. " giây\n"
+        message = message .. "🔧 Method: " .. successMethod .. "\n"
+        message = message .. "📦 Instances: ~" .. instanceCount
+        
+        -- Warnings
+        if mode == "models" and not ExecutorAPI.SupportsIgnoreList then
+            message = message .. "\n\n⚠️ Lưu ý: Executor không hỗ trợ IgnoreList, file có thể chứa Terrain."
         end
         
-        if mode == "terrain" and not ExecutorInfo.SupportsOptions then
-            message = message .. "\n\n⚠️ Lưu ý: Executor không hỗ trợ tách riêng Terrain, đã lưu full game."
+        if mode == "terrain" and not ExecutorAPI.SupportsTerrain then
+            message = message .. "\n\n⚠️ Lưu ý: Executor có thể không lưu đầy đủ Terrain."
         end
         
-        LogSystem:Add("===== DECOMPILE THÀNH CÔNG =====", LogSystem.LogLevel.SUCCESS)
     else
         self.FailCount = self.FailCount + 1
-        message = "❌ Không thể lưu game sau " .. maxAttempts .. " lần thử.\n\n"
+        
+        LogSystem:Error("═══════════════════════════════════════════", "DECOMPILE")
+        LogSystem:Error("    DECOMPILE THẤT BẠI!", "DECOMPILE")
+        LogSystem:Error("═══════════════════════════════════════════", "DECOMPILE")
+        LogSystem:Error("Attempts: " .. attempts, "DECOMPILE")
+        LogSystem:Error("Last Error: " .. tostring(self.LastError), "DECOMPILE")
+        
+        message = "❌ DECOMPILE THẤT BẠI!\n\n"
+        message = message .. "Đã thử " .. attempts .. " phương pháp khác nhau.\n\n"
         message = message .. "Nguyên nhân có thể:\n"
         message = message .. "• Executor không hỗ trợ đầy đủ saveinstance\n"
-        message = message .. "• Game quá lớn hoặc có protection\n"
-        message = message .. "• Thiếu quyền ghi file\n\n"
+        message = message .. "• Game có anti-decompile protection\n"
+        message = message .. "• Game quá lớn/phức tạp\n"
+        message = message .. "• Thiếu quyền ghi file\n"
+        message = message .. "• Executor cần cập nhật\n\n"
+        message = message .. "Executor: " .. ExecutorAPI.Name .. "\n"
         message = message .. "Lỗi cuối: " .. tostring(self.LastError)
-        
-        LogSystem:Add("===== DECOMPILE THẤT BẠI =====", LogSystem.LogLevel.ERROR)
-        LogSystem:Add("Last error: " .. tostring(self.LastError), LogSystem.LogLevel.ERROR)
     end
     
     self.IsProcessing = false
     return success, message
 end
 
--- Decompile Full Game
+-- Wrapper functions
 function Decompiler:SaveFullGame(fileName)
-    LogSystem:Add("Starting SaveFullGame...", LogSystem.LogLevel.INFO)
+    LogSystem:Info("═══ SaveFullGame Started ═══", "DECOMPILE")
     return self:Save(fileName, "full")
 end
 
--- Decompile Models Only
 function Decompiler:SaveModelsOnly(fileName)
-    LogSystem:Add("Starting SaveModelsOnly...", LogSystem.LogLevel.INFO)
+    LogSystem:Info("═══ SaveModelsOnly Started ═══", "DECOMPILE")
     return self:Save(fileName, "models")
 end
 
--- Decompile Terrain Only
 function Decompiler:SaveTerrainOnly(fileName)
-    LogSystem:Add("Starting SaveTerrainOnly...", LogSystem.LogLevel.INFO)
+    LogSystem:Info("═══ SaveTerrainOnly Started ═══", "DECOMPILE")
     
-    -- Kiểm tra terrain tồn tại
     local terrain = workspace:FindFirstChildOfClass("Terrain")
     if not terrain then
         return false, "Không tìm thấy Terrain trong workspace.\nGame này có thể không có Terrain."
@@ -1188,47 +2346,49 @@ function Decompiler:SaveTerrainOnly(fileName)
     return self:Save(fileName, "terrain")
 end
 
--- Decompile Scripts Only
 function Decompiler:SaveScriptsOnly(fileName)
-    LogSystem:Add("Starting SaveScriptsOnly...", LogSystem.LogLevel.INFO)
+    LogSystem:Info("═══ SaveScriptsOnly Started ═══", "DECOMPILE")
     
-    if not ExecutorInfo.SupportsScriptDecompile then
-        LogSystem:Add("Executor không hỗ trợ script decompile, sẽ lưu với scripts enabled", LogSystem.LogLevel.WARNING)
+    if not ExecutorAPI.SupportsScripts then
+        LogSystem:Warn("Executor có thể không hỗ trợ script decompile đầy đủ", "DECOMPILE")
     end
     
-    return self:Save(fileName, "scripts", {
-        DecompileScripts = true,
-        DecompileMode = 2,
-        DecompileTimeout = 60
-    })
+    return self:Save(fileName, "scripts")
+end
+
+function Decompiler:SaveWorkspaceOnly(fileName)
+    LogSystem:Info("═══ SaveWorkspaceOnly Started ═══", "DECOMPILE")
+    return self:Save(fileName, "workspace")
+end
+
+function Decompiler:SaveCustom(fileName, customOptions)
+    LogSystem:Info("═══ SaveCustom Started ═══", "DECOMPILE")
+    return self:Save(fileName, "custom", customOptions)
 end
 
 -- =====================================================
--- SECTION 7: ADVANCED GUI CREATION
+-- SECTION 7: GUI CREATION
 -- =====================================================
 
-local function CreateAdvancedGui()
-    -- Cleanup GUI cũ
+local function CreateUltimateGui()
+    -- Cleanup old GUIs
     pcall(function()
-        if BaoSaveInstanceGui then
-            BaoSaveInstanceGui:Destroy()
-        end
-        local oldGui = CoreGui:FindFirstChild("BaoSaveInstance")
-        if oldGui then oldGui:Destroy() end
+        if BaoSaveInstanceGui then BaoSaveInstanceGui:Destroy() end
+        local old = CoreGui:FindFirstChild("BaoSaveInstance")
+        if old then old:Destroy() end
         if LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui") then
-            local oldGui2 = LocalPlayer.PlayerGui:FindFirstChild("BaoSaveInstance")
-            if oldGui2 then oldGui2:Destroy() end
+            local old2 = LocalPlayer.PlayerGui:FindFirstChild("BaoSaveInstance")
+            if old2 then old2:Destroy() end
         end
     end)
     
-    -- Tạo ScreenGui
+    -- Create ScreenGui
     local screenGui = Instance.new("ScreenGui")
     screenGui.Name = "BaoSaveInstance"
     screenGui.ResetOnSpawn = false
     screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     screenGui.DisplayOrder = 999999
     
-    -- Parent
     local guiSuccess = pcall(function()
         screenGui.Parent = CoreGui
     end)
@@ -1240,157 +2400,177 @@ local function CreateAdvancedGui()
     
     BaoSaveInstanceGui = screenGui
     
-    -- ========== SHADOW LAYER ==========
+    -- Colors
+    local Colors = {
+        Background = Color3.fromRGB(18, 18, 22),
+        BackgroundSecondary = Color3.fromRGB(25, 25, 32),
+        BackgroundTertiary = Color3.fromRGB(32, 32, 42),
+        Accent = Color3.fromRGB(90, 130, 220),
+        AccentHover = Color3.fromRGB(110, 150, 240),
+        Success = Color3.fromRGB(80, 200, 120),
+        Error = Color3.fromRGB(220, 80, 80),
+        Warning = Color3.fromRGB(220, 180, 80),
+        Text = Color3.fromRGB(240, 240, 245),
+        TextSecondary = Color3.fromRGB(160, 160, 170),
+        TextMuted = Color3.fromRGB(120, 120, 130),
+        Border = Color3.fromRGB(50, 50, 65),
+        BorderLight = Color3.fromRGB(70, 70, 90)
+    }
+    
+    -- ═══════════ SHADOW ═══════════
     local shadowFrame = Instance.new("Frame")
     shadowFrame.Name = "Shadow"
-    shadowFrame.Size = UDim2.new(0, 520, 0, 620)
-    shadowFrame.Position = UDim2.new(0.5, -258, 0.5, -308)
+    shadowFrame.Size = UDim2.new(0, 560, 0, 720)
+    shadowFrame.Position = UDim2.new(0.5, -278, 0.5, -358)
     shadowFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-    shadowFrame.BackgroundTransparency = 0.6
+    shadowFrame.BackgroundTransparency = 0.5
     shadowFrame.BorderSizePixel = 0
     shadowFrame.ZIndex = 0
     shadowFrame.Parent = screenGui
     
     local shadowCorner = Instance.new("UICorner")
-    shadowCorner.CornerRadius = UDim.new(0, 18)
+    shadowCorner.CornerRadius = UDim.new(0, 20)
     shadowCorner.Parent = shadowFrame
     
-    -- ========== MAIN FRAME ==========
+    -- ═══════════ MAIN FRAME ═══════════
     local mainFrame = Instance.new("Frame")
     mainFrame.Name = "MainFrame"
-    mainFrame.Size = UDim2.new(0, 510, 0, 610)
-    mainFrame.Position = UDim2.new(0.5, -255, 0.5, -305)
-    mainFrame.BackgroundColor3 = Color3.fromRGB(22, 22, 28)
+    mainFrame.Size = UDim2.new(0, 550, 0, 710)
+    mainFrame.Position = UDim2.new(0.5, -275, 0.5, -355)
+    mainFrame.BackgroundColor3 = Colors.Background
     mainFrame.BorderSizePixel = 0
     mainFrame.Active = true
     mainFrame.Parent = screenGui
     
     local mainCorner = Instance.new("UICorner")
-    mainCorner.CornerRadius = UDim.new(0, 14)
+    mainCorner.CornerRadius = UDim.new(0, 16)
     mainCorner.Parent = mainFrame
     
     local mainStroke = Instance.new("UIStroke")
-    mainStroke.Color = Color3.fromRGB(70, 70, 90)
+    mainStroke.Color = Colors.Border
     mainStroke.Thickness = 2
     mainStroke.Parent = mainFrame
     
-    -- ========== TITLE BAR ==========
-    local titleBar = Instance.new("Frame")
-    titleBar.Name = "TitleBar"
-    titleBar.Size = UDim2.new(1, 0, 0, 50)
-    titleBar.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
-    titleBar.BorderSizePixel = 0
-    titleBar.Parent = mainFrame
+    -- ═══════════ HEADER ═══════════
+    local header = Instance.new("Frame")
+    header.Name = "Header"
+    header.Size = UDim2.new(1, 0, 0, 60)
+    header.BackgroundColor3 = Colors.BackgroundSecondary
+    header.BorderSizePixel = 0
+    header.Parent = mainFrame
     
-    local titleCorner = Instance.new("UICorner")
-    titleCorner.CornerRadius = UDim.new(0, 14)
-    titleCorner.Parent = titleBar
+    local headerCorner = Instance.new("UICorner")
+    headerCorner.CornerRadius = UDim.new(0, 16)
+    headerCorner.Parent = header
     
-    local titleFix = Instance.new("Frame")
-    titleFix.Size = UDim2.new(1, 0, 0, 18)
-    titleFix.Position = UDim2.new(0, 0, 1, -18)
-    titleFix.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
-    titleFix.BorderSizePixel = 0
-    titleFix.Parent = titleBar
+    local headerFix = Instance.new("Frame")
+    headerFix.Size = UDim2.new(1, 0, 0, 20)
+    headerFix.Position = UDim2.new(0, 0, 1, -20)
+    headerFix.BackgroundColor3 = Colors.BackgroundSecondary
+    headerFix.BorderSizePixel = 0
+    headerFix.Parent = header
     
-    -- Icon
-    local iconFrame = Instance.new("Frame")
-    iconFrame.Size = UDim2.new(0, 38, 0, 38)
-    iconFrame.Position = UDim2.new(0, 8, 0, 6)
-    iconFrame.BackgroundColor3 = Color3.fromRGB(80, 120, 200)
-    iconFrame.BorderSizePixel = 0
-    iconFrame.Parent = titleBar
+    -- Logo
+    local logoFrame = Instance.new("Frame")
+    logoFrame.Size = UDim2.new(0, 44, 0, 44)
+    logoFrame.Position = UDim2.new(0, 10, 0, 8)
+    logoFrame.BackgroundColor3 = Colors.Accent
+    logoFrame.BorderSizePixel = 0
+    logoFrame.Parent = header
     
-    local iconCorner = Instance.new("UICorner")
-    iconCorner.CornerRadius = UDim.new(0, 10)
-    iconCorner.Parent = iconFrame
+    local logoCorner = Instance.new("UICorner")
+    logoCorner.CornerRadius = UDim.new(0, 12)
+    logoCorner.Parent = logoFrame
     
-    local iconGradient = Instance.new("UIGradient")
-    iconGradient.Color = ColorSequence.new{
-        ColorSequenceKeypoint.new(0, Color3.fromRGB(100, 150, 255)),
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(60, 100, 200))
+    local logoGradient = Instance.new("UIGradient")
+    logoGradient.Color = ColorSequence.new{
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(100, 140, 240)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(70, 110, 200))
     }
-    iconGradient.Rotation = 45
-    iconGradient.Parent = iconFrame
+    logoGradient.Rotation = 45
+    logoGradient.Parent = logoFrame
     
-    local iconText = Instance.new("TextLabel")
-    iconText.Size = UDim2.new(1, 0, 1, 0)
-    iconText.BackgroundTransparency = 1
-    iconText.Text = "BSI"
-    iconText.TextColor3 = Color3.fromRGB(255, 255, 255)
-    iconText.TextSize = 14
-    iconText.Font = Enum.Font.GothamBlack
-    iconText.Parent = iconFrame
+    local logoText = Instance.new("TextLabel")
+    logoText.Size = UDim2.new(1, 0, 1, 0)
+    logoText.BackgroundTransparency = 1
+    logoText.Text = "BSI"
+    logoText.TextColor3 = Colors.Text
+    logoText.TextSize = 16
+    logoText.Font = Enum.Font.GothamBlack
+    logoText.Parent = logoFrame
     
     -- Title
-    local titleLabel = Instance.new("TextLabel")
-    titleLabel.Size = UDim2.new(1, -160, 0, 24)
-    titleLabel.Position = UDim2.new(0, 55, 0, 6)
-    titleLabel.BackgroundTransparency = 1
-    titleLabel.Text = "BaoSaveInstance v" .. VERSION
-    titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-    titleLabel.TextSize = 17
-    titleLabel.Font = Enum.Font.GothamBold
-    titleLabel.TextXAlignment = Enum.TextXAlignment.Left
-    titleLabel.Parent = titleBar
+    local titleContainer = Instance.new("Frame")
+    titleContainer.Size = UDim2.new(1, -180, 1, 0)
+    titleContainer.Position = UDim2.new(0, 62, 0, 0)
+    titleContainer.BackgroundTransparency = 1
+    titleContainer.Parent = header
     
-    -- Subtitle
-    local subtitleLabel = Instance.new("TextLabel")
-    subtitleLabel.Size = UDim2.new(1, -160, 0, 16)
-    subtitleLabel.Position = UDim2.new(0, 55, 0, 28)
-    subtitleLabel.BackgroundTransparency = 1
-    subtitleLabel.Text = "Advanced Roblox Decompile Tool"
-    subtitleLabel.TextColor3 = Color3.fromRGB(150, 150, 160)
-    subtitleLabel.TextSize = 11
-    subtitleLabel.Font = Enum.Font.Gotham
-    subtitleLabel.TextXAlignment = Enum.TextXAlignment.Left
-    subtitleLabel.Parent = titleBar
+    local titleMain = Instance.new("TextLabel")
+    titleMain.Size = UDim2.new(1, 0, 0, 26)
+    titleMain.Position = UDim2.new(0, 0, 0, 8)
+    titleMain.BackgroundTransparency = 1
+    titleMain.Text = "BaoSaveInstance v" .. VERSION
+    titleMain.TextColor3 = Colors.Text
+    titleMain.TextSize = 18
+    titleMain.Font = Enum.Font.GothamBold
+    titleMain.TextXAlignment = Enum.TextXAlignment.Left
+    titleMain.Parent = titleContainer
+    
+    local titleSub = Instance.new("TextLabel")
+    titleSub.Size = UDim2.new(1, 0, 0, 18)
+    titleSub.Position = UDim2.new(0, 0, 0, 32)
+    titleSub.BackgroundTransparency = 1
+    titleSub.Text = "Ultimate Roblox Decompile Tool • " .. BUILD
+    titleSub.TextColor3 = Colors.TextMuted
+    titleSub.TextSize = 12
+    titleSub.Font = Enum.Font.Gotham
+    titleSub.TextXAlignment = Enum.TextXAlignment.Left
+    titleSub.Parent = titleContainer
     
     -- Close Button
     local closeBtn = Instance.new("TextButton")
-    closeBtn.Name = "CloseButton"
-    closeBtn.Size = UDim2.new(0, 36, 0, 36)
-    closeBtn.Position = UDim2.new(1, -46, 0, 7)
-    closeBtn.BackgroundColor3 = Color3.fromRGB(200, 60, 60)
+    closeBtn.Size = UDim2.new(0, 40, 0, 40)
+    closeBtn.Position = UDim2.new(1, -50, 0, 10)
+    closeBtn.BackgroundColor3 = Colors.Error
     closeBtn.BorderSizePixel = 0
     closeBtn.Text = "✕"
-    closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    closeBtn.TextColor3 = Colors.Text
     closeBtn.TextSize = 18
     closeBtn.Font = Enum.Font.GothamBold
     closeBtn.AutoButtonColor = false
-    closeBtn.Parent = titleBar
+    closeBtn.Parent = header
     
     local closeBtnCorner = Instance.new("UICorner")
     closeBtnCorner.CornerRadius = UDim.new(0, 10)
     closeBtnCorner.Parent = closeBtn
     
     closeBtn.MouseEnter:Connect(function()
-        TweenService:Create(closeBtn, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(230, 80, 80)}):Play()
+        TweenService:Create(closeBtn, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(240, 100, 100)}):Play()
     end)
     closeBtn.MouseLeave:Connect(function()
-        TweenService:Create(closeBtn, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(200, 60, 60)}):Play()
+        TweenService:Create(closeBtn, TweenInfo.new(0.15), {BackgroundColor3 = Colors.Error}):Play()
     end)
     closeBtn.MouseButton1Click:Connect(function()
-        TweenService:Create(mainFrame, TweenInfo.new(0.2), {Position = UDim2.new(0.5, -255, 1.5, 0)}):Play()
-        TweenService:Create(shadowFrame, TweenInfo.new(0.2), {Position = UDim2.new(0.5, -258, 1.5, 3)}):Play()
-        task.wait(0.25)
+        TweenService:Create(mainFrame, TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.In), {Position = UDim2.new(0.5, -275, 1.5, 0)}):Play()
+        TweenService:Create(shadowFrame, TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.In), {Position = UDim2.new(0.5, -278, 1.5, 3)}):Play()
+        task.wait(0.3)
         screenGui:Destroy()
         BaoSaveInstanceGui = nil
     end)
     
     -- Minimize Button
     local minBtn = Instance.new("TextButton")
-    minBtn.Name = "MinimizeButton"
-    minBtn.Size = UDim2.new(0, 36, 0, 36)
-    minBtn.Position = UDim2.new(1, -88, 0, 7)
-    minBtn.BackgroundColor3 = Color3.fromRGB(180, 140, 50)
+    minBtn.Size = UDim2.new(0, 40, 0, 40)
+    minBtn.Position = UDim2.new(1, -96, 0, 10)
+    minBtn.BackgroundColor3 = Colors.Warning
     minBtn.BorderSizePixel = 0
     minBtn.Text = "—"
-    minBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    minBtn.TextColor3 = Colors.Text
     minBtn.TextSize = 20
     minBtn.Font = Enum.Font.GothamBold
     minBtn.AutoButtonColor = false
-    minBtn.Parent = titleBar
+    minBtn.Parent = header
     
     local minBtnCorner = Instance.new("UICorner")
     minBtnCorner.CornerRadius = UDim.new(0, 10)
@@ -1401,16 +2581,16 @@ local function CreateAdvancedGui()
     local originalShadowSize = shadowFrame.Size
     
     minBtn.MouseEnter:Connect(function()
-        TweenService:Create(minBtn, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(200, 160, 70)}):Play()
+        TweenService:Create(minBtn, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(240, 200, 100)}):Play()
     end)
     minBtn.MouseLeave:Connect(function()
-        TweenService:Create(minBtn, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(180, 140, 50)}):Play()
+        TweenService:Create(minBtn, TweenInfo.new(0.15), {BackgroundColor3 = Colors.Warning}):Play()
     end)
     minBtn.MouseButton1Click:Connect(function()
         isMinimized = not isMinimized
         if isMinimized then
-            TweenService:Create(mainFrame, TweenInfo.new(0.25, Enum.EasingStyle.Quart), {Size = UDim2.new(0, 510, 0, 50)}):Play()
-            TweenService:Create(shadowFrame, TweenInfo.new(0.25, Enum.EasingStyle.Quart), {Size = UDim2.new(0, 520, 0, 60)}):Play()
+            TweenService:Create(mainFrame, TweenInfo.new(0.25, Enum.EasingStyle.Quart), {Size = UDim2.new(0, 550, 0, 60)}):Play()
+            TweenService:Create(shadowFrame, TweenInfo.new(0.25, Enum.EasingStyle.Quart), {Size = UDim2.new(0, 560, 0, 70)}):Play()
             minBtn.Text = "+"
         else
             TweenService:Create(mainFrame, TweenInfo.new(0.25, Enum.EasingStyle.Quart), {Size = originalSize}):Play()
@@ -1419,41 +2599,33 @@ local function CreateAdvancedGui()
         end
     end)
     
-    -- ========== CONTENT FRAME ==========
-    local contentFrame = Instance.new("Frame")
-    contentFrame.Name = "Content"
-    contentFrame.Size = UDim2.new(1, -24, 1, -62)
-    contentFrame.Position = UDim2.new(0, 12, 0, 56)
-    contentFrame.BackgroundTransparency = 1
-    contentFrame.ClipsDescendants = true
-    contentFrame.Parent = mainFrame
+    -- ═══════════ CONTENT ═══════════
+    local content = Instance.new("Frame")
+    content.Name = "Content"
+    content.Size = UDim2.new(1, -24, 1, -74)
+    content.Position = UDim2.new(0, 12, 0, 66)
+    content.BackgroundTransparency = 1
+    content.ClipsDescendants = true
+    content.Parent = mainFrame
     
-    -- ========== INFO SECTION ==========
+    -- ═══════════ INFO SECTION ═══════════
     local infoFrame = Instance.new("Frame")
     infoFrame.Name = "InfoFrame"
-    infoFrame.Size = UDim2.new(1, 0, 0, 75)
+    infoFrame.Size = UDim2.new(1, 0, 0, 95)
     infoFrame.Position = UDim2.new(0, 0, 0, 0)
-    infoFrame.BackgroundColor3 = Color3.fromRGB(32, 32, 42)
+    infoFrame.BackgroundColor3 = Colors.BackgroundTertiary
     infoFrame.BorderSizePixel = 0
-    infoFrame.Parent = contentFrame
+    infoFrame.Parent = content
     
     local infoCorner = Instance.new("UICorner")
-    infoCorner.CornerRadius = UDim.new(0, 10)
+    infoCorner.CornerRadius = UDim.new(0, 12)
     infoCorner.Parent = infoFrame
     
-    local infoGradient = Instance.new("UIGradient")
-    infoGradient.Color = ColorSequence.new{
-        ColorSequenceKeypoint.new(0, Color3.fromRGB(38, 38, 50)),
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(28, 28, 38))
-    }
-    infoGradient.Rotation = 90
-    infoGradient.Parent = infoFrame
-    
-    -- Executor info
+    -- Executor label
     local executorLabel = Instance.new("TextLabel")
     executorLabel.Name = "ExecutorInfo"
     executorLabel.Size = UDim2.new(1, -20, 0, 20)
-    executorLabel.Position = UDim2.new(0, 12, 0, 8)
+    executorLabel.Position = UDim2.new(0, 12, 0, 10)
     executorLabel.BackgroundTransparency = 1
     executorLabel.Text = "🔧 Executor: Đang detect..."
     executorLabel.TextColor3 = Color3.fromRGB(130, 180, 255)
@@ -1463,42 +2635,57 @@ local function CreateAdvancedGui()
     executorLabel.TextTruncate = Enum.TextTruncate.AtEnd
     executorLabel.Parent = infoFrame
     
-    -- Game name
-    local gameNameLabel = Instance.new("TextLabel")
-    gameNameLabel.Name = "GameName"
-    gameNameLabel.Size = UDim2.new(1, -20, 0, 20)
-    gameNameLabel.Position = UDim2.new(0, 12, 0, 28)
-    gameNameLabel.BackgroundTransparency = 1
-    gameNameLabel.Text = "🎮 Game: Đang lấy thông tin..."
-    gameNameLabel.TextColor3 = Color3.fromRGB(130, 255, 130)
-    gameNameLabel.TextSize = 13
-    gameNameLabel.Font = Enum.Font.GothamSemibold
-    gameNameLabel.TextXAlignment = Enum.TextXAlignment.Left
-    gameNameLabel.TextTruncate = Enum.TextTruncate.AtEnd
-    gameNameLabel.Parent = infoFrame
+    -- Game label
+    local gameLabel = Instance.new("TextLabel")
+    gameLabel.Name = "GameInfo"
+    gameLabel.Size = UDim2.new(1, -20, 0, 20)
+    gameLabel.Position = UDim2.new(0, 12, 0, 32)
+    gameLabel.BackgroundTransparency = 1
+    gameLabel.Text = "🎮 Game: Đang lấy thông tin..."
+    gameLabel.TextColor3 = Color3.fromRGB(130, 255, 130)
+    gameLabel.TextSize = 13
+    gameLabel.Font = Enum.Font.GothamSemibold
+    gameLabel.TextXAlignment = Enum.TextXAlignment.Left
+    gameLabel.TextTruncate = Enum.TextTruncate.AtEnd
+    gameLabel.Parent = infoFrame
     
-    -- Features info
+    -- Instance count label
+    local instanceLabel = Instance.new("TextLabel")
+    instanceLabel.Name = "InstanceInfo"
+    instanceLabel.Size = UDim2.new(1, -20, 0, 20)
+    instanceLabel.Position = UDim2.new(0, 12, 0, 54)
+    instanceLabel.BackgroundTransparency = 1
+    instanceLabel.Text = "📦 Instances: Đang đếm..."
+    instanceLabel.TextColor3 = Color3.fromRGB(255, 200, 130)
+    instanceLabel.TextSize = 12
+    instanceLabel.Font = Enum.Font.Gotham
+    instanceLabel.TextXAlignment = Enum.TextXAlignment.Left
+    instanceLabel.Parent = infoFrame
+    
+    InstanceCountLabel = instanceLabel
+    
+    -- Features label
     local featuresLabel = Instance.new("TextLabel")
     featuresLabel.Name = "FeaturesInfo"
-    featuresLabel.Size = UDim2.new(1, -20, 0, 20)
-    featuresLabel.Position = UDim2.new(0, 12, 0, 48)
+    featuresLabel.Size = UDim2.new(1, -20, 0, 16)
+    featuresLabel.Position = UDim2.new(0, 12, 0, 74)
     featuresLabel.BackgroundTransparency = 1
-    featuresLabel.Text = "📋 Features: Đang kiểm tra..."
-    featuresLabel.TextColor3 = Color3.fromRGB(255, 200, 130)
-    featuresLabel.TextSize = 12
+    featuresLabel.Text = "✨ Features: ..."
+    featuresLabel.TextColor3 = Colors.TextMuted
+    featuresLabel.TextSize = 11
     featuresLabel.Font = Enum.Font.Gotham
     featuresLabel.TextXAlignment = Enum.TextXAlignment.Left
     featuresLabel.TextTruncate = Enum.TextTruncate.AtEnd
     featuresLabel.Parent = infoFrame
     
-    -- ========== BUTTONS SECTION ==========
-    local function CreateDecompileButton(name, text, emoji, posY, color1, color2, description)
-        local btnContainer = Instance.new("Frame")
-        btnContainer.Name = name .. "Container"
-        btnContainer.Size = UDim2.new(1, 0, 0, 58)
-        btnContainer.Position = UDim2.new(0, 0, 0, posY)
-        btnContainer.BackgroundTransparency = 1
-        btnContainer.Parent = contentFrame
+    -- ═══════════ BUTTONS SECTION ═══════════
+    local function CreateButton(name, text, emoji, posY, color1, color2, desc)
+        local btnFrame = Instance.new("Frame")
+        btnFrame.Name = name .. "Frame"
+        btnFrame.Size = UDim2.new(1, 0, 0, 60)
+        btnFrame.Position = UDim2.new(0, 0, 0, posY)
+        btnFrame.BackgroundTransparency = 1
+        btnFrame.Parent = content
         
         local btn = Instance.new("TextButton")
         btn.Name = name
@@ -1507,7 +2694,7 @@ local function CreateAdvancedGui()
         btn.BorderSizePixel = 0
         btn.Text = ""
         btn.AutoButtonColor = false
-        btn.Parent = btnContainer
+        btn.Parent = btnFrame
         
         local btnCorner = Instance.new("UICorner")
         btnCorner.CornerRadius = UDim.new(0, 10)
@@ -1523,116 +2710,106 @@ local function CreateAdvancedGui()
         
         local btnStroke = Instance.new("UIStroke")
         btnStroke.Color = Color3.fromRGB(
-            math.min(color1.R * 255 + 30, 255),
-            math.min(color1.G * 255 + 30, 255),
-            math.min(color1.B * 255 + 30, 255)
+            math.min(color1.R * 255 + 40, 255),
+            math.min(color1.G * 255 + 40, 255),
+            math.min(color1.B * 255 + 40, 255)
         )
         btnStroke.Thickness = 1.5
-        btnStroke.Transparency = 0.5
+        btnStroke.Transparency = 0.6
         btnStroke.Parent = btn
         
         -- Emoji
         local emojiLabel = Instance.new("TextLabel")
         emojiLabel.Size = UDim2.new(0, 50, 1, 0)
-        emojiLabel.Position = UDim2.new(0, 5, 0, 0)
+        emojiLabel.Position = UDim2.new(0, 8, 0, 0)
         emojiLabel.BackgroundTransparency = 1
         emojiLabel.Text = emoji
         emojiLabel.TextSize = 26
         emojiLabel.Font = Enum.Font.GothamBold
-        emojiLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+        emojiLabel.TextColor3 = Colors.Text
         emojiLabel.Parent = btn
         
-        -- Main text
-        local textLabel = Instance.new("TextLabel")
-        textLabel.Size = UDim2.new(1, -65, 0, 22)
-        textLabel.Position = UDim2.new(0, 55, 0, 8)
-        textLabel.BackgroundTransparency = 1
-        textLabel.Text = text
-        textLabel.TextSize = 15
-        textLabel.Font = Enum.Font.GothamBold
-        textLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-        textLabel.TextXAlignment = Enum.TextXAlignment.Left
-        textLabel.Parent = btn
+        -- Title
+        local titleLbl = Instance.new("TextLabel")
+        titleLbl.Size = UDim2.new(1, -65, 0, 24)
+        titleLbl.Position = UDim2.new(0, 58, 0, 8)
+        titleLbl.BackgroundTransparency = 1
+        titleLbl.Text = text
+        titleLbl.TextSize = 15
+        titleLbl.Font = Enum.Font.GothamBold
+        titleLbl.TextColor3 = Colors.Text
+        titleLbl.TextXAlignment = Enum.TextXAlignment.Left
+        titleLbl.Parent = btn
         
         -- Description
-        local descLabel = Instance.new("TextLabel")
-        descLabel.Size = UDim2.new(1, -65, 0, 18)
-        descLabel.Position = UDim2.new(0, 55, 0, 30)
-        descLabel.BackgroundTransparency = 1
-        descLabel.Text = description
-        descLabel.TextSize = 11
-        descLabel.Font = Enum.Font.Gotham
-        descLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-        descLabel.TextXAlignment = Enum.TextXAlignment.Left
-        descLabel.TextTransparency = 0.3
-        descLabel.Parent = btn
+        local descLbl = Instance.new("TextLabel")
+        descLbl.Size = UDim2.new(1, -65, 0, 18)
+        descLbl.Position = UDim2.new(0, 58, 0, 32)
+        descLbl.BackgroundTransparency = 1
+        descLbl.Text = desc
+        descLbl.TextSize = 11
+        descLbl.Font = Enum.Font.Gotham
+        descLbl.TextColor3 = Color3.fromRGB(200, 200, 210)
+        descLbl.TextXAlignment = Enum.TextXAlignment.Left
+        descLbl.TextTransparency = 0.2
+        descLbl.Parent = btn
         
-        -- Hover effects
+        -- Hover
         btn.MouseEnter:Connect(function()
-            TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(
-                math.min(color1.R * 255 + 15, 255),
-                math.min(color1.G * 255 + 15, 255),
-                math.min(color1.B * 255 + 15, 255)
+            TweenService:Create(btn, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(
+                math.min(color1.R * 255 + 20, 255),
+                math.min(color1.G * 255 + 20, 255),
+                math.min(color1.B * 255 + 20, 255)
             )}):Play()
-            TweenService:Create(btnStroke, TweenInfo.new(0.2), {Transparency = 0}):Play()
+            TweenService:Create(btnStroke, TweenInfo.new(0.15), {Transparency = 0}):Play()
         end)
         btn.MouseLeave:Connect(function()
-            TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundColor3 = color1}):Play()
-            TweenService:Create(btnStroke, TweenInfo.new(0.2), {Transparency = 0.5}):Play()
+            TweenService:Create(btn, TweenInfo.new(0.15), {BackgroundColor3 = color1}):Play()
+            TweenService:Create(btnStroke, TweenInfo.new(0.15), {Transparency = 0.6}):Play()
         end)
         
         return btn
     end
     
-    -- Main Buttons
-    local fullGameBtn = CreateDecompileButton(
-        "FullGameButton",
-        "Decompile Full Game",
-        "🎮",
-        85,
-        Color3.fromRGB(50, 100, 170),
-        Color3.fromRGB(35, 75, 130),
-        "Lưu toàn bộ game bao gồm Models, Terrain và Scripts"
+    -- Create all buttons
+    local fullGameBtn = CreateButton(
+        "FullGame", "Decompile Full Game", "🎮", 105,
+        Color3.fromRGB(45, 95, 165), Color3.fromRGB(35, 75, 135),
+        "Lưu toàn bộ: Models + Terrain + Scripts + Services"
     )
     
-    local fullModelBtn = CreateDecompileButton(
-        "FullModelButton",
-        "Decompile Models Only",
-        "🏗️",
-        150,
-        Color3.fromRGB(60, 130, 60),
-        Color3.fromRGB(45, 100, 45),
-        "Lưu tất cả Models, bỏ qua Terrain"
+    local modelsBtn = CreateButton(
+        "Models", "Decompile Models Only", "🏗️", 172,
+        Color3.fromRGB(55, 125, 55), Color3.fromRGB(40, 100, 40),
+        "Chỉ lưu Models, bỏ qua Terrain"
     )
     
-    local terrainBtn = CreateDecompileButton(
-        "TerrainButton",
-        "Decompile Terrain Only",
-        "🌍",
-        215,
-        Color3.fromRGB(170, 100, 40),
-        Color3.fromRGB(130, 75, 30),
+    local terrainBtn = CreateButton(
+        "Terrain", "Decompile Terrain Only", "🌍", 239,
+        Color3.fromRGB(165, 100, 40), Color3.fromRGB(135, 80, 30),
         "Lưu Terrain với environment tối thiểu"
     )
     
-    local scriptsBtn = CreateDecompileButton(
-        "ScriptsButton",
-        "Decompile Scripts Focus",
-        "📜",
-        280,
-        Color3.fromRGB(140, 60, 140),
-        Color3.fromRGB(100, 45, 100),
-        "Tập trung decompile Scripts, giữ cấu trúc game"
+    local scriptsBtn = CreateButton(
+        "Scripts", "Decompile Scripts Focus", "📜", 306,
+        Color3.fromRGB(130, 55, 130), Color3.fromRGB(100, 40, 100),
+        "Tập trung decompile toàn bộ Scripts"
     )
     
-    -- ========== PROGRESS SECTION ==========
+    local workspaceBtn = CreateButton(
+        "Workspace", "Decompile Workspace Only", "🏢", 373,
+        Color3.fromRGB(55, 100, 130), Color3.fromRGB(40, 80, 110),
+        "Chỉ lưu nội dung Workspace"
+    )
+    
+    -- ═══════════ PROGRESS SECTION ═══════════
     local progressFrame = Instance.new("Frame")
     progressFrame.Name = "ProgressFrame"
-    progressFrame.Size = UDim2.new(1, 0, 0, 50)
-    progressFrame.Position = UDim2.new(0, 0, 0, 350)
-    progressFrame.BackgroundColor3 = Color3.fromRGB(28, 28, 36)
+    progressFrame.Size = UDim2.new(1, 0, 0, 55)
+    progressFrame.Position = UDim2.new(0, 0, 0, 440)
+    progressFrame.BackgroundColor3 = Colors.BackgroundSecondary
     progressFrame.BorderSizePixel = 0
-    progressFrame.Parent = contentFrame
+    progressFrame.Parent = content
     
     local progressCorner = Instance.new("UICorner")
     progressCorner.CornerRadius = UDim.new(0, 10)
@@ -1641,11 +2818,11 @@ local function CreateAdvancedGui()
     -- Progress label
     local progressLbl = Instance.new("TextLabel")
     progressLbl.Name = "ProgressLabel"
-    progressLbl.Size = UDim2.new(1, -20, 0, 20)
-    progressLbl.Position = UDim2.new(0, 10, 0, 5)
+    progressLbl.Size = UDim2.new(1, -20, 0, 22)
+    progressLbl.Position = UDim2.new(0, 10, 0, 6)
     progressLbl.BackgroundTransparency = 1
     progressLbl.Text = "Sẵn sàng"
-    progressLbl.TextColor3 = Color3.fromRGB(180, 180, 180)
+    progressLbl.TextColor3 = Colors.TextSecondary
     progressLbl.TextSize = 12
     progressLbl.Font = Enum.Font.Gotham
     progressLbl.TextXAlignment = Enum.TextXAlignment.Left
@@ -1653,12 +2830,11 @@ local function CreateAdvancedGui()
     
     ProgressLabel = progressLbl
     
-    -- Progress bar background
+    -- Progress bar bg
     local progressBarBg = Instance.new("Frame")
-    progressBarBg.Name = "ProgressBarBg"
-    progressBarBg.Size = UDim2.new(1, -20, 0, 16)
-    progressBarBg.Position = UDim2.new(0, 10, 0, 28)
-    progressBarBg.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+    progressBarBg.Size = UDim2.new(1, -20, 0, 18)
+    progressBarBg.Position = UDim2.new(0, 10, 0, 30)
+    progressBarBg.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
     progressBarBg.BorderSizePixel = 0
     progressBarBg.Parent = progressFrame
     
@@ -1668,9 +2844,9 @@ local function CreateAdvancedGui()
     
     -- Progress bar fill
     local progressBarFill = Instance.new("Frame")
-    progressBarFill.Name = "ProgressBarFill"
+    progressBarFill.Name = "Fill"
     progressBarFill.Size = UDim2.new(0, 0, 1, 0)
-    progressBarFill.BackgroundColor3 = Color3.fromRGB(80, 160, 255)
+    progressBarFill.BackgroundColor3 = Colors.Accent
     progressBarFill.BorderSizePixel = 0
     progressBarFill.Parent = progressBarBg
     
@@ -1680,35 +2856,35 @@ local function CreateAdvancedGui()
     
     local progressFillGradient = Instance.new("UIGradient")
     progressFillGradient.Color = ColorSequence.new{
-        ColorSequenceKeypoint.new(0, Color3.fromRGB(100, 180, 255)),
-        ColorSequenceKeypoint.new(1, Color3.fromRGB(60, 140, 220))
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(100, 160, 255)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(70, 130, 220))
     }
     progressFillGradient.Parent = progressBarFill
     
     ProgressBar = progressBarFill
     
-    -- ========== STATUS SECTION ==========
+    -- ═══════════ STATUS SECTION ═══════════
     local statusFrame = Instance.new("Frame")
     statusFrame.Name = "StatusFrame"
-    statusFrame.Size = UDim2.new(1, 0, 0, 90)
-    statusFrame.Position = UDim2.new(0, 0, 0, 408)
-    statusFrame.BackgroundColor3 = Color3.fromRGB(18, 18, 24)
+    statusFrame.Size = UDim2.new(1, 0, 0, 100)
+    statusFrame.Position = UDim2.new(0, 0, 0, 503)
+    statusFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
     statusFrame.BorderSizePixel = 0
-    statusFrame.Parent = contentFrame
+    statusFrame.Parent = content
     
     local statusCorner = Instance.new("UICorner")
     statusCorner.CornerRadius = UDim.new(0, 10)
     statusCorner.Parent = statusFrame
     
     local statusStroke = Instance.new("UIStroke")
-    statusStroke.Color = Color3.fromRGB(45, 45, 55)
+    statusStroke.Color = Colors.Border
     statusStroke.Thickness = 1
     statusStroke.Parent = statusFrame
     
     -- Status header
     local statusHeader = Instance.new("Frame")
-    statusHeader.Size = UDim2.new(1, 0, 0, 26)
-    statusHeader.BackgroundColor3 = Color3.fromRGB(28, 28, 36)
+    statusHeader.Size = UDim2.new(1, 0, 0, 28)
+    statusHeader.BackgroundColor3 = Colors.BackgroundSecondary
     statusHeader.BorderSizePixel = 0
     statusHeader.Parent = statusFrame
     
@@ -1717,9 +2893,9 @@ local function CreateAdvancedGui()
     statusHeaderCorner.Parent = statusHeader
     
     local statusHeaderFix = Instance.new("Frame")
-    statusHeaderFix.Size = UDim2.new(1, 0, 0, 10)
-    statusHeaderFix.Position = UDim2.new(0, 0, 1, -10)
-    statusHeaderFix.BackgroundColor3 = Color3.fromRGB(28, 28, 36)
+    statusHeaderFix.Size = UDim2.new(1, 0, 0, 12)
+    statusHeaderFix.Position = UDim2.new(0, 0, 1, -12)
+    statusHeaderFix.BackgroundColor3 = Colors.BackgroundSecondary
     statusHeaderFix.BorderSizePixel = 0
     statusHeaderFix.Parent = statusHeader
     
@@ -1728,7 +2904,7 @@ local function CreateAdvancedGui()
     statusHeaderText.Position = UDim2.new(0, 10, 0, 0)
     statusHeaderText.BackgroundTransparency = 1
     statusHeaderText.Text = "📋 Status"
-    statusHeaderText.TextColor3 = Color3.fromRGB(150, 150, 160)
+    statusHeaderText.TextColor3 = Colors.TextMuted
     statusHeaderText.TextSize = 12
     statusHeaderText.Font = Enum.Font.GothamSemibold
     statusHeaderText.TextXAlignment = Enum.TextXAlignment.Left
@@ -1737,11 +2913,11 @@ local function CreateAdvancedGui()
     -- Status content
     local statusLbl = Instance.new("TextLabel")
     statusLbl.Name = "StatusLabel"
-    statusLbl.Size = UDim2.new(1, -20, 1, -36)
-    statusLbl.Position = UDim2.new(0, 10, 0, 30)
+    statusLbl.Size = UDim2.new(1, -20, 1, -38)
+    statusLbl.Position = UDim2.new(0, 10, 0, 32)
     statusLbl.BackgroundTransparency = 1
     statusLbl.Text = "✅ Sẵn sàng. Chọn chức năng để bắt đầu decompile."
-    statusLbl.TextColor3 = Color3.fromRGB(200, 200, 200)
+    statusLbl.TextColor3 = Colors.TextSecondary
     statusLbl.TextSize = 12
     statusLbl.Font = Enum.Font.Gotham
     statusLbl.TextWrapped = true
@@ -1751,46 +2927,45 @@ local function CreateAdvancedGui()
     
     StatusLabel = statusLbl
     
-    -- ========== LOG SECTION (Scrolling) ==========
+    -- ═══════════ LOG SECTION ═══════════
     local logFrame = Instance.new("Frame")
     logFrame.Name = "LogFrame"
-    logFrame.Size = UDim2.new(1, 0, 0, 50)
-    logFrame.Position = UDim2.new(0, 0, 0, 505)
-    logFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
+    logFrame.Size = UDim2.new(1, 0, 0, 35)
+    logFrame.Position = UDim2.new(0, 0, 0, 610)
+    logFrame.BackgroundColor3 = Color3.fromRGB(12, 12, 16)
     logFrame.BorderSizePixel = 0
     logFrame.ClipsDescendants = true
-    logFrame.Parent = contentFrame
+    logFrame.Parent = content
     
     local logCorner = Instance.new("UICorner")
     logCorner.CornerRadius = UDim.new(0, 8)
     logCorner.Parent = logFrame
     
-    -- Log header với toggle
-    local logHeader = Instance.new("TextButton")
-    logHeader.Size = UDim2.new(1, 0, 0, 24)
-    logHeader.BackgroundColor3 = Color3.fromRGB(25, 25, 32)
-    logHeader.BorderSizePixel = 0
-    logHeader.Text = "  📝 Logs (Click để mở rộng)"
-    logHeader.TextColor3 = Color3.fromRGB(130, 130, 140)
-    logHeader.TextSize = 11
-    logHeader.Font = Enum.Font.Gotham
-    logHeader.TextXAlignment = Enum.TextXAlignment.Left
-    logHeader.AutoButtonColor = false
-    logHeader.Parent = logFrame
+    -- Log toggle button
+    local logToggle = Instance.new("TextButton")
+    logToggle.Size = UDim2.new(1, 0, 0, 28)
+    logToggle.BackgroundColor3 = Color3.fromRGB(20, 20, 26)
+    logToggle.BorderSizePixel = 0
+    logToggle.Text = "  📝 Console Logs (Click để mở)"
+    logToggle.TextColor3 = Colors.TextMuted
+    logToggle.TextSize = 11
+    logToggle.Font = Enum.Font.Gotham
+    logToggle.TextXAlignment = Enum.TextXAlignment.Left
+    logToggle.AutoButtonColor = false
+    logToggle.Parent = logFrame
     
-    local logHeaderCorner = Instance.new("UICorner")
-    logHeaderCorner.CornerRadius = UDim.new(0, 8)
-    logHeaderCorner.Parent = logHeader
+    local logToggleCorner = Instance.new("UICorner")
+    logToggleCorner.CornerRadius = UDim.new(0, 8)
+    logToggleCorner.Parent = logToggle
     
     -- Log scroll
     local logScroll = Instance.new("ScrollingFrame")
-    logScroll.Name = "LogScroll"
-    logScroll.Size = UDim2.new(1, -10, 1, -30)
-    logScroll.Position = UDim2.new(0, 5, 0, 26)
+    logScroll.Size = UDim2.new(1, -8, 1, -34)
+    logScroll.Position = UDim2.new(0, 4, 0, 30)
     logScroll.BackgroundTransparency = 1
     logScroll.BorderSizePixel = 0
     logScroll.ScrollBarThickness = 4
-    logScroll.ScrollBarImageColor3 = Color3.fromRGB(80, 80, 100)
+    logScroll.ScrollBarImageColor3 = Color3.fromRGB(70, 70, 90)
     logScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
     logScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
     logScroll.Visible = false
@@ -1798,11 +2973,11 @@ local function CreateAdvancedGui()
     
     local logText = Instance.new("TextLabel")
     logText.Name = "LogText"
-    logText.Size = UDim2.new(1, -8, 0, 0)
-    logText.Position = UDim2.new(0, 4, 0, 0)
+    logText.Size = UDim2.new(1, -4, 0, 0)
+    logText.Position = UDim2.new(0, 2, 0, 0)
     logText.BackgroundTransparency = 1
     logText.Text = ""
-    logText.TextColor3 = Color3.fromRGB(150, 150, 150)
+    logText.TextColor3 = Color3.fromRGB(140, 140, 150)
     logText.TextSize = 10
     logText.Font = Enum.Font.Code
     logText.TextXAlignment = Enum.TextXAlignment.Left
@@ -1811,56 +2986,40 @@ local function CreateAdvancedGui()
     logText.AutomaticSize = Enum.AutomaticSize.Y
     logText.Parent = logScroll
     
-    LogTextBox = logScroll
+    LogTextBox = logText
     
     local logExpanded = false
-    logHeader.MouseButton1Click:Connect(function()
+    logToggle.MouseButton1Click:Connect(function()
         logExpanded = not logExpanded
         if logExpanded then
-            TweenService:Create(logFrame, TweenInfo.new(0.2), {Size = UDim2.new(1, 0, 0, 120)}):Play()
+            TweenService:Create(logFrame, TweenInfo.new(0.2), {Size = UDim2.new(1, 0, 0, 130)}):Play()
             logScroll.Visible = true
-            logHeader.Text = "  📝 Logs (Click để thu gọn)"
+            logToggle.Text = "  📝 Console Logs (Click để đóng)"
         else
-            TweenService:Create(logFrame, TweenInfo.new(0.2), {Size = UDim2.new(1, 0, 0, 50)}):Play()
+            TweenService:Create(logFrame, TweenInfo.new(0.2), {Size = UDim2.new(1, 0, 0, 35)}):Play()
             logScroll.Visible = false
-            logHeader.Text = "  📝 Logs (Click để mở rộng)"
+            logToggle.Text = "  📝 Console Logs (Click để mở)"
         end
     end)
     
-    -- Update LogTextBox reference
-    LogTextBox = logText
-    
-    -- ========== DRAGGABLE ==========
+    -- ═══════════ DRAGGABLE ═══════════
     local dragging = false
-    local dragStart = nil
-    local startPos = nil
-    local startShadowPos = nil
+    local dragStart, startPos, startShadowPos
     
     local function updateDrag(input)
         if dragging then
             local delta = input.Position - dragStart
-            mainFrame.Position = UDim2.new(
-                startPos.X.Scale,
-                startPos.X.Offset + delta.X,
-                startPos.Y.Scale,
-                startPos.Y.Offset + delta.Y
-            )
-            shadowFrame.Position = UDim2.new(
-                startShadowPos.X.Scale,
-                startShadowPos.X.Offset + delta.X,
-                startShadowPos.Y.Scale,
-                startShadowPos.Y.Offset + delta.Y
-            )
+            mainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+            shadowFrame.Position = UDim2.new(startShadowPos.X.Scale, startShadowPos.X.Offset + delta.X, startShadowPos.Y.Scale, startShadowPos.Y.Offset + delta.Y)
         end
     end
     
-    titleBar.InputBegan:Connect(function(input)
+    header.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
             dragging = true
             dragStart = input.Position
             startPos = mainFrame.Position
             startShadowPos = shadowFrame.Position
-            
             input.Changed:Connect(function()
                 if input.UserInputState == Enum.UserInputState.End then
                     dragging = false
@@ -1875,20 +3034,21 @@ local function CreateAdvancedGui()
         end
     end)
     
-    -- Return references
     return {
         ScreenGui = screenGui,
         MainFrame = mainFrame,
         ShadowFrame = shadowFrame,
         ExecutorLabel = executorLabel,
-        GameNameLabel = gameNameLabel,
+        GameLabel = gameLabel,
+        InstanceLabel = instanceLabel,
         FeaturesLabel = featuresLabel,
         FullGameBtn = fullGameBtn,
-        FullModelBtn = fullModelBtn,
+        ModelsBtn = modelsBtn,
         TerrainBtn = terrainBtn,
         ScriptsBtn = scriptsBtn,
-        ProgressBar = progressBarFill,
+        WorkspaceBtn = workspaceBtn,
         ProgressLabel = progressLbl,
+        ProgressBar = progressBarFill,
         StatusLabel = statusLbl,
         LogText = logText
     }
@@ -1899,106 +3059,73 @@ end
 -- =====================================================
 
 local function SetupButtonHandlers(guiRefs)
-    local buttons = {guiRefs.FullGameBtn, guiRefs.FullModelBtn, guiRefs.TerrainBtn, guiRefs.ScriptsBtn}
+    local buttons = {
+        guiRefs.FullGameBtn,
+        guiRefs.ModelsBtn,
+        guiRefs.TerrainBtn,
+        guiRefs.ScriptsBtn,
+        guiRefs.WorkspaceBtn
+    }
     
     local function SetButtonsEnabled(enabled)
         for _, btn in ipairs(buttons) do
             btn.Active = enabled
-            if enabled then
-                TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundTransparency = 0}):Play()
-            else
-                TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundTransparency = 0.6}):Play()
-            end
+            TweenService:Create(btn, TweenInfo.new(0.2), {
+                BackgroundTransparency = enabled and 0 or 0.5
+            }):Play()
         end
     end
     
-    -- Full Game
-    guiRefs.FullGameBtn.MouseButton1Click:Connect(function()
-        if Decompiler.IsProcessing then return end
+    local function HandleDecompile(mode, btn)
+        if Decompiler.IsProcessing then
+            UpdateStatus("⚠️ Đang có tiến trình khác. Vui lòng đợi.", "warning")
+            return
+        end
+        
         SetButtonsEnabled(false)
         
-        UpdateStatus("🔄 Đang chuẩn bị decompile full game...\nVui lòng đợi, quá trình có thể mất vài phút.", "loading")
+        local modeName = ({
+            full = "Full Game",
+            models = "Models Only",
+            terrain = "Terrain Only",
+            scripts = "Scripts Only",
+            workspace = "Workspace Only"
+        })[mode] or mode
+        
+        UpdateStatus("🔄 Đang chuẩn bị decompile " .. modeName .. "...\nVui lòng đợi, quá trình có thể mất vài phút.", "loading")
         
         task.wait(0.3)
         
-        local fileName = GetFinalFileName("Full")
-        local success, message = Decompiler:SaveFullGame(fileName)
+        local fileName = GetFinalFileName(modeName:gsub(" ", ""))
+        local success, message
+        
+        if mode == "full" then
+            success, message = Decompiler:SaveFullGame(fileName)
+        elseif mode == "models" then
+            success, message = Decompiler:SaveModelsOnly(fileName)
+        elseif mode == "terrain" then
+            success, message = Decompiler:SaveTerrainOnly(fileName)
+        elseif mode == "scripts" then
+            success, message = Decompiler:SaveScriptsOnly(fileName)
+        elseif mode == "workspace" then
+            success, message = Decompiler:SaveWorkspaceOnly(fileName)
+        end
         
         if success then
-            UpdateStatus("✅ " .. message, "success")
+            UpdateStatus(message, "success")
         else
-            UpdateStatus("❌ " .. message, "error")
+            UpdateStatus(message, "error")
         end
         
         task.wait(0.5)
         SetButtonsEnabled(true)
-    end)
+    end
     
-    -- Full Model
-    guiRefs.FullModelBtn.MouseButton1Click:Connect(function()
-        if Decompiler.IsProcessing then return end
-        SetButtonsEnabled(false)
-        
-        UpdateStatus("🔄 Đang chuẩn bị decompile models...\nVui lòng đợi.", "loading")
-        
-        task.wait(0.3)
-        
-        local fileName = GetFinalFileName("Models")
-        local success, message = Decompiler:SaveModelsOnly(fileName)
-        
-        if success then
-            UpdateStatus("✅ " .. message, "success")
-        else
-            UpdateStatus("❌ " .. message, "error")
-        end
-        
-        task.wait(0.5)
-        SetButtonsEnabled(true)
-    end)
-    
-    -- Terrain
-    guiRefs.TerrainBtn.MouseButton1Click:Connect(function()
-        if Decompiler.IsProcessing then return end
-        SetButtonsEnabled(false)
-        
-        UpdateStatus("🔄 Đang chuẩn bị decompile terrain...\nVui lòng đợi.", "loading")
-        
-        task.wait(0.3)
-        
-        local fileName = GetFinalFileName("Terrain")
-        local success, message = Decompiler:SaveTerrainOnly(fileName)
-        
-        if success then
-            UpdateStatus("✅ " .. message, "success")
-        else
-            UpdateStatus("❌ " .. message, "error")
-        end
-        
-        task.wait(0.5)
-        SetButtonsEnabled(true)
-    end)
-    
-    -- Scripts
-    guiRefs.ScriptsBtn.MouseButton1Click:Connect(function()
-        if Decompiler.IsProcessing then return end
-        SetButtonsEnabled(false)
-        
-        UpdateStatus("🔄 Đang chuẩn bị decompile scripts...\nVui lòng đợi.", "loading")
-        
-        task.wait(0.3)
-        
-        local fileName = GetFinalFileName("Scripts")
-        local success, message = Decompiler:SaveScriptsOnly(fileName)
-        
-        if success then
-            UpdateStatus("✅ " .. message, "success")
-        else
-            UpdateStatus("❌ " .. message, "error")
-        end
-        
-        task.wait(0.5)
-        SetButtonsEnabled(true)
-    end)
+    guiRefs.FullGameBtn.MouseButton1Click:Connect(function() HandleDecompile("full") end)
+    guiRefs.ModelsBtn.MouseButton1Click:Connect(function() HandleDecompile("models") end)
+    guiRefs.TerrainBtn.MouseButton1Click:Connect(function() HandleDecompile("terrain") end)
+    guiRefs.ScriptsBtn.MouseButton1Click:Connect(function() HandleDecompile("scripts") end)
+    guiRefs.WorkspaceBtn.MouseButton1Click:Connect(function() HandleDecompile("workspace") end)
 end
 
 -- =====================================================
@@ -2006,139 +3133,136 @@ end
 -- =====================================================
 
 local function Initialize()
-    LogSystem:Add("========================================", LogSystem.LogLevel.INFO)
-    LogSystem:Add("  BaoSaveInstance v" .. VERSION, LogSystem.LogLevel.INFO)
-    LogSystem:Add("  Advanced Roblox Decompile Tool", LogSystem.LogLevel.INFO)
-    LogSystem:Add("  Initializing...", LogSystem.LogLevel.INFO)
-    LogSystem:Add("========================================", LogSystem.LogLevel.INFO)
+    LogSystem:Init()
     
-    -- Tạo GUI
-    local guiRefs = CreateAdvancedGui()
+    LogSystem:Info("════════════════════════════════════════════════", "INIT")
+    LogSystem:Info("    BaoSaveInstance v" .. VERSION .. " - " .. BUILD, "INIT")
+    LogSystem:Info("    Ultimate Roblox Decompile Tool", "INIT")
+    LogSystem:Info("    Starting...", "INIT")
+    LogSystem:Info("════════════════════════════════════════════════", "INIT")
     
+    -- Create GUI
+    local guiRefs = CreateUltimateGui()
     if not guiRefs or not guiRefs.ScreenGui then
-        warn("[BaoSaveInstance] Không thể tạo GUI!")
+        LogSystem:Critical("Failed to create GUI!", "INIT")
         return false
     end
     
     -- Detect APIs
     UpdateStatus("🔍 Đang detect executor APIs...", "loading")
     task.wait(0.2)
-    DetectApis()
+    DetectAllAPIs()
     
-    -- Cập nhật thông tin executor
-    local executorText = "🔧 Executor: " .. ExecutorInfo.Name .. " v" .. ExecutorInfo.Version
-    if ExecutorInfo.HasSaveInstance then
-        executorText = executorText .. " ✅"
+    -- Update executor info
+    local execText = "🔧 Executor: " .. ExecutorAPI.Name .. " v" .. ExecutorAPI.Version
+    if ExecutorAPI.HasSaveInstance then
+        execText = execText .. " ✅"
         guiRefs.ExecutorLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
     else
-        executorText = executorText .. " ❌ (Không hỗ trợ)"
+        execText = execText .. " ❌"
         guiRefs.ExecutorLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
     end
-    guiRefs.ExecutorLabel.Text = executorText
+    guiRefs.ExecutorLabel.Text = execText
     
-    -- Cập nhật tên game
+    -- Update game info
     local gameName = GetGameName()
-    guiRefs.GameNameLabel.Text = "🎮 Game: " .. gameName .. " [" .. game.PlaceId .. "]"
+    guiRefs.GameLabel.Text = "🎮 Game: " .. gameName .. " [" .. game.PlaceId .. "]"
     
-    -- Cập nhật features
+    -- Count instances
+    task.spawn(function()
+        local count = CountInstances()
+        UpdateInstanceCount(count)
+    end)
+    
+    -- Update features
     local features = {}
-    if ExecutorInfo.SupportsOptions then table.insert(features, "Options") end
-    if ExecutorInfo.SupportsTerrainSave then table.insert(features, "Terrain") end
-    if ExecutorInfo.SupportsScriptDecompile then table.insert(features, "Decompile") end
-    if ExecutorInfo.SupportsCallbacks then table.insert(features, "Callbacks") end
-    if ExecutorInfo.HasWriteFile then table.insert(features, "WriteFile") end
+    if ExecutorAPI.SupportsOptions then table.insert(features, "Options") end
+    if ExecutorAPI.SupportsTerrain then table.insert(features, "Terrain") end
+    if ExecutorAPI.SupportsScripts then table.insert(features, "Scripts") end
+    if ExecutorAPI.SupportsCallbacks then table.insert(features, "Callbacks") end
+    if ExecutorAPI.HasWriteFile then table.insert(features, "WriteFile") end
+    if ExecutorAPI.HasDecompile then table.insert(features, "Decompile") end
+    if ExecutorAPI.HasGetNilInstances then table.insert(features, "NilInstances") end
     
-    local featuresText = "📋 Features: "
-    if #features > 0 then
-        featuresText = featuresText .. table.concat(features, ", ")
-    else
-        featuresText = featuresText .. "Không xác định"
-    end
-    guiRefs.FeaturesLabel.Text = featuresText
+    guiRefs.FeaturesLabel.Text = "✨ Features: " .. (#features > 0 and table.concat(features, ", ") or "Basic")
     
-    -- Setup button handlers
+    -- Setup handlers
     SetupButtonHandlers(guiRefs)
     
-    -- Status cuối cùng
+    -- Final status
     task.wait(0.3)
-    if ExecutorInfo.HasSaveInstance then
-        UpdateStatus("✅ Sẵn sàng! Đã phát hiện API saveinstance.\n\n📁 File sẽ được lưu tại: " .. ExecutorInfo.WorkspaceFolder .. "/\n🎯 Chọn chức năng để bắt đầu decompile.", "success")
+    if ExecutorAPI.HasSaveInstance then
+        UpdateStatus("✅ Sẵn sàng!\n\n📁 File sẽ được lưu tại: " .. ExecutorAPI.WorkspaceFolder .. "/\n🔧 SaveInstance: " .. ExecutorAPI.SaveInstanceSource .. "\n🎯 Chọn chức năng để bắt đầu decompile.", "success")
     else
-        UpdateStatus("⚠️ CẢNH BÁO: Không tìm thấy API saveinstance!\n\nExecutor hiện tại có thể không hỗ trợ lưu game.\nVui lòng sử dụng executor có hỗ trợ saveinstance.", "error")
+        UpdateStatus("⚠️ CẢNH BÁO: Không tìm thấy saveinstance!\n\nExecutor: " .. ExecutorAPI.Name .. "\n\nVui lòng sử dụng executor có hỗ trợ saveinstance.", "error")
     end
     
     -- Intro animation
-    local mainFrame = guiRefs.MainFrame
-    local shadowFrame = guiRefs.ShadowFrame
-    local originalMainPos = mainFrame.Position
-    local originalShadowPos = shadowFrame.Position
+    local mf = guiRefs.MainFrame
+    local sf = guiRefs.ShadowFrame
+    local origMfPos = mf.Position
+    local origSfPos = sf.Position
     
-    mainFrame.Position = UDim2.new(0.5, -255, -0.5, 0)
-    shadowFrame.Position = UDim2.new(0.5, -258, -0.5, 3)
+    mf.Position = UDim2.new(0.5, -275, -0.6, 0)
+    sf.Position = UDim2.new(0.5, -278, -0.6, 3)
     
-    TweenService:Create(mainFrame, TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Position = originalMainPos}):Play()
-    TweenService:Create(shadowFrame, TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Position = originalShadowPos}):Play()
+    TweenService:Create(mf, TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Position = origMfPos}):Play()
+    TweenService:Create(sf, TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Position = origSfPos}):Play()
     
-    LogSystem:Add("========================================", LogSystem.LogLevel.SUCCESS)
-    LogSystem:Add("  BaoSaveInstance initialized!", LogSystem.LogLevel.SUCCESS)
-    LogSystem:Add("  Executor: " .. ExecutorInfo.Name, LogSystem.LogLevel.SUCCESS)
-    LogSystem:Add("  SaveInstance: " .. tostring(ExecutorInfo.HasSaveInstance), LogSystem.LogLevel.SUCCESS)
-    LogSystem:Add("  Game: " .. gameName, LogSystem.LogLevel.SUCCESS)
-    LogSystem:Add("========================================", LogSystem.LogLevel.SUCCESS)
+    LogSystem:Success("════════════════════════════════════════════════", "INIT")
+    LogSystem:Success("    Initialization Complete!", "INIT")
+    LogSystem:Success("════════════════════════════════════════════════", "INIT")
     
     return true
 end
 
 -- =====================================================
--- SECTION 10: RUN SCRIPT
+-- SECTION 10: RUN
 -- =====================================================
 
--- Chạy trong protected call
 local success, err = pcall(Initialize)
 if not success then
-    warn("[BaoSaveInstance] Lỗi khởi tạo: " .. tostring(err))
+    warn("[BaoSaveInstance] Fatal Error: " .. tostring(err))
     
-    -- Error GUI
     pcall(function()
-        local errorGui = Instance.new("ScreenGui")
-        errorGui.Name = "BaoSaveInstanceError"
-        
-        pcall(function() errorGui.Parent = CoreGui end)
-        if not errorGui.Parent then
-            pcall(function() errorGui.Parent = LocalPlayer:WaitForChild("PlayerGui") end)
+        local errGui = Instance.new("ScreenGui")
+        errGui.Name = "BaoSaveInstanceError"
+        pcall(function() errGui.Parent = CoreGui end)
+        if not errGui.Parent then
+            pcall(function() errGui.Parent = LocalPlayer:WaitForChild("PlayerGui") end)
         end
         
-        local errorFrame = Instance.new("Frame")
-        errorFrame.Size = UDim2.new(0, 450, 0, 130)
-        errorFrame.Position = UDim2.new(0.5, -225, 0.5, -65)
-        errorFrame.BackgroundColor3 = Color3.fromRGB(45, 20, 20)
-        errorFrame.BorderSizePixel = 0
-        errorFrame.Parent = errorGui
+        local errFrame = Instance.new("Frame")
+        errFrame.Size = UDim2.new(0, 500, 0, 150)
+        errFrame.Position = UDim2.new(0.5, -250, 0.5, -75)
+        errFrame.BackgroundColor3 = Color3.fromRGB(40, 15, 15)
+        errFrame.BorderSizePixel = 0
+        errFrame.Parent = errGui
         
         local corner = Instance.new("UICorner")
-        corner.CornerRadius = UDim.new(0, 12)
-        corner.Parent = errorFrame
+        corner.CornerRadius = UDim.new(0, 14)
+        corner.Parent = errFrame
         
         local stroke = Instance.new("UIStroke")
-        stroke.Color = Color3.fromRGB(200, 60, 60)
+        stroke.Color = Color3.fromRGB(200, 50, 50)
         stroke.Thickness = 2
-        stroke.Parent = errorFrame
+        stroke.Parent = errFrame
         
-        local errorLabel = Instance.new("TextLabel")
-        errorLabel.Size = UDim2.new(1, -30, 1, -30)
-        errorLabel.Position = UDim2.new(0, 15, 0, 15)
-        errorLabel.BackgroundTransparency = 1
-        errorLabel.Text = "❌ BaoSaveInstance - Lỗi khởi tạo\n\n" .. tostring(err) .. "\n\nGUI sẽ tự đóng sau 15 giây..."
-        errorLabel.TextColor3 = Color3.fromRGB(255, 180, 180)
-        errorLabel.TextSize = 13
-        errorLabel.Font = Enum.Font.Gotham
-        errorLabel.TextWrapped = true
-        errorLabel.TextYAlignment = Enum.TextYAlignment.Top
-        errorLabel.Parent = errorFrame
+        local errLabel = Instance.new("TextLabel")
+        errLabel.Size = UDim2.new(1, -30, 1, -30)
+        errLabel.Position = UDim2.new(0, 15, 0, 15)
+        errLabel.BackgroundTransparency = 1
+        errLabel.Text = "❌ BaoSaveInstance - Fatal Error\n\n" .. tostring(err) .. "\n\nGUI sẽ tự đóng sau 20 giây..."
+        errLabel.TextColor3 = Color3.fromRGB(255, 180, 180)
+        errLabel.TextSize = 13
+        errLabel.Font = Enum.Font.Gotham
+        errLabel.TextWrapped = true
+        errLabel.TextYAlignment = Enum.TextYAlignment.Top
+        errLabel.Parent = errFrame
         
-        task.delay(15, function()
-            if errorGui and errorGui.Parent then
-                errorGui:Destroy()
+        task.delay(20, function()
+            if errGui and errGui.Parent then
+                errGui:Destroy()
             end
         end)
     end)
