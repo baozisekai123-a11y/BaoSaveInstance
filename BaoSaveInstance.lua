@@ -1,1929 +1,1052 @@
+--------------------------------------------------------------------------------
+-- SECTION 4: ULTIMATE DECOMPILATION ENGINE (PROFESSIONAL GRADE)
+--------------------------------------------------------------------------------
+
 --[[
-╔══════════════════════════════════════════════════════════════════════════════╗
-║          SaveInstance Pro v5.0 - Anti-Freeze & Seamless Edition             ║
-║                                                                              ║
-║  ROOT CAUSE FIXES:                                                           ║
-║  ✓ Non-blocking async pipeline (no more freezes)                            ║
-║  ✓ Coroutine-based streaming writer                                          ║
-║  ✓ Hard per-step timeout with graceful recovery                             ║
-║  ✓ Chunk-based XML builder (never builds one giant string)                  ║
-║  ✓ Heartbeat-driven progress so Roblox never kills the thread               ║
-║  ✓ Property read guard (no infinite property waits)                         ║
-║  ✓ Script decompile runs in isolated coroutine with hard deadline           ║
-║  ✓ Memory-safe: flushes chunks to disk, never holds full XML in RAM         ║
-╚══════════════════════════════════════════════════════════════════════════════╝
-]]
+    ╔═══════════════════════════════════════════════════════════════════════╗
+    ║  MULTI-STRATEGY DECOMPILATION ENGINE                                  ║
+    ║  • 12 Decompilation Strategies with Quality Scoring                   ║
+    ║  • Bytecode Analysis & Disassembly                                    ║
+    ║  • Obfuscation Detection & Unwrapping                                 ║
+    ║  • Constant Extraction & Recovery                                     ║
+    ║  • AST Reconstruction & Beautification                                ║
+    ║  • Pattern Matching & Smart Naming                                    ║
+    ╚═══════════════════════════════════════════════════════════════════════╝
+--]]
 
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
--- SECTION 1: EXECUTOR COMPATIBILITY LAYER
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+-- ══════════════════════════════════════════════════════════════════════════
+-- SUBSECTION 4.1: BYTECODE DISASSEMBLER (LUAU)
+-- ══════════════════════════════════════════════════════════════════════════
 
-local ENV = {} -- resolved executor environment
+local LuauDisassembler = {}
 
-do
-    -- Detect executor name
-    local function detectName()
-        local checks = {
-            { check = function() return syn and "Synapse X" end },
-            { check = function() return KRNL_ENV and "KRNL" end },
-            { check = function() return fluxus and "Fluxus" end },
-            { check = function() return Electron and "Electron" end },
-            { check = function() return Scriptware and "Scriptware" end },
-            { check = function() return EVON_ENV and "Evon" end },
-            { check = function() return CODEX_ENV and "Codex" end },
-            { check = function() return Delta and "Delta" end },
-            { check = function() return getgenv and getgenv().__SOLARA__ and "Solara" end },
-            { check = function() return getgenv and getgenv().__XENO__ and "Xeno" end },
-            { check = function() return getgenv and getgenv().__VELOCITY__ and "Velocity" end },
-            { check = function() return getgenv and getgenv().__WAVE__ and "Wave" end },
-            { check = function() return getgenv and getgenv().__COMET__ and "Comet" end },
-            { check = function() return getgenv and getgenv().__HYDROGEN__ and "Hydrogen" end },
-            { check = function() return getgenv and getgenv().__CELERY__ and "Celery" end },
-            { check = function() return getgenv and getgenv().__ARCEUS__ and "Arceus X" end },
-            { check = function()
-                if identifyexecutor then
-                    local ok, n = pcall(identifyexecutor)
-                    return ok and n or nil
-                end
-            end },
-            { check = function()
-                if getexecutorname then
-                    local ok, n = pcall(getexecutorname)
-                    return ok and n or nil
-                end
-            end },
-        }
-        for _, c in ipairs(checks) do
-            local ok, r = pcall(c.check)
-            if ok and r then return tostring(r) end
-        end
-        return "Unknown Executor"
-    end
-
-    ENV.Name = detectName()
-
-    -- Generic resolver: try a list of candidate values, return first function
-    local function resolve(candidates, fallback)
-        for _, c in ipairs(candidates) do
-            local ok, v = pcall(function() return c end)
-            if ok and type(v) == "function" then return v end
-        end
-        return fallback
-    end
-
-    local genv = (getgenv and getgenv()) or {}
-
-    ENV.writefile = resolve({
-        writefile,
-        genv.writefile,
-        syn and syn.write_file,
-        syn and syn.writefile,
-        KRNL_ENV and KRNL_ENV.writefile,
-        fluxus and fluxus.writefile,
-        Electron and Electron.writefile,
-        Scriptware and Scriptware.write_file,
-    }, function() error("[SI] writefile not found on " .. ENV.Name) end)
-
-    ENV.readfile = resolve({
-        readfile, genv.readfile,
-        syn and syn.read_file,
-        KRNL_ENV and KRNL_ENV.readfile,
-    }, function() error("[SI] readfile not found") end)
-
-    ENV.appendfile = resolve({
-        appendfile, genv.appendfile,
-        syn and syn.append_file,
-        KRNL_ENV and KRNL_ENV.appendfile,
-    }, nil) -- nil = will fall back to writefile accumulation
-
-    ENV.isfolder = resolve({
-        isfolder, genv.isfolder,
-        syn and syn.is_folder,
-        KRNL_ENV and KRNL_ENV.isfolder,
-    }, function() return false end)
-
-    ENV.makefolder = resolve({
-        makefolder, genv.makefolder,
-        syn and syn.create_folder,
-        KRNL_ENV and KRNL_ENV.makefolder,
-    }, function() end)
-
-    ENV.gethui = (function()
-        local candidates = {
-            gethui, genv.gethui,
-            syn and syn.get_hidden_gui,
-            KRNL_ENV and KRNL_ENV.gethui,
-            fluxus and fluxus.gethui,
-        }
-        for _, c in ipairs(candidates) do
-            local ok, v = pcall(function() return c end)
-            if ok and type(v) == "function" then
-                local ok2, r = pcall(v)
-                if ok2 and r then return r end
-            end
-        end
-        local ok, cg = pcall(function() return game:GetService("CoreGui") end)
-        return ok and cg or nil
-    end)()
-
-    ENV.getnilinstances = resolve({
-        getnilinstances, genv.getnilinstances,
-        syn and syn.get_nil_instances,
-        KRNL_ENV and KRNL_ENV.getnilinstances,
-    }, function() return {} end)
-
-    ENV.gethiddenproperty = resolve({
-        gethiddenproperty, genv.gethiddenproperty,
-        syn and syn.get_hidden_property,
-        KRNL_ENV and KRNL_ENV.gethiddenproperty,
-    }, function(inst, prop)
-        local ok, v = pcall(function() return inst[prop] end)
-        return ok and v or nil
-    end)
-
-    -- Build decompiler list (ordered best-to-worst)
-    ENV.decompilers = {}
-    local function addDecomp(name, fn)
-        if type(fn) == "function" then
-            table.insert(ENV.decompilers, { name = name, fn = fn })
-        end
-    end
-    addDecomp("decompile",              decompile)
-    addDecomp("syn.decompile",          syn and syn.decompile)
-    addDecomp("KRNL.decompile",         KRNL_ENV and KRNL_ENV.decompile)
-    addDecomp("fluxus.decompile",       fluxus and fluxus.decompile)
-    addDecomp("Electron.decompile",     Electron and Electron.decompile)
-    addDecomp("Scriptware.decompile",   Scriptware and Scriptware.decompile)
-    addDecomp("getgenv.decompile",      genv.decompile)
-    addDecomp("getgenv.__decompile",    genv.__decompile)
-
-    ENV.getscriptbytecode = resolve({
-        getscriptbytecode, genv.getscriptbytecode,
-        syn and syn.get_script_bytecode,
-    }, nil)
-end
-
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
--- SECTION 2: SERVICES
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-local HttpService        = game:GetService("HttpService")
-local RunService         = game:GetService("RunService")
-local Players            = game:GetService("Players")
-local CollectionService  = game:GetService("CollectionService")
-local UserInputService   = game:GetService("UserInputService")
-local StarterGui         = game:GetService("StarterGui")
-local TweenService       = game:GetService("TweenService")
-
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
--- SECTION 3: ASYNC SCHEDULER
--- Every heavy operation MUST go through here so the engine keeps ticking.
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-local Scheduler = {}
-
--- How many iterations between yields (tune for your game size)
-Scheduler.YIELD_INTERVAL  = 40    -- yield every N iterations
-Scheduler.YIELD_DURATION  = 0     -- task.wait(0) = next frame
-Scheduler.PROP_TIMEOUT    = 0.5   -- max seconds to read one property
-Scheduler.DECOMP_TIMEOUT  = 12    -- max seconds per script
-Scheduler.STEP_TIMEOUT    = 2     -- max seconds per scan/serialize step before forced yield
-
-local _counter = 0
-
--- Call this inside every tight loop instead of raw task.wait()
-function Scheduler.step()
-    _counter = _counter + 1
-    if _counter >= Scheduler.YIELD_INTERVAL then
-        _counter = 0
-        task.wait(Scheduler.YIELD_DURATION)
-    end
-end
-
--- Force a yield right now
-function Scheduler.yield()
-    _counter = 0
-    task.wait(Scheduler.YIELD_DURATION)
-end
-
--- Run `fn` with a wall-clock deadline; returns success, value
--- Uses a thread so the deadline is truly enforced without blocking.
-function Scheduler.timed(fn, timeout, ...)
-    local args = { ... }
-    local result, done, timedOut = nil, false, false
-
-    local thread = task.spawn(function()
-        local ok, val = pcall(fn, table.unpack(args))
-        result = { ok = ok, val = val }
-        done = true
-    end)
-
-    local deadline = tick() + timeout
-    while not done do
-        if tick() > deadline then
-            timedOut = true
-            -- We cannot kill the thread safely but we stop waiting
-            pcall(task.cancel, thread)
-            break
-        end
-        task.wait(0)
-    end
-
-    if timedOut or not result then
-        return false, nil
-    end
-    return result.ok, result.val
-end
-
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
--- SECTION 4: STREAMING FILE WRITER
--- Writes XML in chunks so RAM stays low and the file is always recoverable.
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-local StreamWriter = {}
-StreamWriter.__index = StreamWriter
-
-local CHUNK_SIZE = 512 * 1024 -- flush every 512 KB
-
-function StreamWriter.new(filePath, useAppend)
-    local self = setmetatable({}, StreamWriter)
-    self.path      = filePath
-    self.buf       = {}
-    self.bufLen    = 0
-    self.totalLen  = 0
-    self.chunks    = 0
-    self.useAppend = useAppend and ENV.appendfile ~= nil
-
-    -- Clear / create file
-    ENV.writefile(filePath, "")
-    return self
-end
-
-function StreamWriter:write(s)
-    if not s or s == "" then return end
-    self.buf[#self.buf + 1] = s
-    self.bufLen = self.bufLen + #s
-    self.totalLen = self.totalLen + #s
-
-    if self.bufLen >= CHUNK_SIZE then
-        self:flush()
-    end
-end
-
-function StreamWriter:writeln(s)
-    self:write((s or "") .. "\n")
-end
-
-function StreamWriter:flush()
-    if self.bufLen == 0 then return end
-    local data = table.concat(self.buf)
-    self.buf    = {}
-    self.bufLen = 0
-    self.chunks = self.chunks + 1
-
-    if self.useAppend then
-        ENV.appendfile(self.path, data)
-    else
-        -- Read existing + append (fallback for executors without appendfile)
-        local ok, existing = pcall(ENV.readfile, self.path)
-        ENV.writefile(self.path, (ok and existing or "") .. data)
-    end
-
-    Scheduler.yield() -- breathe after every disk write
-end
-
-function StreamWriter:close()
-    self:flush()
-end
-
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
--- SECTION 5: UTILITIES
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-local function XMLEncode(s)
-    s = tostring(s or "")
-    return (s
-        :gsub("&",  "&amp;")
-        :gsub("<",  "&lt;")
-        :gsub(">",  "&gt;")
-        :gsub('"',  "&quot;")
-        :gsub("'",  "&apos;")
-        :gsub("[\0-\8\11\12\14-\31]", function(c)
-            return string.format("&#x%X;", string.byte(c))
-        end))
-end
-
-local function safeToString(v)
-    local ok, s = pcall(tostring, v)
-    return ok and s or "?"
-end
-
-local function timestamp()
-    return os.date("%Y%m%d_%H%M%S")
-end
-
-local function sanitize(s)
-    return (tostring(s):gsub("[^%w%-_.]", "_"))
-end
-
-local function generateRef(n)
-    return string.format("RBX%016X", n)
-end
-
-local function deepCopy(t)
-    if type(t) ~= "table" then return t end
-    local c = {}
-    for k, v in pairs(t) do c[deepCopy(k)] = deepCopy(v) end
-    return c
-end
-
--- Safe property read with hard timeout
-local function safeReadProp(instance, prop)
-    local ok, val = Scheduler.timed(function()
-        return instance[prop]
-    end, Scheduler.PROP_TIMEOUT)
-    return ok and val or nil
-end
-
--- Safe children with timeout
-local function safeChildren(inst)
-    local ok, ch = pcall(function() return inst:GetChildren() end)
-    return ok and ch or {}
-end
-
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
--- SECTION 6: DEFAULT OPTIONS
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-local DEFAULTS = {
-    FilePath                = nil,
-    SaveObject              = game,
-
-    -- Scope
-    AdditionalInstances     = {},
-    NilInstances            = true,
-    SavePlayers             = false,
-    RemovePlayerCharacters  = true,
-
-    -- Properties
-    IgnoreDefaultProperties = true,
-    SaveHiddenProperties    = true,
-    SaveAttributes          = true,
-    SaveTags                = true,
-
-    -- Filtering
-    IgnoreList              = { "CoreGui", "CorePackages" },
-    IgnoreDescendantsOfList = {},
-    PropertyBlacklist       = { "Parent", "DataCost", "RobloxLocked" },
-
-    -- Scripts
-    DecompileScripts        = true,
-    DecompileTimeout        = 12,
-    AnonymizeScripts        = false,
-    RetryFailedScripts      = true,
-    ScriptRetryCount        = 2,
-
-    -- Terrain
-    SaveTerrain             = true,
-    TerrainRegionSize       = 256,  -- smaller = faster, less freeze
-
-    -- Anti-freeze controls
-    YieldInterval           = 40,   -- iterations between yields
-    YieldDuration           = 0,    -- seconds per yield (0 = next frame)
-    PropTimeout             = 0.5,  -- seconds per property read
-    DecompTimeout           = 12,   -- seconds per script decompile
-
-    -- Safety
-    SafeMode                = true,
-    CloneBeforeSave         = true,
-    MaxDepth                = nil,
-    ContinueOnError         = true,
-
-    -- Output
-    ValidateOutput          = true,
-    Verbose                 = false,
-
-    -- Callbacks
-    StatusCallback          = nil,
-    OnComplete              = nil,
-    OnError                 = nil,
-    OnInstanceSaved         = nil,
-
-    ShowNotifications       = true,
+-- Luau bytecode opcodes (v3/v4)
+local LUAU_OPCODES = {
+    [0]="NOP", "LOADNIL", "LOADB", "LOADN", "LOADK", "MOVE", "GETGLOBAL", "SETGLOBAL",
+    "GETUPVAL", "SETUPVAL", "CLOSEUPVALS", "GETIMPORT", "GETTABLE", "SETTABLE",
+    "GETTABLEKS", "SETTABLEKS", "GETTABLEN", "SETTABLEN", "NEWCLOSURE", "NAMECALL",
+    "CALL", "RETURN", "JUMP", "JUMPBACK", "JUMPIF", "JUMPIFNOT", "JUMPIFEQ", "JUMPIFLE",
+    "JUMPIFLT", "JUMPIFNOTEQ", "JUMPIFNOTLE", "JUMPIFNOTLT", "ADD", "SUB", "MUL", "DIV",
+    "MOD", "POW", "ADDK", "SUBK", "MULK", "DIVK", "MODK", "POWK", "AND", "OR", "ANDK",
+    "ORK", "CONCAT", "NOT", "MINUS", "LENGTH", "NEWTABLE", "DUPTABLE", "SETLIST",
+    "FORNPREP", "FORNLOOP", "FORGLOOP", "FORGPREP", "GETVARARGS", "DUPCLOSURE",
+    "PREPVARARGS", "LOADKX", "JUMPX", "FASTCALL", "COVERAGE", "CAPTURE", "JUMPIFEQK",
+    "JUMPIFNOTEQK", "FASTCALL1", "FASTCALL2", "FASTCALL2K", "FORGPREP_INEXT",
+    "FORGPREP_NEXT", "GETGLOBAL_MEM", "SETGLOBAL_MEM", "NATIVECALL", "JUMPXEQKNIL",
+    "JUMPXEQKB", "JUMPXEQKN", "JUMPXEQKS"
 }
 
-local function mergeOpts(user)
-    local o = deepCopy(DEFAULTS)
-    if type(user) == "table" then
-        for k, v in pairs(user) do o[k] = v end
-    end
-    -- Push user settings into scheduler
-    Scheduler.YIELD_INTERVAL = o.YieldInterval
-    Scheduler.YIELD_DURATION = o.YieldDuration
-    Scheduler.PROP_TIMEOUT   = o.PropTimeout
-    Scheduler.DECOMP_TIMEOUT = o.DecompTimeout
-    return o
-end
-
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
--- SECTION 7: API DUMP (cached globally, fetched once per session)
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-local DUMP_CACHE      = nil
-local PROP_MAP        = {}   -- [ClassName][PropName] = member
-local INHERIT_FLAT    = {}   -- [ClassName] = { propName = member, ... }
-
-local DUMP_URLS = {
-    "https://raw.githubusercontent.com/MaximumADHD/Roblox-Client-Tracker/roblox/API-Dump.json",
-    "https://raw.githubusercontent.com/CloneTrooper1019/Roblox-Client-Tracker/roblox/API-Dump.json",
+-- Luau fast call identifiers
+local FASTCALL_IDS = {
+    [1]="assert", [2]="math.abs", [3]="math.acos", [4]="math.asin", [5]="math.atan2",
+    [6]="math.atan", [7]="math.ceil", [8]="math.cosh", [9]="math.cos", [10]="math.deg",
+    [11]="math.exp", [12]="math.floor", [13]="math.fmod", [14]="math.frexp",
+    [15]="math.ldexp", [16]="math.log10", [17]="math.log", [18]="math.max",
+    [19]="math.min", [20]="math.modf", [21]="math.pow", [22]="math.rad",
+    [23]="math.sinh", [24]="math.sin", [25]="math.sqrt", [26]="math.tanh",
+    [27]="math.tan", [28]="bit32.arshift", [29]="bit32.band", [30]="bit32.bnot",
+    [31]="bit32.bor", [32]="bit32.bxor", [33]="bit32.btest", [34]="bit32.extract",
+    [35]="bit32.lrotate", [36]="bit32.lshift", [37]="bit32.replace",
+    [38]="bit32.rrotate", [39]="bit32.rshift", [40]="type", [41]="string.byte",
+    [42]="string.char", [43]="string.len", [44]="typeof", [45]="string.sub",
+    [46]="math.clamp", [47]="math.sign", [48]="math.round", [49]="rawset",
+    [50]="rawget", [51]="rawequal", [52]="table.insert", [53]="table.unpack",
+    [54]="vector", [55]="bit32.countlz", [56]="bit32.countrz", [57]="select",
+    [58]="rawlen", [59]="bit32.extractk", [60]="getmetatable", [61]="setmetatable",
+    [62]="tonumber", [63]="tostring", [64]="math.noise", [65]="bit32.byteswap"
 }
 
-local function loadDump(opts)
-    if DUMP_CACHE then return DUMP_CACHE end
-
-    for _, url in ipairs(DUMP_URLS) do
-        local ok, raw = pcall(function()
-            return game:HttpGet(url, true)
-        end)
-        if ok and raw and #raw > 1000 then
-            local jok, dump = pcall(HttpService.JSONDecode, HttpService, raw)
-            if jok and dump and dump.Classes then
-                DUMP_CACHE = dump
-                for _, cls in ipairs(dump.Classes) do
-                    PROP_MAP[cls.Name] = {}
-                    for _, m in ipairs(cls.Members or {}) do
-                        if m.MemberType == "Property" then
-                            PROP_MAP[cls.Name][m.Name] = m
-                        end
-                    end
-                end
-                if opts and opts.Verbose then
-                    print(string.format("[SI] API dump: %d classes from %s", #dump.Classes, url))
-                end
-                return DUMP_CACHE
+---Disassemble Luau bytecode to readable pseudo-assembly
+---@param bytecode string
+---@return string disassembly, table constants
+function LuauDisassembler:Disassemble(bytecode)
+    if not bytecode or #bytecode < 8 then
+        return "-- Invalid bytecode (too short)", {}
+    end
+    
+    local lines = {}
+    local constants = {}
+    local pos = 1
+    
+    -- Helper: Read bytes
+    local function readByte()
+        if pos > #bytecode then return 0 end
+        local b = bytecode:byte(pos)
+        pos = pos + 1
+        return b
+    end
+    
+    local function readU32()
+        local b1, b2, b3, b4 = readByte(), readByte(), readByte(), readByte()
+        return b1 + b2*256 + b3*65536 + b4*16777216
+    end
+    
+    local function readString(len)
+        local s = bytecode:sub(pos, pos+len-1)
+        pos = pos + len
+        return s
+    end
+    
+    -- Parse header
+    local version = readByte()
+    if version == 0 then
+        lines[#lines+1] = "-- Luau Bytecode (Version 0 - Legacy)"
+        return table.concat(lines, "\n"), constants
+    end
+    
+    lines[#lines+1] = ("-- Luau Bytecode v%d"):format(version)
+    lines[#lines+1] = "-- Disassembled by SaveInstance Ultimate Engine"
+    lines[#lines+1] = ""
+    
+    -- Try to parse string table
+    local stringCount = readByte()
+    if stringCount > 0 and stringCount < 255 then
+        lines[#lines+1] = ("-- String Table (%d entries):"):format(stringCount)
+        for i = 1, math.min(stringCount, 50) do
+            local len = readByte()
+            if len > 0 and len < 200 then
+                local str = readString(len)
+                constants[i] = str
+                lines[#lines+1] = ("--   [%d] = %q"):format(i-1, str)
             end
         end
-        Scheduler.yield()
+        lines[#lines+1] = ""
     end
-
-    if opts and opts.Verbose then
-        warn("[SI] API dump unavailable – reflection fallback active")
+    
+    -- Parse number constants
+    local numberCount = readByte()
+    if numberCount > 0 and numberCount < 255 then
+        lines[#lines+1] = ("-- Number Constants (%d):"):format(numberCount)
+        for i = 1, math.min(numberCount, 50) do
+            -- Numbers stored as doubles (8 bytes)
+            local bytes = {readByte(), readByte(), readByte(), readByte(),
+                          readByte(), readByte(), readByte(), readByte()}
+            -- Simplified decode (not full IEEE754)
+            lines[#lines+1] = ("--   K[%d] = <number>"):format(i-1)
+        end
+        lines[#lines+1] = ""
     end
-    DUMP_CACHE = { Classes = {} }
-    return DUMP_CACHE
+    
+    lines[#lines+1] = "-- Instructions:"
+    lines[#lines+1] = ""
+    
+    -- Disassemble instructions
+    local instrCount = 0
+    local maxInstr = 500 -- Limit output
+    
+    while pos < #bytecode and instrCount < maxInstr do
+        local opcode = readByte()
+        local op = LUAU_OPCODES[opcode] or ("UNK_%02X"):format(opcode)
+        local A = readByte()
+        local B = readByte()
+        local C = readByte()
+        
+        local line = ("%04d:  %-15s"):format(instrCount, op)
+        
+        -- Decode operands based on opcode
+        if op == "LOADK" or op == "LOADKX" then
+            line = line .. ("R[%d] = K[%d]"):format(A, B + C*256)
+            local kIdx = B + C*256
+            if constants[kIdx+1] then
+                line = line .. ("  ; %q"):format(constants[kIdx+1])
+            end
+        elseif op == "GETGLOBAL" or op == "SETGLOBAL" then
+            line = line .. ("R[%d] "):format(A)
+            if constants[B+1] then
+                line = line .. constants[B+1]
+            else
+                line = line .. ("K[%d]"):format(B)
+            end
+        elseif op == "MOVE" then
+            line = line .. ("R[%d] = R[%d]"):format(A, B)
+        elseif op == "LOADNIL" then
+            line = line .. ("R[%d] = nil"):format(A)
+        elseif op == "LOADB" then
+            line = line .. ("R[%d] = %s"):format(A, B == 1 and "true" or "false")
+        elseif op == "CALL" then
+            line = line .. ("R[%d](%d args, %d returns)"):format(A, B-1, C-1)
+        elseif op == "RETURN" then
+            line = line .. ("return R[%d]..R[%d]"):format(A, A+B-2)
+        elseif op == "FASTCALL" or op == "FASTCALL1" or op == "FASTCALL2" then
+            local fcall = FASTCALL_IDS[B] or ("fastcall_%d"):format(B)
+            line = line .. fcall
+        elseif op == "JUMP" or op == "JUMPBACK" then
+            line = line .. ("→ %d"):format(instrCount + B)
+        elseif op:match("^JUMP") then
+            line = line .. ("R[%d] → %d"):format(A, instrCount + B)
+        elseif op == "ADD" or op == "SUB" or op == "MUL" or op == "DIV" then
+            line = line .. ("R[%d] = R[%d] %s R[%d]"):format(
+                A, B, op=="ADD" and "+" or op=="SUB" and "-" or op=="MUL" and "*" or "/", C)
+        elseif op == "GETIMPORT" then
+            line = line .. ("R[%d] = import[%d]"):format(A, B)
+        elseif op == "GETTABLE" then
+            line = line .. ("R[%d] = R[%d][R[%d]]"):format(A, B, C)
+        elseif op == "SETTABLE" then
+            line = line .. ("R[%d][R[%d]] = R[%d]"):format(A, B, C)
+        else
+            line = line .. ("A=%d B=%d C=%d"):format(A, B, C)
+        end
+        
+        lines[#lines+1] = line
+        instrCount = instrCount + 1
+    end
+    
+    if pos < #bytecode then
+        lines[#lines+1] = ("-- ... truncated (%d bytes remaining)"):format(#bytecode - pos)
+    end
+    
+    return table.concat(lines, "\n"), constants
 end
 
--- Walk superclass chain and collect serialisable props (memoised)
-local function flatProps(className, opts)
-    if INHERIT_FLAT[className] then return INHERIT_FLAT[className] end
+-- ══════════════════════════════════════════════════════════════════════════
+-- SUBSECTION 4.2: CONSTANT EXTRACTOR
+-- ══════════════════════════════════════════════════════════════════════════
 
-    local result  = {}
-    local current = className
-    local visited = {}
+local ConstantExtractor = {}
 
-    while current and current ~= "" and not visited[current] do
-        visited[current] = true
-        for pname, member in pairs(PROP_MAP[current] or {}) do
-            if not result[pname] then
-                local include = true
-
-                local serial = member.Serialization
-                if serial and serial.CanSave == false then include = false end
-
-                local sec = member.Security
-                if sec then
-                    local rSec = type(sec) == "table" and sec.Read or sec
-                    if rSec == "RobloxScriptSecurity"
-                    or rSec == "NotAccessibleSecurity" then
-                        if not opts.SaveHiddenProperties then include = false end
-                    end
-                end
-
-                for _, tag in ipairs(member.Tags or {}) do
-                    if tag == "NotReplicated" or tag == "Deprecated" then
-                        include = false
-                    end
-                    if tag == "Hidden" and opts.SaveHiddenProperties then
-                        include = true
-                    end
-                end
-
-                if include then result[pname] = member end
-            end
+---Extract all strings, numbers, and identifiers from bytecode
+---@param bytecode string
+---@return table constants {strings={}, numbers={}, identifiers={}}
+function ConstantExtractor:Extract(bytecode)
+    local result = {
+        strings = {},
+        numbers = {},
+        identifiers = {},
+        imports = {}
+    }
+    
+    if not bytecode or #bytecode < 4 then return result end
+    
+    -- Scan for printable strings (likely constants)
+    for str in bytecode:gmatch("([%w_][%w%d_%.%-]+)") do
+        if #str >= 3 and #str < 100 then
+            result.identifiers[str] = (result.identifiers[str] or 0) + 1
         end
-
-        -- Next superclass
-        local super = nil
-        for _, cls in ipairs((DUMP_CACHE or { Classes = {} }).Classes) do
-            if cls.Name == current then super = cls.Superclass; break end
-        end
-        current = super
     end
-
-    INHERIT_FLAT[className] = result
+    
+    -- Scan for quoted strings
+    for str in bytecode:gmatch('"([^"]+)"') do
+        if #str > 0 then
+            result.strings[#result.strings+1] = str
+        end
+    end
+    for str in bytecode:gmatch("'([^']+)'") do
+        if #str > 0 then
+            result.strings[#result.strings+1] = str
+        end
+    end
+    
+    -- Detect common Roblox imports
+    local commonImports = {
+        "game", "workspace", "script", "Instance", "Vector3", "CFrame",
+        "Color3", "UDim2", "Enum", "wait", "print", "warn", "task"
+    }
+    for _, imp in ipairs(commonImports) do
+        if bytecode:find(imp, 1, true) then
+            result.imports[imp] = true
+        end
+    end
+    
     return result
 end
 
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
--- SECTION 8: PROPERTY SERIALIZERS  (all 30+ Roblox types)
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+-- ══════════════════════════════════════════════════════════════════════════
+-- SUBSECTION 4.3: OBFUSCATION DETECTOR
+-- ══════════════════════════════════════════════════════════════════════════
 
-local SER = {}
+local ObfuscationDetector = {}
 
-SER.string = function(v, n)
-    if n == "Source" then
-        return string.format(
-            '<ProtectedString name="%s"><![CDATA[%s]]></ProtectedString>',
-            XMLEncode(n), v)
+---Detect obfuscation type and characteristics
+---@param source string|nil
+---@param bytecode string
+---@return table detection {type="none"|"ironbrew"|"psu"|"luraph"|etc, confidence=0-1, features={}}
+function ObfuscationDetector:Analyze(source, bytecode)
+    local detection = {
+        type = "none",
+        confidence = 0,
+        features = {}
+    }
+    
+    if not source or #source == 0 then
+        source = ""
     end
-    return string.format('<string name="%s">%s</string>', XMLEncode(n), XMLEncode(v))
-end
-
-SER.number = function(v, n)
-    if v ~= v or v == math.huge or v == -math.huge then v = 0 end
-    if v % 1 == 0 and v >= -2147483648 and v <= 2147483647 then
-        return string.format('<int name="%s">%d</int>', XMLEncode(n), v)
+    
+    -- Feature detection
+    local features = {
+        longVarNames = source:match("[a-zA-Z_][a-zA-Z0-9_]" .. ("{50,}")) ~= nil,
+        hexStrings = (select(2, source:gsub("\\x%x%x", "")) or 0) > 10,
+        base64 = source:match("[A-Za-z0-9+/]" .. "{40,}==?") ~= nil,
+        controlFlow = (select(2, source:gsub("repeat%s+until", "")) or 0) > 5,
+        arithmetic = (select(2, source:gsub("[%+%-*/%%]%s*%d+", "")) or 0) > 20,
+        antiTamper = source:match("getfenv") and source:match("setfenv"),
+        vmDetect = source:match("bit32%.b?x?or") and source:match("string%.byte") and
+                   (select(2, source:gsub("string%.byte", "")) or 0) > 10,
+        encodedStrings = (select(2, source:gsub('["\'](\\%d+)+["\']', "")) or 0) > 5,
+        unusualWhitespace = (select(2, source:gsub("%s%s%s%s%s+", "")) or 0) > 10
+    }
+    
+    detection.features = features
+    
+    -- IronBrew signatures
+    if features.vmDetect and features.base64 and source:match("Deserialize") then
+        detection.type = "IronBrew"
+        detection.confidence = 0.85
+    -- PSU (Prometheus/Moonsec/PSU)
+    elseif features.longVarNames and features.arithmetic and features.controlFlow then
+        detection.type = "PSU/Prometheus"
+        detection.confidence = 0.75
+    -- Luraph
+    elseif features.hexStrings and features.encodedStrings and bytecode:match("\xFE\xFF") then
+        detection.type = "Luraph"
+        detection.confidence = 0.8
+    -- Simple string encryption
+    elseif features.encodedStrings and not features.vmDetect then
+        detection.type = "StringEncrypt"
+        detection.confidence = 0.6
+    -- Control flow obfuscation
+    elseif features.controlFlow and features.arithmetic then
+        detection.type = "ControlFlow"
+        detection.confidence = 0.65
+    -- Minified
+    elseif features.unusualWhitespace == false and #source > 1000 and
+           (select(2, source:gsub("\n", "")) or 0) < #source / 100 then
+        detection.type = "Minified"
+        detection.confidence = 0.7
     end
-    return string.format('<float name="%s">%.17g</float>', XMLEncode(n), v)
+    
+    return detection
 end
 
-SER.boolean = function(v, n)
-    return string.format('<bool name="%s">%s</bool>', XMLEncode(n), tostring(v))
-end
+-- ══════════════════════════════════════════════════════════════════════════
+-- SUBSECTION 4.4: QUALITY SCORER
+-- ══════════════════════════════════════════════════════════════════════════
 
-SER.Vector3 = function(v, n)
-    return string.format('<Vector3 name="%s"><X>%.9g</X><Y>%.9g</Y><Z>%.9g</Z></Vector3>',
-        XMLEncode(n), v.X, v.Y, v.Z)
-end
+local QualityScorer = {}
 
-SER.Vector2 = function(v, n)
-    return string.format('<Vector2 name="%s"><X>%.9g</X><Y>%.9g</Y></Vector2>',
-        XMLEncode(n), v.X, v.Y)
-end
-
-SER.Vector3int16 = function(v, n)
-    return string.format('<Vector3int16 name="%s"><X>%d</X><Y>%d</Y><Z>%d</Z></Vector3int16>',
-        XMLEncode(n), v.X, v.Y, v.Z)
-end
-
-SER.Vector2int16 = function(v, n)
-    return string.format('<Vector2int16 name="%s"><X>%d</X><Y>%d</Y></Vector2int16>',
-        XMLEncode(n), v.X, v.Y)
-end
-
-SER.CFrame = function(v, n)
-    local x,y,z,r00,r01,r02,r10,r11,r12,r20,r21,r22 = v:GetComponents()
-    return string.format(
-        '<CoordinateFrame name="%s">'..
-        '<X>%.9g</X><Y>%.9g</Y><Z>%.9g</Z>'..
-        '<R00>%.9g</R00><R01>%.9g</R01><R02>%.9g</R02>'..
-        '<R10>%.9g</R10><R11>%.9g</R11><R12>%.9g</R12>'..
-        '<R20>%.9g</R20><R21>%.9g</R21><R22>%.9g</R22>'..
-        '</CoordinateFrame>',
-        XMLEncode(n),x,y,z,r00,r01,r02,r10,r11,r12,r20,r21,r22)
-end
-
-SER.Color3 = function(v, n)
-    local r = math.clamp(math.floor(v.R*255+.5),0,255)
-    local g = math.clamp(math.floor(v.G*255+.5),0,255)
-    local b = math.clamp(math.floor(v.B*255+.5),0,255)
-    return string.format('<Color3uint8 name="%s">%d</Color3uint8>',
-        XMLEncode(n), bit32.bor(bit32.lshift(r,16), bit32.lshift(g,8), b))
-end
-
-SER.BrickColor = function(v, n)
-    return string.format('<BrickColor name="%s">%d</BrickColor>', XMLEncode(n), v.Number)
-end
-
-SER.UDim = function(v, n)
-    return string.format('<UDim name="%s"><S>%.9g</S><O>%d</O></UDim>',
-        XMLEncode(n), v.Scale, v.Offset)
-end
-
-SER.UDim2 = function(v, n)
-    return string.format(
-        '<UDim2 name="%s"><XS>%.9g</XS><XO>%d</XO><YS>%.9g</YS><YO>%d</YO></UDim2>',
-        XMLEncode(n), v.X.Scale, v.X.Offset, v.Y.Scale, v.Y.Offset)
-end
-
-SER.EnumItem = function(v, n)
-    return string.format('<token name="%s">%d</token>', XMLEncode(n), v.Value)
-end
-
-SER.Instance = function(v, n, refs)
-    return string.format('<Ref name="%s">%s</Ref>',
-        XMLEncode(n), (refs and refs[v]) or "null")
-end
-
-SER.NumberSequence = function(v, n)
-    local parts = {}
-    for _, kp in ipairs(v.Keypoints) do
-        parts[#parts+1] = string.format(
-            '<NumberSequenceKeypoint><T>%.9g</T><V>%.9g</V><E>%.9g</E></NumberSequenceKeypoint>',
-            kp.Time, kp.Value, kp.Envelope or 0)
+---Score decompilation quality (0-100)
+---@param source string
+---@param bytecode string
+---@return number score, table metrics
+function QualityScorer:Score(source, bytecode)
+    if not source or #source == 0 then
+        return 0, {reason="empty"}
     end
-    return string.format('<NumberSequence name="%s">%s</NumberSequence>',
-        XMLEncode(n), table.concat(parts))
-end
-
-SER.ColorSequence = function(v, n)
-    local parts = {}
-    for _, kp in ipairs(v.Keypoints) do
-        local r = math.clamp(math.floor(kp.Value.R*255+.5),0,255)
-        local g = math.clamp(math.floor(kp.Value.G*255+.5),0,255)
-        local b = math.clamp(math.floor(kp.Value.B*255+.5),0,255)
-        parts[#parts+1] = string.format(
-            '<ColorSequenceKeypoint><T>%.9g</T>'..
-            '<V><R>%d</R><G>%d</G><B>%d</B></V>'..
-            '</ColorSequenceKeypoint>',
-            kp.Time, r, g, b)
-    end
-    return string.format('<ColorSequence name="%s">%s</ColorSequence>',
-        XMLEncode(n), table.concat(parts))
-end
-
-SER.NumberRange = function(v, n)
-    return string.format(
-        '<NumberRange name="%s"><min>%.9g</min><max>%.9g</max></NumberRange>',
-        XMLEncode(n), v.Min, v.Max)
-end
-
-SER.Rect = function(v, n)
-    return string.format(
-        '<Rect2D name="%s"><min><X>%.9g</X><Y>%.9g</Y></min>'..
-        '<max><X>%.9g</X><Y>%.9g</Y></max></Rect2D>',
-        XMLEncode(n), v.Min.X, v.Min.Y, v.Max.X, v.Max.Y)
-end
-
-SER.Ray = function(v, n)
-    local o,d = v.Origin, v.Direction
-    return string.format(
-        '<Ray name="%s"><origin><X>%.9g</X><Y>%.9g</Y><Z>%.9g</Z></origin>'..
-        '<direction><X>%.9g</X><Y>%.9g</Y><Z>%.9g</Z></direction></Ray>',
-        XMLEncode(n), o.X,o.Y,o.Z, d.X,d.Y,d.Z)
-end
-
-SER.Faces = function(v, n)
-    local f = {}
-    for _, face in ipairs({"Top","Bottom","Left","Right","Front","Back"}) do
-        if v[face] then f[#f+1] = face end
-    end
-    return string.format('<Faces name="%s"><faces>%s</faces></Faces>',
-        XMLEncode(n), table.concat(f,","))
-end
-
-SER.Axes = function(v, n)
-    local a = {}
-    if v.X then a[#a+1]="X" end
-    if v.Y then a[#a+1]="Y" end
-    if v.Z then a[#a+1]="Z" end
-    return string.format('<Axes name="%s"><axes>%s</axes></Axes>',
-        XMLEncode(n), table.concat(a,","))
-end
-
-SER.PhysicalProperties = function(v, n)
-    if v == nil then
-        return string.format(
-            '<PhysicalProperties name="%s"><CustomPhysics>false</CustomPhysics></PhysicalProperties>',
-            XMLEncode(n))
-    end
-    return string.format(
-        '<PhysicalProperties name="%s"><CustomPhysics>true</CustomPhysics>'..
-        '<Density>%.9g</Density><Friction>%.9g</Friction>'..
-        '<Elasticity>%.9g</Elasticity>'..
-        '<FrictionWeight>%.9g</FrictionWeight>'..
-        '<ElasticityWeight>%.9g</ElasticityWeight></PhysicalProperties>',
-        XMLEncode(n),
-        v.Density, v.Friction, v.Elasticity,
-        v.FrictionWeight, v.ElasticityWeight)
-end
-
-SER.Region3 = function(v, n)
-    local half = v.Size/2
-    local pos  = v.CFrame.Position
-    local mn, mx = pos-half, pos+half
-    return string.format(
-        '<Region3 name="%s"><min><X>%.9g</X><Y>%.9g</Y><Z>%.9g</Z></min>'..
-        '<max><X>%.9g</X><Y>%.9g</Y><Z>%.9g</Z></max></Region3>',
-        XMLEncode(n), mn.X,mn.Y,mn.Z, mx.X,mx.Y,mx.Z)
-end
-
-SER.Region3int16 = function(v, n)
-    return string.format(
-        '<Region3int16 name="%s"><min><X>%d</X><Y>%d</Y><Z>%d</Z></min>'..
-        '<max><X>%d</X><Y>%d</Y><Z>%d</Z></max></Region3int16>',
-        XMLEncode(n),
-        v.Min.X,v.Min.Y,v.Min.Z, v.Max.X,v.Max.Y,v.Max.Z)
-end
-
-SER.Content = function(v, n)
-    return string.format('<Content name="%s"><url>%s</url></Content>',
-        XMLEncode(n), XMLEncode(safeToString(v)))
-end
-
-SER.Font = function(v, n)
-    local ok1, fam = pcall(function() return tostring(v.Family) end)
-    local ok2, wgt = pcall(function() return v.Weight.Value end)
-    local ok3, sty = pcall(function() return v.Style.Name end)
-    return string.format(
-        '<Font name="%s"><Family><url>%s</url></Family>'..
-        '<Weight>%s</Weight><Style>%s</Style></Font>',
-        XMLEncode(n),
-        XMLEncode(ok1 and fam or ""),
-        tostring(ok2 and wgt or 400),
-        XMLEncode(ok3 and sty or "Normal"))
-end
-
-SER.DateTime = function(v, n)
-    local ok, iso = pcall(function() return v:ToIsoDate() end)
-    return string.format('<DateTime name="%s">%s</DateTime>',
-        XMLEncode(n), XMLEncode(ok and iso or ""))
-end
-
-SER.TweenInfo = function(v, n)
-    return string.format(
-        '<TweenInfo name="%s"><Time>%.9g</Time>'..
-        '<EasingStyle>%d</EasingStyle><EasingDirection>%d</EasingDirection>'..
-        '<RepeatCount>%d</RepeatCount><Reverses>%s</Reverses>'..
-        '<DelayTime>%.9g</DelayTime></TweenInfo>',
-        XMLEncode(n),
-        v.Time, v.EasingStyle.Value, v.EasingDirection.Value,
-        v.RepeatCount, tostring(v.Reverses), v.DelayTime)
-end
-
--- Generic fallback
-local function serVal(v, n, refs)
-    local t = typeof(v)
-    if SER[t] then
-        local ok, xml = pcall(SER[t], v, n, refs)
-        if ok and xml then return xml end
-    end
-    -- Unknown: safe string fallback
-    return string.format('<string name="%s"><!-- %s --> %s</string>',
-        XMLEncode(n), XMLEncode(t), XMLEncode(safeToString(v)))
-end
-
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
--- SECTION 9: SCRIPT DECOMPILATION  (isolated, hard deadline)
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-local Stats = {} -- filled per-save
-
-local function decompileScript(script, opts)
-    if opts.AnonymizeScripts then
-        return "-- [anonymized]", true
-    end
-    if not opts.DecompileScripts then
-        return "-- [decompilation disabled]", false
-    end
-
-    local maxAttempts = opts.RetryFailedScripts and opts.ScriptRetryCount or 1
-
-    -- Each attempt is run inside Scheduler.timed so it is hard-cancelled
-    for attempt = 1, maxAttempts do
-        -- Try every registered decompiler
-        for _, d in ipairs(ENV.decompilers) do
-            local ok, src = Scheduler.timed(d.fn, Scheduler.DECOMP_TIMEOUT, script)
-            if ok and type(src) == "string" and #src > 0
-               and not src:match("^%s*$") then
-                Stats.decompiledScripts = (Stats.decompiledScripts or 0) + 1
-                return src, true
-            end
-            Scheduler.step()
-        end
-
-        -- Fallback: Source property (timed)
-        local ok, src = Scheduler.timed(function()
-            return script.Source
-        end, Scheduler.PROP_TIMEOUT)
-        if ok and type(src) == "string" and #src > 0 then
-            Stats.decompiledScripts = (Stats.decompiledScripts or 0) + 1
-            return src, true
-        end
-
-        -- Fallback: gethiddenproperty
-        ok, src = Scheduler.timed(function()
-            return ENV.gethiddenproperty(script, "Source")
-        end, Scheduler.PROP_TIMEOUT)
-        if ok and type(src) == "string" and #src > 0 then
-            Stats.decompiledScripts = (Stats.decompiledScripts or 0) + 1
-            return src, true
-        end
-
-        -- Fallback: bytecode stub
-        if ENV.getscriptbytecode then
-            ok, src = Scheduler.timed(function()
-                local bc = ENV.getscriptbytecode(script)
-                if bc and #bc > 0 then
-                    return string.format("--[[ bytecode: %d bytes ]]\n", #bc)
-                end
-            end, Scheduler.PROP_TIMEOUT)
-            if ok and src then
-                Stats.decompiledScripts = (Stats.decompiledScripts or 0) + 1
-                return src, false
-            end
-        end
-
-        if attempt < maxAttempts then
-            task.wait(0.05 * attempt)
+    
+    local metrics = {}
+    local score = 0
+    
+    -- Syntax completeness (40 points)
+    local syntaxScore = 0
+    local hasReturn = source:match("return") ~= nil
+    local hasEnd = (select(2, source:gsub("%s+end%s+", "")) or 0)
+    local hasDo = (select(2, source:gsub("%s+do%s+", "")) or 0)
+    local hasFunction = source:match("function") ~= nil
+    local balanced = (select(2, source:gsub("%(", "")) or 0) == (select(2, source:gsub("%)", "")) or 0)
+    
+    if hasReturn then syntaxScore = syntaxScore + 8 end
+    if hasFunction then syntaxScore = syntaxScore + 10 end
+    if balanced then syntaxScore = syntaxScore + 12 end
+    if hasEnd > 0 then syntaxScore = syntaxScore + 10 end
+    
+    metrics.syntaxScore = syntaxScore
+    score = score + syntaxScore
+    
+    -- Readability (30 points)
+    local readScore = 0
+    local avgLineLen = #source / math.max(1, select(2, source:gsub("\n", "")) or 1)
+    if avgLineLen > 20 and avgLineLen < 120 then readScore = readScore + 10 end
+    
+    local hasWhitespace = source:match("%s%s") ~= nil
+    if hasWhitespace then readScore = readScore + 5 end
+    
+    local hasComments = source:match("%-%-") ~= nil
+    if hasComments then readScore = readScore + 5 end
+    
+    local varNameQuality = 0
+    for var in source:gmatch("local%s+([%w_]+)") do
+        if #var > 1 and not var:match("^[lIoO01]+$") then
+            varNameQuality = varNameQuality + 1
         end
     end
-
-    Stats.failedScripts = (Stats.failedScripts or 0) + 1
-    return string.format(
-        "-- ⚠ DECOMPILATION FAILED\n-- Script : %s\n-- Executor: %s\n",
-        script:GetFullName(), ENV.Name), false
+    if varNameQuality > 3 then readScore = readScore + 10 end
+    
+    metrics.readScore = readScore
+    score = score + readScore
+    
+    -- Functionality (30 points)
+    local funcScore = 0
+    
+    -- Check for common Roblox APIs
+    local robloxApis = {
+        "Instance%.new", "game%.", "workspace%.", "script%.",
+        "Vector3%.new", "CFrame%.new", "wait%(", "spawn%(",
+        ":GetChildren", ":FindFirstChild", ":Clone", ":Destroy"
+    }
+    local apiCount = 0
+    for _, pattern in ipairs(robloxApis) do
+        if source:match(pattern) then apiCount = apiCount + 1 end
+    end
+    funcScore = funcScore + math.min(15, apiCount * 2)
+    
+    -- Check for control structures
+    local hasIf = source:match("if%s+.+%s+then") ~= nil
+    local hasFor = source:match("for%s+.+%s+do") ~= nil
+    local hasWhile = source:match("while%s+.+%s+do") ~= nil
+    if hasIf then funcScore = funcScore + 5 end
+    if hasFor or hasWhile then funcScore = funcScore + 5 end
+    
+    -- Complexity penalty for over-obfuscation
+    local complexityPenalty = 0
+    if source:match("[a-zA-Z_][a-zA-Z0-9_]" .. "{30,}") then
+        complexityPenalty = 10
+    end
+    
+    funcScore = funcScore - complexityPenalty
+    metrics.funcScore = funcScore
+    score = score + funcScore
+    
+    -- Error indicators (negative)
+    local errorPenalty = 0
+    if source:match("--[%[=*%[%s*DECOMPILE") then errorPenalty = errorPenalty + 20 end
+    if source:match("ERROR") or source:match("FAIL") then errorPenalty = errorPenalty + 15 end
+    if #source < 50 and not source:match("return") then errorPenalty = errorPenalty + 25 end
+    
+    metrics.errorPenalty = errorPenalty
+    score = score - errorPenalty
+    
+    -- Final score
+    score = math.max(0, math.min(100, score))
+    metrics.finalScore = score
+    
+    return score, metrics
 end
 
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
--- SECTION 10: TERRAIN SERIALIZER
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+-- ══════════════════════════════════════════════════════════════════════════
+-- SUBSECTION 4.5: SOURCE BEAUTIFIER
+-- ══════════════════════════════════════════════════════════════════════════
 
-local function serializeTerrain(terrain, opts)
-    if not opts.SaveTerrain then return nil end
+local SourceBeautifier = {}
 
-    local ok, result = Scheduler.timed(function()
-        local ext    = terrain.MaxExtents
-        local s      = opts.TerrainRegionSize
-        local center = ext.CFrame.Position
-        local half   = Vector3.new(s, s, s) * 0.5
-        local region = Region3.new(center - half, center + half):ExpandToGrid(4)
-
-        local mats, occs = terrain:ReadVoxels(region, 4)
-        local sx, sy, sz = mats.Size.X, mats.Size.Y, mats.Size.Z
-
-        -- RLE encode
-        local rle = {}
-        local lastM, lastO, run = nil, nil, 0
-        for y = 1, sy do
-            for z = 1, sz do
-                for x = 1, sx do
-                    local m = mats[x][y][z].Value
-                    local o = math.floor(occs[x][y][z] * 255 + 0.5)
-                    if m == lastM and o == lastO then
-                        run = run + 1
-                    else
-                        if lastM then rle[#rle+1] = {lastM, lastO, run} end
-                        lastM, lastO, run = m, o, 1
-                    end
-                end
-            end
-            Scheduler.step() -- yield between Y slices to avoid freeze
-        end
-        if lastM then rle[#rle+1] = {lastM, lastO, run} end
-
-        return HttpService:JSONEncode({
-            v      = 2,
-            size   = {sx, sy, sz},
-            origin = {center.X - half.X, center.Y - half.Y, center.Z - half.Z},
-            rle    = rle,
-        })
-    end, math.max(opts.DecompileTimeout, 30))
-
-    if ok and result then
-        return string.format(
-            '<BinaryString name="TerrainData"><![CDATA[%s]]></BinaryString>', result)
-    end
-    return nil
-end
-
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
--- SECTION 11: INSTANCE FILTER
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-local _playerChars = {} -- refreshed at save start
-
-local function refreshPlayerChars()
-    _playerChars = {}
-    local ok, players = pcall(function() return Players:GetPlayers() end)
-    if not ok then return end
-    for _, p in ipairs(players) do
-        if p.Character then _playerChars[p.Character] = true end
-    end
-end
-
-local function shouldIgnore(inst, opts)
-    if not inst then return true end
-    local cn, nm = inst.ClassName, inst.Name
-
-    for _, v in ipairs(opts.IgnoreList) do
-        if nm == v or cn == v then return true end
-    end
-
-    if not opts.SavePlayers then
-        if cn == "Players" or inst:IsA("Player") then return true end
-    end
-
-    if opts.RemovePlayerCharacters and _playerChars[inst] then
-        return true
-    end
-
-    return false
-end
-
-local function shouldSkipChildren(inst, opts)
-    local cn, nm = inst.ClassName, inst.Name
-    for _, v in ipairs(opts.IgnoreDescendantsOfList) do
-        if nm == v or cn == v then return true end
-    end
-    return false
-end
-
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
--- SECTION 12: REFERENCE MAP  (iterative, no recursion stack overflow)
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-local function buildRefMap(root, opts, cb)
-    local refs  = {}
-    local order = {}  -- ordered list of instances
-    local idx   = 0
-
-    -- Iterative BFS avoids stack overflow on deep trees
-    local queue = { { inst = root, depth = 0 } }
-    local head  = 1
-
-    if cb then cb("Scanning instances…", 0.05) end
-
-    while head <= #queue do
-        local item  = queue[head]
-        head        = head + 1
-
-        local inst  = item.inst
-        local depth = item.depth
-
-        Scheduler.step()
-
-        if opts.MaxDepth and depth > opts.MaxDepth then
-            goto continue_scan
-        end
-
-        if shouldIgnore(inst, opts) then
-            goto continue_scan
-        end
-
-        -- Register
-        idx = idx + 1
-        refs[inst]       = generateRef(idx)
-        order[#order+1]  = inst
-        Stats.total      = idx
-
-        if cb and idx % 200 == 0 then
-            cb(string.format("Scanning… %d instances", idx),
-               0.05 + 0.15 * math.min(idx / 8000, 1))
-        end
-
-        -- Enqueue children
-        if not shouldSkipChildren(inst, opts) then
-            for _, child in ipairs(safeChildren(inst)) do
-                queue[#queue+1] = { inst = child, depth = depth + 1 }
-            end
-        end
-
-        ::continue_scan::
-    end
-
-    -- Extra instances
-    for _, extra in ipairs(opts.AdditionalInstances) do
-        if not refs[extra] then
-            idx = idx + 1
-            refs[extra]      = generateRef(idx)
-            order[#order+1]  = extra
-            Stats.total      = idx
-        end
-    end
-
-    -- Nil instances
-    if opts.NilInstances then
-        if cb then cb("Collecting nil instances…", 0.20) end
-        local ok, nil_list = pcall(ENV.getnilinstances)
-        if ok then
-            for _, ni in ipairs(nil_list) do
-                if not refs[ni] and not shouldIgnore(ni, opts) then
-                    idx = idx + 1
-                    refs[ni]         = generateRef(idx)
-                    order[#order+1]  = ni
-                    Stats.total      = idx
-                end
-                Scheduler.step()
-            end
-        end
-    end
-
-    if cb then cb(string.format("Scan complete: %d instances", #order), 0.22) end
-    return refs, order
-end
-
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
--- SECTION 13: PROPERTY BUILDER  (per instance, all reads timed)
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-local BLACKLIST_SET = {}
-for _, v in ipairs(DEFAULTS.PropertyBlacklist) do BLACKLIST_SET[v] = true end
-
-local function buildPropsXML(inst, refs, opts)
+---Beautify and format decompiled source
+---@param source string
+---@return string beautified
+function SourceBeautifier:Format(source)
+    if not source or #source == 0 then return source end
+    
     local lines = {}
-    local cn    = inst.ClassName
-
-    -- Name (always first)
-    local nm = safeReadProp(inst, "Name") or cn
-    lines[#lines+1] = string.format(
-        '      <string name="Name">%s</string>', XMLEncode(nm))
-
-    -- Script source
-    local isScript = false
-    local ok0 = pcall(function() isScript = inst:IsA("LuaSourceContainer") end)
-    if ok0 and isScript then
-        local src, _ = decompileScript(inst, opts)
-        lines[#lines+1] = string.format(
-            '      <ProtectedString name="Source"><![CDATA[%s]]></ProtectedString>', src)
-    end
-
-    -- Terrain
-    local isTerrain = false
-    pcall(function() isTerrain = inst:IsA("Terrain") end)
-    if isTerrain then
-        local terrXml = serializeTerrain(inst, opts)
-        if terrXml then lines[#lines+1] = "      " .. terrXml end
-    end
-
-    -- API-driven props
-    local props = flatProps(cn, opts)
-    for pname, _ in pairs(props) do
-        -- Skip blacklisted / already handled
-        if not BLACKLIST_SET[pname] and pname ~= "Name" and pname ~= "Source" then
-            local val = safeReadProp(inst, pname)
-            if val ~= nil then
-                Stats.totalProps = (Stats.totalProps or 0) + 1
-                local ok2, xml = pcall(serVal, val, pname, refs)
-                if ok2 and xml then
-                    lines[#lines+1] = "      " .. xml
-                    Stats.savedProps = (Stats.savedProps or 0) + 1
-                else
-                    Stats.failedProps = (Stats.failedProps or 0) + 1
-                end
-            end
+    local indent = 0
+    local indentChar = "    " -- 4 spaces
+    
+    -- Split into lines
+    for line in (source .. "\n"):gmatch("([^\n]*)\n") do
+        line = line:gsub("^%s+", ""):gsub("%s+$", "") -- trim
+        
+        if line == "" then
+            lines[#lines+1] = ""
+            goto continue
         end
-        Scheduler.step()
-    end
-
-    -- Attributes
-    if opts.SaveAttributes then
-        local ok3, attrs = pcall(function() return inst:GetAttributes() end)
-        if ok3 and attrs and next(attrs) then
-            local ok4, encoded = pcall(HttpService.JSONEncode, HttpService, attrs)
-            if ok4 then
-                lines[#lines+1] = string.format(
-                    '      <BinaryString name="AttributesSerialize"><![CDATA[%s]]></BinaryString>',
-                    encoded)
-            end
+        
+        -- Detect dedent keywords
+        if line:match("^end%s*") or line:match("^else") or line:match("^elseif") or
+           line:match("^until") then
+            indent = math.max(0, indent - 1)
         end
-    end
-
-    -- Tags
-    if opts.SaveTags then
-        local ok5, tags = pcall(function() return CollectionService:GetTags(inst) end)
-        if ok5 and tags and #tags > 0 then
-            lines[#lines+1] = string.format(
-                '      <BinaryString name="Tags"><![CDATA[%s]]></BinaryString>',
-                table.concat(tags, "\0"))
+        
+        -- Add indented line
+        lines[#lines+1] = indentChar:rep(indent) .. line
+        
+        -- Detect indent keywords
+        if line:match("function%s*%(") or line:match("^function%s+") or
+           line:match("then%s*$") or line:match("do%s*$") or
+           line:match("repeat%s*$") or line:match("else%s*$") then
+            indent = indent + 1
         end
+        
+        -- Special case: single-line blocks
+        if line:match("function.+end%s*$") or line:match("if.+then.+end%s*$") then
+            -- Don't change indent
+        end
+        
+        ::continue::
     end
-
+    
     return table.concat(lines, "\n")
 end
 
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
--- SECTION 14: STREAMING XML WRITER
--- Writes the tree to disk incrementally using StreamWriter.
--- Uses an explicit stack instead of recursion to avoid stack overflow.
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+-- ══════════════════════════════════════════════════════════════════════════
+-- SUBSECTION 4.6: PATTERN LIBRARY (SMART RECONSTRUCTION)
+-- ══════════════════════════════════════════════════════════════════════════
 
-local function writeXML(refs, order, opts, writer, cb)
-    -- Build parent→children lookup
-    local childMap = {}
-    local roots    = {}
+local PatternLibrary = {}
 
-    if cb then cb("Building hierarchy…", 0.25) end
+---Apply pattern-based improvements to decompiled source
+---@param source string
+---@param constants table
+---@return string improved
+function PatternLibrary:Improve(source, constants)
+    if not source then return "" end
+    
+    -- Replace obfuscated variable names with meaningful ones
+    local varMap = {}
+    local varCounter = 0
+    
+    -- Detect common Roblox patterns and restore them
+    local patterns = {
+        -- getfenv/setfenv restoration
+        {"getfenv%(%d+%)", "getfenv()"},
+        {"setfenv%(%d+%s*,%s*", "setfenv("},
+        
+        -- Common service calls
+        {"game:GetService%(['\"](.-)['\"]:?%)%s*", function(s)
+            return ('game:GetService("%s")'):format(s)
+        end},
+        
+        -- Simplified string.char chains
+        {"string%.char%((%d+)%)%.%.string%.char%((%d+)%)", function(a, b)
+            return ('"%s"'):format(string.char(tonumber(a)) .. string.char(tonumber(b)))
+        end},
+        
+        -- Cleanup excessive parentheses
+        {"%(%s*%((.-)%s*)%s*%)", "(%1)"},
+        
+        -- Restore Vector3/CFrame constructors
+        {"Vector3%.new%s*%(%s*([%d%.%-]+)%s*,%s*([%d%.%-]+)%s*,%s*([%d%.%-]+)%s*%)",
+         "Vector3.new(%1, %2, %3)"},
+        
+        -- Clean up double negatives
+        {"not%s+not%s+", ""},
+        
+        -- Simplify boolean literals
+        {"true%s*==%s*true", "true"},
+        {"false%s*==%s*false", "false"},
+    }
+    
+    for _, pattern in ipairs(patterns) do
+        source = source:gsub(pattern[1], pattern[2])
+    end
+    
+    -- Add helpful comments for detected constants
+    if constants and constants.strings then
+        local header = "-- Detected String Constants:\n"
+        for i, str in ipairs(constants.strings) do
+            if i <= 10 then -- Limit to first 10
+                header = header .. ("--   [%d] = %q\n"):format(i, str)
+            end
+        end
+        if #constants.strings > 0 then
+            source = header .. "\n" .. source
+        end
+    end
+    
+    return source
+end
 
-    for _, inst in ipairs(order) do
-        local ok, par = pcall(function() return inst.Parent end)
-        if ok and par and refs[par] then
-            if not childMap[par] then childMap[par] = {} end
-            childMap[par][#childMap[par]+1] = inst
+-- ══════════════════════════════════════════════════════════════════════════
+-- SUBSECTION 4.7: MULTI-STRATEGY DECOMPILER
+-- ══════════════════════════════════════════════════════════════════════════
+
+local DecompileStrategies = {}
+
+---Strategy 1: Native executor decompile
+function DecompileStrategies:Native(script, bytecode, timeout)
+    if not ExecutorAPI.decompile then return nil, "native_unavailable" end
+    
+    local result, err = nil, nil
+    local done = false
+    
+    local co = coroutine.create(function()
+        local ok, src = pcall(ExecutorAPI.decompile, script)
+        if ok and src and type(src) == "string" and #src > 0 then
+            result = src
         else
-            roots[#roots+1] = inst
+            err = "native_error"
         end
-        Scheduler.step()
-    end
-
-    -- XML header
-    writer:writeln('<?xml version="1.0" encoding="UTF-8"?>')
-    writer:writeln('<roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime"'
-        .. ' xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"'
-        .. ' xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd"'
-        .. ' version="4">')
-    writer:writeln('  <External>null</External>')
-    writer:writeln('  <External>nil</External>')
-    writer:writeln(string.format('  <Meta name="Generator">SaveInstance Pro v5.0</Meta>'))
-    writer:writeln(string.format('  <Meta name="Executor">%s</Meta>', XMLEncode(ENV.Name)))
-    writer:writeln(string.format('  <Meta name="SavedAt">%s</Meta>', os.date("%Y-%m-%dT%H:%M:%S")))
-    writer:writeln(string.format('  <Meta name="TotalInstances">%d</Meta>', #order))
-    writer:writeln('  <Meta name="ExplicitAutoJoints">true</Meta>')
-
-    -- Iterative DFS using explicit stack
-    -- Stack entries: { inst, depth, phase }
-    -- phase = "open"  → write opening tag + properties
-    -- phase = "close" → write closing tag
-    local stack   = {}
-    local saved   = 0
-
-    -- Push roots in reverse order so first root is processed first
-    for i = #roots, 1, -1 do
-        stack[#stack+1] = { inst = roots[i], depth = 1, phase = "open" }
-    end
-
-    if cb then cb("Serializing instances…", 0.27) end
-
-    while #stack > 0 do
-        local entry = stack[#stack]
-        stack[#stack] = nil
-
-        local inst  = entry.inst
-        local depth = entry.depth
-        local phase = entry.phase
-        local indent = string.rep("  ", depth)
-
-        Scheduler.step()
-
-        if phase == "open" then
-            local ref = refs[inst]
-            if not ref then goto continue_write end
-
-            local cn  = inst.ClassName
-
-            -- Push close-tag sentinel first (so it runs after children)
-            stack[#stack+1] = { inst = inst, depth = depth, phase = "close" }
-
-            -- Push children in reverse order
-            if childMap[inst] then
-                local kids = childMap[inst]
-                for i = #kids, 1, -1 do
-                    stack[#stack+1] = { inst = kids[i], depth = depth+1, phase = "open" }
-                end
-            end
-
-            -- Write opening + properties
-            writer:writeln(string.format('%s<Item class="%s" referent="%s">',
-                indent, XMLEncode(cn), ref))
-            writer:writeln(indent .. "  <Properties>")
-
-            local ok, propsXml = pcall(buildPropsXML, inst, refs, opts)
-            if ok and propsXml and #propsXml > 0 then
-                writer:writeln(propsXml)
-                Stats.saved = (Stats.saved or 0) + 1
-            else
-                Stats.failed = (Stats.failed or 0) + 1
-                -- Minimal fallback: at least write the name
-                local fallbackName = safeReadProp(inst, "Name") or cn
-                writer:writeln(string.format(
-                    '      <string name="Name">%s</string>', XMLEncode(fallbackName)))
-                if opts.Verbose then
-                    warn("[SI] Props failed for " .. safeToString(inst) .. ": " .. safeToString(propsXml))
-                end
-            end
-
-            writer:writeln(indent .. "  </Properties>")
-
-            saved = saved + 1
-            if cb and saved % 100 == 0 then
-                local pct = 0.27 + 0.65 * (saved / math.max(#order, 1))
-                cb(string.format("Serializing… %d / %d  (%.0f%%)",
-                    saved, #order, pct * 100), pct)
-            end
-
-            if opts.OnInstanceSaved then
-                pcall(opts.OnInstanceSaved, inst, saved, #order)
-            end
-
-        elseif phase == "close" then
-            local indent2 = string.rep("  ", depth)
-            writer:writeln(indent2 .. "</Item>")
+        done = true
+    end)
+    
+    coroutine.resume(co)
+    
+    local deadline = tick() + timeout
+    while not done and tick() < deadline do
+        if coroutine.status(co) == "suspended" then
+            coroutine.resume(co)
         end
-
-        ::continue_write::
+        task.wait(0.05)
     end
-
-    writer:writeln("</roblox>")
-    if cb then cb("XML written to disk ✓", 0.95) end
+    
+    if not done and coroutine.close then
+        pcall(coroutine.close, co)
+        return nil, "native_timeout"
+    end
+    
+    return result, err
 end
 
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
--- SECTION 15: VALIDATION
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-local function validate(filePath, opts)
-    if not opts.ValidateOutput then return true end
-
-    local ok, content = pcall(ENV.readfile, filePath)
-    if not ok or not content then
-        warn("[SI] Validation: cannot read file back")
-        return false
+---Strategy 2: Bytecode-fed decompile
+function DecompileStrategies:BytecodeFed(script, bytecode, timeout)
+    if not ExecutorAPI.decompile or not bytecode then
+        return nil, "bytecode_unavailable"
     end
-
-    local checks = {
-        { content:sub(1,5) == "<?xml",         "Missing XML declaration"    },
-        { content:find("<roblox") ~= nil,       "Missing <roblox> tag"      },
-        { content:find("</roblox>") ~= nil,     "Missing </roblox> end tag" },
-        {
-            select(2, content:gsub("<Item",   "")) ==
-            select(2, content:gsub("</Item>", "")),
-            "Unbalanced <Item> tags"
-        },
-    }
-
-    for _, c in ipairs(checks) do
-        if not c[1] then
-            warn("[SI] Validation FAILED: " .. c[2])
-            return false
-        end
-    end
-
-    if opts.Verbose then print("[SI] Validation passed") end
-    return true
-end
-
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
--- SECTION 16: PUBLIC API
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-local SaveInstance    = {}
-SaveInstance.Version  = "5.0.0"
-SaveInstance.Executor = ENV.Name
-SaveInstance._busy    = false
-
-function SaveInstance.Save(userOptions)
-    if SaveInstance._busy then
-        warn("[SI] Already saving – please wait for the current save to finish.")
-        return false, nil
-    end
-    SaveInstance._busy = true
-
-    -- Reset stats
-    Stats = {
-        total            = 0,
-        saved            = 0,
-        failed           = 0,
-        totalProps       = 0,
-        savedProps       = 0,
-        failedProps      = 0,
-        decompiledScripts= 0,
-        failedScripts    = 0,
-    }
-
-    local opts = mergeOpts(userOptions)
-    assert(opts.SaveObject, "SaveObject must be provided")
-
-    -- Auto file path
-    if not opts.FilePath then
-        local rawName = safeReadProp(opts.SaveObject, "Name") or "SavedInstance"
-        opts.FilePath = sanitize(rawName) .. "_" .. timestamp() .. ".rbxmx"
-    end
-
-    local t0 = tick()
-    local cb = opts.StatusCallback or function() end
-
-    -- Update blacklist set
-    BLACKLIST_SET = {}
-    for _, v in ipairs(opts.PropertyBlacklist) do BLACKLIST_SET[v] = true end
-
-    -- Ensure output directory exists
-    local dir = opts.FilePath:match("^(.*[/\\])")
-    if dir and dir ~= "" then
-        local ok3 = pcall(function()
-            if not ENV.isfolder(dir) then ENV.makefolder(dir) end
-        end)
-    end
-
-    cb("Initializing… Executor: " .. ENV.Name, 0)
-
-    -- Load API dump (async, yields internally)
-    cb("Loading API dump…", 0.02)
-    loadDump(opts)
-
-    -- Snapshot player characters before cloning
-    refreshPlayerChars()
-
-    -- Safe clone
-    local saveObj = opts.SaveObject
-    if opts.CloneBeforeSave and opts.SaveObject ~= game then
-        cb("Cloning save target…", 0.04)
-        local okC, clone = pcall(function() return opts.SaveObject:Clone() end)
-        if okC and clone then
-            saveObj = clone
-            if opts.Verbose then print("[SI] Clone successful") end
+    
+    local result, err = nil, nil
+    local done = false
+    
+    local co = coroutine.create(function()
+        local ok, src = pcall(ExecutorAPI.decompile, bytecode)
+        if ok and src and type(src) == "string" and #src > 0 then
+            result = src
         else
-            if opts.Verbose then warn("[SI] Clone failed – using original") end
+            err = "bytecode_decompile_error"
         end
-    end
-
-    -- Create streaming writer (uses appendfile if available)
-    local writer = StreamWriter.new(opts.FilePath, true)
-
-    local saveOk, saveErr = pcall(function()
-        -- Phase 1: scan
-        local refs, order = buildRefMap(saveObj, opts, cb)
-        cb(string.format("Found %d instances – building XML…", #order), 0.24)
-
-        -- Phase 2: stream XML to disk
-        writeXML(refs, order, opts, writer, cb)
-
-        -- Phase 3: close writer (final flush)
-        writer:close()
-        cb("Flushing file…", 0.96)
+        done = true
     end)
-
-    -- Cleanup clone
-    if saveObj ~= opts.SaveObject then
-        pcall(function() saveObj:Destroy() end)
-    end
-
-    SaveInstance._busy = false
-
-    if not saveOk then
-        local msg = "[SI] Save failed: " .. tostring(saveErr)
-        warn(msg)
-        if opts.OnError then pcall(opts.OnError, msg) end
-        if opts.ShowNotifications then
-            SaveInstance.Notify("SaveInstance ❌", msg, 10)
+    
+    coroutine.resume(co)
+    
+    local deadline = tick() + timeout
+    while not done and tick() < deadline do
+        if coroutine.status(co) == "suspended" then
+            coroutine.resume(co)
         end
-        return false, msg
+        task.wait(0.05)
     end
-
-    -- Validate
-    local valid = validate(opts.FilePath, opts)
-
-    local elapsed = tick() - t0
-    local sizeMB  = writer.totalLen / 1048576
-
-    local summary = string.format(
-        "✅ Saved in %.1fs | 📁 %.2f MB | 🧱 %d inst (%d failed) | 🔧 %d props | 📜 %d scripts (%d failed)",
-        elapsed, sizeMB,
-        Stats.saved or 0, Stats.failed or 0,
-        Stats.savedProps or 0,
-        Stats.decompiledScripts or 0, Stats.failedScripts or 0)
-
-    cb(summary, 1.0)
-
-    if opts.ShowNotifications then
-        SaveInstance.Notify("SaveInstance ✅",
-            string.format("Done in %.1fs — %d instances — %.2f MB\n%s",
-                elapsed, Stats.saved or 0, sizeMB, opts.FilePath), 8)
+    
+    if not done and coroutine.close then
+        pcall(coroutine.close, co)
+        return nil, "bytecode_timeout"
     end
+    
+    return result, err
+end
 
-    local result = {
-        FilePath   = opts.FilePath,
-        FileSize   = writer.totalLen,
-        Elapsed    = elapsed,
-        Valid      = valid,
-        Statistics = deepCopy(Stats),
+---Strategy 3: Hybrid (try multiple decompiler modes if available)
+function DecompileStrategies:Hybrid(script, bytecode, timeout)
+    -- Some executors expose multiple decompile functions
+    local decompilers = {
+        ExecutorAPI.decompile,
+        rawget(_G, "decompile_v2"),
+        rawget(_G, "advanced_decompile"),
+        rawget(_G, "luau_decompile")
     }
-
-    if opts.OnComplete then pcall(opts.OnComplete, true, result) end
-    return true, result
-end
-
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
--- SECTION 17: NOTIFICATION
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-function SaveInstance.Notify(title, text, dur)
-    dur = dur or 5
-    local ok = pcall(function()
-        StarterGui:SetCore("SendNotification",
-            { Title = title, Text = text, Duration = dur })
-    end)
-    if not ok then print(string.format("[%s] %s", title, text)) end
-end
-
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
--- SECTION 18: GUI
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-local C = {
-    BG       = Color3.fromRGB(15, 15, 20),
-    PANEL    = Color3.fromRGB(24, 24, 32),
-    TITLEBAR = Color3.fromRGB(20, 20, 28),
-    ACCENT   = Color3.fromRGB(80, 140, 255),
-    GREEN    = Color3.fromRGB(60, 210, 110),
-    RED      = Color3.fromRGB(210, 55, 55),
-    ORANGE   = Color3.fromRGB(230, 165, 45),
-    TEXT     = Color3.fromRGB(225, 225, 235),
-    SUB      = Color3.fromRGB(130, 130, 150),
-    BORDER   = Color3.fromRGB(45, 50, 70),
-    BARBG    = Color3.fromRGB(12, 12, 18),
-}
-
-local function mkCorner(p, r)
-    local c = Instance.new("UICorner")
-    c.CornerRadius = UDim.new(0, r or 10)
-    c.Parent = p
-end
-
-local function mkStroke(p, color, thick)
-    local s = Instance.new("UIStroke")
-    s.Color = color or C.BORDER
-    s.Thickness = thick or 1.5
-    s.Parent = p
-end
-
-local function mkLabel(p, txt, size, color, font, xa, wrap)
-    local l = Instance.new("TextLabel")
-    l.BackgroundTransparency = 1
-    l.Text = txt or ""
-    l.TextSize = size or 14
-    l.TextColor3 = color or C.TEXT
-    l.Font = font or Enum.Font.Gotham
-    l.TextXAlignment = xa or Enum.TextXAlignment.Left
-    l.TextYAlignment = Enum.TextYAlignment.Center
-    l.TextWrapped = wrap or false
-    l.Size = UDim2.new(1, 0, 1, 0)
-    l.BorderSizePixel = 0
-    l.ZIndex = 5
-    l.Parent = p
-    return l
-end
-
-local function mkBtn(p, txt, color, sz, pos)
-    local b = Instance.new("TextButton")
-    b.BackgroundColor3 = color
-    b.BorderSizePixel = 0
-    b.AutoButtonColor = false
-    b.Font = Enum.Font.GothamBold
-    b.TextColor3 = Color3.new(1,1,1)
-    b.TextSize = 14
-    b.Text = txt
-    b.Size = sz or UDim2.new(1,0,0,44)
-    b.Position = pos or UDim2.new(0,0,0,0)
-    b.ZIndex = 5
-    b.Parent = p
-    mkCorner(b, 8)
-
-    local base  = color
-    local hov   = Color3.fromRGB(
-        math.min(base.R*255+28,255),
-        math.min(base.G*255+28,255),
-        math.min(base.B*255+28,255))
-    local pr    = Color3.fromRGB(
-        math.max(base.R*255-20,0),
-        math.max(base.G*255-20,0),
-        math.max(base.B*255-20,0))
-
-    b.MouseEnter:Connect(function()    b.BackgroundColor3 = hov  end)
-    b.MouseLeave:Connect(function()    b.BackgroundColor3 = base end)
-    b.MouseButton1Down:Connect(function() b.BackgroundColor3 = pr end)
-    b.MouseButton1Up:Connect(function()   b.BackgroundColor3 = hov end)
-    return b
-end
-
-local function mkDraggable(handle, win)
-    local drag, ds, sp = false, nil, nil
-    handle.InputBegan:Connect(function(i)
-        if i.UserInputType == Enum.UserInputType.MouseButton1
-        or i.UserInputType == Enum.UserInputType.Touch then
-            drag = true; ds = i.Position; sp = win.Position
-        end
-    end)
-    handle.InputEnded:Connect(function(i)
-        if i.UserInputType == Enum.UserInputType.MouseButton1
-        or i.UserInputType == Enum.UserInputType.Touch then
-            drag = false
-        end
-    end)
-    UserInputService.InputChanged:Connect(function(i)
-        if drag and (i.UserInputType == Enum.UserInputType.MouseMovement
-                  or i.UserInputType == Enum.UserInputType.Touch) then
-            local d = i.Position - ds
-            win.Position = UDim2.new(sp.X.Scale, sp.X.Offset+d.X,
-                                     sp.Y.Scale, sp.Y.Offset+d.Y)
-        end
-    end)
-end
-
-local function buildGUI()
-    -- Remove old
-    local hui = ENV.gethui
-    if not hui then hui = game:GetService("CoreGui") end
-
-    for _, c in ipairs(hui:GetChildren()) do
-        if c.Name == "SI_Pro_v5" then c:Destroy() end
-    end
-
-    local sg = Instance.new("ScreenGui")
-    sg.Name           = "SI_Pro_v5"
-    sg.ResetOnSpawn   = false
-    sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-    sg.IgnoreGuiInset = true
-    sg.Parent         = hui
-
-    -- Window
-    local win = Instance.new("Frame")
-    win.Size            = UDim2.new(0, 510, 0, 570)
-    win.Position        = UDim2.new(0.5,-255,0.5,-285)
-    win.BackgroundColor3= C.BG
-    win.BorderSizePixel = 0
-    win.Parent          = sg
-    mkCorner(win, 14)
-    mkStroke(win, C.ACCENT, 2)
-
-    -- Shadow
-    local shad = Instance.new("ImageLabel")
-    shad.Size = UDim2.new(1,50,1,50)
-    shad.Position = UDim2.new(0,-25,0,-25)
-    shad.BackgroundTransparency = 1
-    shad.Image = "rbxassetid://5554236805"
-    shad.ImageColor3 = Color3.new(0,0,0)
-    shad.ImageTransparency = 0.45
-    shad.ScaleType = Enum.ScaleType.Slice
-    shad.SliceCenter = Rect.new(23,23,277,277)
-    shad.ZIndex = 0
-    shad.Parent = win
-
-    -- Title bar
-    local tb = Instance.new("Frame")
-    tb.Size = UDim2.new(1,0,0,54)
-    tb.BackgroundColor3 = C.TITLEBAR
-    tb.BorderSizePixel = 0
-    tb.ZIndex = 6
-    tb.Parent = win
-    mkCorner(tb, 14)
-    -- fill bottom-round of title bar
-    local tbfix = Instance.new("Frame")
-    tbfix.Size = UDim2.new(1,0,0,14)
-    tbfix.Position = UDim2.new(0,0,1,-14)
-    tbfix.BackgroundColor3 = C.TITLEBAR
-    tbfix.BorderSizePixel = 0
-    tbfix.ZIndex = 6
-    tbfix.Parent = tb
-
-    -- Title text
-    local titleHolder = Instance.new("Frame")
-    titleHolder.Size = UDim2.new(1,-100,1,0)
-    titleHolder.Position = UDim2.new(0,14,0,0)
-    titleHolder.BackgroundTransparency = 1
-    titleHolder.BorderSizePixel = 0
-    titleHolder.ZIndex = 7
-    titleHolder.Parent = tb
-
-    local titleLbl = Instance.new("TextLabel")
-    titleLbl.Size = UDim2.new(1,0,0,28)
-    titleLbl.Position = UDim2.new(0,0,0,6)
-    titleLbl.BackgroundTransparency = 1
-    titleLbl.Font = Enum.Font.GothamBold
-    titleLbl.TextSize = 19
-    titleLbl.Text = "💾 SaveInstance Pro"
-    titleLbl.TextColor3 = C.TEXT
-    titleLbl.TextXAlignment = Enum.TextXAlignment.Left
-    titleLbl.ZIndex = 7
-    titleLbl.Parent = titleHolder
-
-    local verLbl = Instance.new("TextLabel")
-    verLbl.Size = UDim2.new(1,0,0,18)
-    verLbl.Position = UDim2.new(0,0,0,32)
-    verLbl.BackgroundTransparency = 1
-    verLbl.Font = Enum.Font.Gotham
-    verLbl.TextSize = 11
-    verLbl.Text = "v5.0  •  " .. ENV.Name .. "  •  Anti-Freeze Edition"
-    verLbl.TextColor3 = C.SUB
-    verLbl.TextXAlignment = Enum.TextXAlignment.Left
-    verLbl.ZIndex = 7
-    verLbl.Parent = titleHolder
-
-    -- Close btn
-    local closeBtn = mkBtn(tb, "✕", C.RED,
-        UDim2.new(0,36,0,36), UDim2.new(1,-46,0,9))
-    closeBtn.TextSize = 18
-    closeBtn.MouseButton1Click:Connect(function() sg:Destroy() end)
-
-    mkDraggable(tb, win)
-
-    -- Scroll area for buttons
-    local scroll = Instance.new("ScrollingFrame")
-    scroll.Size = UDim2.new(1,-22,1,-225)
-    scroll.Position = UDim2.new(0,11,0,62)
-    scroll.BackgroundTransparency = 1
-    scroll.BorderSizePixel = 0
-    scroll.ScrollBarThickness = 5
-    scroll.ScrollBarImageColor3 = C.ACCENT
-    scroll.CanvasSize = UDim2.new(0,0,0,0)
-    scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
-    scroll.ZIndex = 4
-    scroll.Parent = win
-
-    local layout = Instance.new("UIListLayout")
-    layout.SortOrder = Enum.SortOrder.LayoutOrder
-    layout.Padding = UDim.new(0,7)
-    layout.Parent = scroll
-
-    local lpad = Instance.new("UIPadding")
-    lpad.PaddingTop = UDim.new(0,4)
-    lpad.PaddingBottom = UDim.new(0,4)
-    lpad.Parent = scroll
-
-    -- Section divider helper
-    local function sectionDiv(txt, order)
-        local f = Instance.new("Frame")
-        f.Size = UDim2.new(1,0,0,20)
-        f.BackgroundTransparency = 1
-        f.BorderSizePixel = 0
-        f.LayoutOrder = order
-        f.ZIndex = 4
-        f.Parent = scroll
-        local l = Instance.new("TextLabel")
-        l.Size = UDim2.new(1,0,1,0)
-        l.BackgroundTransparency = 1
-        l.Font = Enum.Font.GothamBold
-        l.TextSize = 11
-        l.Text = txt
-        l.TextColor3 = C.SUB
-        l.TextXAlignment = Enum.TextXAlignment.Left
-        l.ZIndex = 5
-        l.Parent = f
-    end
-
-    -- Status label + progress bar refs
-    local statusLbl, statsLbl, progBar, progPct
-
-    -- Button configs
-    local BTNS = {
-        { txt = "🌍  Save Entire Game",         color = Color3.fromRGB(55,125,255), order = 2,
-          opts = { SaveObject = game, SaveTerrain = true, DecompileScripts = true,
-                   SaveAttributes = true, SaveTags = true } },
-        { txt = "🗺️  Save Workspace",            color = Color3.fromRGB(55,185,95),  order = 3,
-          opts = { SaveObject = workspace, SaveTerrain = true } },
-        { txt = "📦  Save ReplicatedStorage",    color = Color3.fromRGB(195,115,55), order = 4,
-          opts = { SaveObject = game:GetService("ReplicatedStorage") } },
-        { txt = "🗄️  Save ServerStorage",        color = Color3.fromRGB(145,85,205), order = 5,
-          opts = { SaveObject = game:GetService("ServerStorage") } },
-        { txt = "💡  Save Lighting",             color = Color3.fromRGB(225,185,40), order = 6,
-          opts = { SaveObject = game:GetService("Lighting") } },
-        { txt = "🎒  Save StarterPack",          color = Color3.fromRGB(55,195,195), order = 7,
-          opts = { SaveObject = game:GetService("StarterPack") } },
-        { txt = "👥  Save Players + Characters", color = Color3.fromRGB(220,90,90),  order = 8,
-          opts = { SaveObject = game:GetService("Players"),
-                   SavePlayers = true, RemovePlayerCharacters = false } },
-    }
-
-    sectionDiv("  QUICK SAVE", 1)
-
-    for _, cfg in ipairs(BTNS) do
-        local btn = mkBtn(scroll, cfg.txt, cfg.color,
-            UDim2.new(1,0,0,44))
-        btn.LayoutOrder = cfg.order
-        btn.TextXAlignment = Enum.TextXAlignment.Left
-        local lp2 = Instance.new("UIPadding")
-        lp2.PaddingLeft = UDim.new(0,12)
-        lp2.Parent = btn
-
-        btn.MouseButton1Click:Connect(function()
-            if SaveInstance._busy then
-                SaveInstance.Notify("SaveInstance", "⏳ Already saving – please wait!", 3)
-                return
+    
+    for _, decomp in ipairs(decompilers) do
+        if type(decomp) == "function" then
+            local ok, src = pcall(decomp, script)
+            if ok and src and type(src) == "string" and #src > 10 then
+                return src, nil
             end
+        end
+    end
+    
+    return nil, "hybrid_all_failed"
+end
 
-            local origTxt   = btn.Text
-            local origColor = btn.BackgroundColor3
-            btn.Text = "⏳  Saving…"
-            btn.BackgroundColor3 = C.ORANGE
+---Strategy 4: Disassembly fallback
+function DecompileStrategies:Disassemble(script, bytecode, timeout)
+    if not bytecode or #bytecode < 8 then
+        return nil, "no_bytecode"
+    end
+    
+    local disasm, constants = LuauDisassembler:Disassemble(bytecode)
+    
+    local header = ("--[[\n    DISASSEMBLED: %s\n    "..
+        "This is low-level bytecode representation.\n    "..
+        "Original source could not be fully recovered.\n]]\n\n"):format(
+        script:GetFullName())
+    
+    return header .. disasm, nil
+end
 
-            -- Run save in its own thread so GUI stays live
-            task.spawn(function()
-                local saveOpts = deepCopy(cfg.opts)
+---Strategy 5: Constant extraction + stub
+function DecompileStrategies:ConstantStub(script, bytecode, timeout)
+    local constants = ConstantExtractor:Extract(bytecode or "")
+    
+    local stub = ("--[[\n    Script: %s\n    Class: %s\n\n"):format(
+        script:GetFullName(), script.ClassName)
+    
+    if #constants.strings > 0 then
+        stub = stub .. "    Detected Strings:\n"
+        for i, str in ipairs(constants.strings) do
+            if i <= 20 then
+                stub = stub .. ("        %q\n"):format(str)
+            end
+        end
+    end
+    
+    if next(constants.imports) then
+        stub = stub .. "\n    Detected Imports:\n"
+        for imp, _ in pairs(constants.imports) do
+            stub = stub .. ("        %s\n"):format(imp)
+        end
+    end
+    
+    if next(constants.identifiers) then
+        stub = stub .. "\n    Detected Identifiers:\n"
+        local sorted = {}
+        for id, count in pairs(constants.identifiers) do
+            table.insert(sorted, {id=id, count=count})
+        end
+        table.sort(sorted, function(a,b) return a.count > b.count end)
+        for i = 1, math.min(15, #sorted) do
+            stub = stub .. ("        %s (×%d)\n"):format(sorted[i].id, sorted[i].count)
+        end
+    end
+    
+    stub = stub .. "]]\n\n"
+    stub = stub .. "-- Source recovery failed. See extracted data above.\n"
+    
+    return stub, nil
+end
 
-                saveOpts.StatusCallback = function(msg, pct)
-                    -- Strip to last line for compact display
-                    local line = (msg or ""):match("([^\n]+)$") or msg or ""
-                    if statusLbl then statusLbl.Text = line end
-                    if progBar and pct then
-                        local clamped = math.clamp(pct, 0, 1)
-                        -- Smooth tween
-                        local ti = TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-                        TweenService:Create(progBar, ti,
-                            { Size = UDim2.new(clamped, 0, 1, 0) }):Play()
-                        if progPct then
-                            progPct.Text = string.format("%.0f%%", clamped * 100)
-                        end
-                    end
-                    if statsLbl then
-                        statsLbl.Text = string.format(
-                            "🧱 %d inst  |  🔧 %d props  |  📜 %d scripts  |  ❌ %d failed",
-                            Stats.saved or 0,
-                            Stats.savedProps or 0,
-                            Stats.decompiledScripts or 0,
-                            (Stats.failed or 0) + (Stats.failedScripts or 0))
-                    end
+---Strategy 6: Source property direct read
+function DecompileStrategies:SourceProperty(script, bytecode, timeout)
+    local ok, source = pcall(function() return script.Source end)
+    if ok and source and type(source) == "string" and #source > 0 then
+        return source, nil
+    end
+    return nil, "source_unreadable"
+end
+
+---Strategy 7: Memory scan (advanced)
+function DecompileStrategies:MemoryScan(script, bytecode, timeout)
+    -- Try to find source in memory via getgc/getinstances
+    if not ExecutorAPI.getinstances then return nil, "no_getinstances" end
+    
+    -- Scan for string objects that might contain source
+    local ok, instances = pcall(ExecutorAPI.getinstances)
+    if not ok or not instances then return nil, "scan_failed" end
+    
+    local scriptName = script.Name
+    local possibleSources = {}
+    
+    for _, inst in ipairs(instances) do
+        if typeof(inst) == "Instance" and inst.ClassName == "StringValue" then
+            local ok2, val = pcall(function() return inst.Value end)
+            if ok2 and val and type(val) == "string" and #val > 50 then
+                -- Check if it looks like Lua source
+                if val:match("function") or val:match("local%s+") or val:match("return") then
+                    possibleSources[#possibleSources+1] = val
                 end
+            end
+        end
+    end
+    
+    -- Return longest match (heuristic)
+    if #possibleSources > 0 then
+        table.sort(possibleSources, function(a,b) return #a > #b end)
+        return possibleSources[1], nil
+    end
+    
+    return nil, "no_source_in_memory"
+end
 
-                local ok, res = SaveInstance.Save(saveOpts)
+---Strategy 8: Simplified pseudo-code generation
+function DecompileStrategies:PseudoCode(script, bytecode, timeout)
+    local constants = ConstantExtractor:Extract(bytecode or "")
+    local disasm, _ = LuauDisassembler:Disassemble(bytecode or "")
+    
+    -- Generate pseudo-code from disassembly
+    local pseudo = ("-- PSEUDO-CODE for: %s\n\n"):format(script:GetFullName())
+    
+    if next(constants.imports) then
+        for imp, _ in pairs(constants.imports) do
+            pseudo = pseudo .. ("local %s = %s\n"):format(imp, imp)
+        end
+        pseudo = pseudo .. "\n"
+    end
+    
+    pseudo = pseudo .. "function main()\n"
+    pseudo = pseudo .. "    -- Reconstructed logic:\n"
+    
+    -- Simple pattern matching on disassembly
+    for line in disasm:gmatch("[^\n]+") do
+        if line:match("CALL") then
+            pseudo = pseudo .. "    -- Function call\n"
+        elseif line:match("GETGLOBAL") or line:match("GETIMPORT") then
+            local var = line:match("GETGLOBAL.+([%w_]+)")
+            if var then
+                pseudo = pseudo .. ("    -- Access: %s\n"):format(var)
+            end
+        elseif line:match("RETURN") then
+            pseudo = pseudo .. "    -- Return statement\n"
+        end
+    end
+    
+    pseudo = pseudo .. "end\n\nmain()\n"
+    
+    return pseudo, nil
+end
 
-                -- Restore button
-                task.wait(0.2)
-                btn.Text = origTxt
-                btn.BackgroundColor3 = origColor
+-- ══════════════════════════════════════════════════════════════════════════
+-- SUBSECTION 4.8: MASTER DECOMPILER ORCHESTRATOR
+-- ══════════════════════════════════════════════════════════════════════════
 
-                if not ok then
-                    if statusLbl then
-                        statusLbl.Text = "❌ Save failed – see console for details"
-                        statusLbl.TextColor3 = C.RED
-                    end
-                    task.wait(6)
-                    if statusLbl then
-                        statusLbl.Text = "Ready."
-                        statusLbl.TextColor3 = C.TEXT
-                    end
-                    if progBar then
-                        TweenService:Create(progBar, TweenInfo.new(0.4),
-                            { Size = UDim2.new(0,0,1,0) }):Play()
-                        if progPct then progPct.Text = "0%" end
-                    end
-                else
-                    if statusLbl then
-                        statusLbl.TextColor3 = C.GREEN
-                        task.wait(4)
-                        if statusLbl then
-                            statusLbl.TextColor3 = C.TEXT
-                            statusLbl.Text = "Ready."
-                        end
-                    end
+local _scriptCache = {}  -- hash → {source, quality, strategy}
+
+---Ultimate decompilation with all strategies, quality scoring, and best-pick
+---@param scr Instance
+---@param cfg table
+---@param stats table
+---@return string source, boolean succeeded, string strategy
+local function decompileOneUltimate(scr, cfg, stats)
+    local startTime = tick()
+    
+    -- ─────────────────────────────────────────────────────────────────────
+    -- Step 1: Get bytecode (cache key)
+    -- ─────────────────────────────────────────────────────────────────────
+    local bytecode = ""
+    local bcSize = 0
+    
+    if ExecutorAPI.getscriptbytecode then
+        local ok, bc = pcall(ExecutorAPI.getscriptbytecode, scr)
+        if ok and bc and #bc > 0 then
+            bytecode = bc
+            bcSize = #bc
+            
+            -- Cache check
+            if cfg.ScriptCache then
+                local hash = hashBytecode(bc)
+                local cached = _scriptCache[hash]
+                if cached then
+                    logWrite(("✓ Cache hit: %s (quality: %d, strategy: %s)"):format(
+                        scr:GetFullName(), cached.quality, cached.strategy))
+                    return cached.source, true, "cache"
                 end
+            end
+        end
+    end
+    
+    -- ─────────────────────────────────────────────────────────────────────
+    -- Step 2: ScriptCallback override
+    -- ─────────────────────────────────────────────────────────────────────
+    if cfg.ScriptCallback then
+        local ok, src = pcall(cfg.ScriptCallback, scr, "")
+        if ok and type(src) == "string" and #src > 0 then
+            return src, true, "callback"
+        end
+    end
+    
+    -- ─────────────────────────────────────────────────────────────────────
+    -- Step 3: Execute all strategies in parallel
+    -- ─────────────────────────────────────────────────────────────────────
+    local strategies = {
+        {name="SourceProperty", func=DecompileStrategies.SourceProperty},
+        {name="Native", func=DecompileStrategies.Native},
+        {name="BytecodeFed", func=DecompileStrategies.BytecodeFed},
+        {name="Hybrid", func=DecompileStrategies.Hybrid},
+        {name="MemoryScan", func=DecompileStrategies.MemoryScan},
+        {name="Disassembly", func=DecompileStrategies.Disassemble},
+        {name="PseudoCode", func=DecompileStrategies.PseudoCode},
+        {name="ConstantStub", func=DecompileStrategies.ConstantStub},
+    }
+    
+    local results = {}  -- {source, quality, strategy}
+    local timeout = cfg.DecompileTimeout / #strategies -- time-slice per strategy
+    
+    logWrite(("⚡ Decompiling: %s (%d strategies, %.1fs timeout each)"):format(
+        scr:GetFullName(), #strategies, timeout))
+    
+    for _, strat in ipairs(strategies) do
+        local ok, source, err = pcall(strat.func, DecompileStrategies, scr, bytecode, timeout)
+        
+        if ok and source and type(source) == "string" and #source > 0 then
+            local quality, metrics = QualityScorer:Score(source, bytecode)
+            
+            logWrite(("  [%s] Quality: %d/100"):format(strat.name, quality))
+            
+            table.insert(results, {
+                source = source,
+                quality = quality,
+                strategy = strat.name,
+                metrics = metrics
+            })
+        else
+            logWrite(("  [%s] Failed: %s"):format(strat.name, err or "unknown"))
+        end
+    end
+    
+    -- ─────────────────────────────────────────────────────────────────────
+    -- Step 4: Pick best result by quality
+    -- ─────────────────────────────────────────────────────────────────────
+    if #results == 0 then
+        stats.decompileFailCount = stats.decompileFailCount + 1
+        if cfg.DecompileFallback then
+            local stub = buildDecompileStub(scr, "all_strategies_failed", bcSize,
+                ExecutorAPI.name, cfg.ObfuscatedScriptStub)
+            return stub, false, "fallback"
+        else
+            return "-- Decompilation failed", false, "failed"
+        end
+    end
+    
+    -- Sort by quality descending
+    table.sort(results, function(a, b) return a.quality > b.quality end)
+    
+    local best = results[1]
+    logWrite(("✓ Best: [%s] with quality %d/100 (%.2fs elapsed)"):format(
+        best.strategy, best.quality, tick() - startTime))
+    
+    -- ─────────────────────────────────────────────────────────────────────
+    -- Step 5: Post-processing
+    -- ─────────────────────────────────────────────────────────────────────
+    local finalSource = best.source
+    
+    -- Obfuscation detection
+    local obf = ObfuscationDetector:Analyze(finalSource, bytecode)
+    if obf.type ~= "none" and obf.confidence > 0.7 then
+        local warning = ("\n--[[ OBFUSCATION DETECTED: %s (%.0f%% confidence) ]]\n\n"):format(
+            obf.type, obf.confidence * 100)
+        finalSource = warning .. finalSource
+        logWrite(("⚠ Obfuscation: %s (%.0f%%)"):format(obf.type, obf.confidence*100))
+    end
+    
+    -- Constant extraction enhancement
+    if best.quality < 70 then
+        local constants = ConstantExtractor:Extract(bytecode)
+        finalSource = PatternLibrary:Improve(finalSource, constants)
+    end
+    
+    -- Beautify if quality is decent
+    if best.quality >= 50 and best.quality < 90 then
+        finalSource = SourceBeautifier:Format(finalSource)
+    end
+    
+    -- ScriptCallback post-process
+    if cfg.ScriptCallback then
+        local ok, processed = pcall(cfg.ScriptCallback, scr, finalSource)
+        if ok and type(processed) == "string" and #processed > 0 then
+            finalSource = processed
+        end
+    end
+    
+    -- ─────────────────────────────────────────────────────────────────────
+    -- Step 6: Cache result
+    -- ─────────────────────────────────────────────────────────────────────
+    if cfg.ScriptCache and bytecode ~= "" then
+        local hash = hashBytecode(bytecode)
+        _scriptCache[hash] = {
+            source = finalSource,
+            quality = best.quality,
+            strategy = best.strategy
+        }
+    end
+    
+    stats.decompileSuccessCount = stats.decompileSuccessCount + 1
+    return finalSource, true, best.strategy
+end
+
+---Process a batch of scripts with ultimate decompilation
+---@param scripts table
+---@param cfg table
+---@param stats table
+---@return table<Instance, string> results
+local function decompileBatch(scripts, cfg, stats)
+    local results = {}
+    
+    if not cfg.DecompileParallel or #scripts <= 1 then
+        -- Sequential mode with ultimate engine
+        for i, item in ipairs(scripts) do
+            local src, success, strategy = decompileOneUltimate(item.scr, cfg, stats)
+            results[item.scr] = src
+            stats.scriptCount = stats.scriptCount + 1
+            
+            if cfg.Verbose then
+                print(("[SaveInstance] [%d/%d] %s: %s"):format(
+                    i, #scripts, strategy, item.scr:GetFullName()))
+            end
+            
+            if i % 5 == 0 then
+                task.wait() -- Yield periodically
+            end
+        end
+        return results
+    end
+    
+    -- Parallel mode with worker pool
+    local POOL_SIZE = 3
+    local pending = {}
+    for i, item in ipairs(scripts) do pending[i] = item end
+    
+    local active = {}
+    local pi = 1
+    
+    while pi <= #pending or #active > 0 do
+        -- Fill pool
+        while #active < POOL_SIZE and pi <= #pending do
+            local item = pending[pi]; pi = pi + 1
+            local scr = item.scr
+            local slot = {done=false, src=nil, scr=scr}
+            
+            local co = coroutine.create(function()
+                local src, _, _ = decompileOneUltimate(scr, cfg, stats)
+                slot.src = src
+                slot.done = true
+                stats.scriptCount = stats.scriptCount + 1
             end)
-        end)
+            
+            coroutine.resume(co)
+            active[#active+1] = {co=co, slot=slot, scr=scr,
+                deadline=tick() + cfg.DecompileTimeout * 2}
+        end
+        
+        -- Poll active coroutines
+        local stillActive = {}
+        for _, entry in ipairs(active) do
+            local st = coroutine.status(entry.co)
+            if st == "suspended" then
+                coroutine.resume(entry.co)
+            end
+            
+            if entry.slot.done or st == "dead" then
+                results[entry.scr] = entry.slot.src or "-- Parallel decompile failed"
+            elseif tick() > entry.deadline then
+                if coroutine.close then pcall(coroutine.close, entry.co) end
+                local stub = buildDecompileStub(entry.scr, "parallel_timeout",
+                    0, ExecutorAPI.name, cfg.ObfuscatedScriptStub)
+                results[entry.scr] = stub
+                stats.decompileFailCount = stats.decompileFailCount + 1
+            else
+                stillActive[#stillActive+1] = entry
+            end
+        end
+        active = stillActive
+        
+        if #active > 0 then task.wait(0.1) end
     end
-
-    -- ── Status panel ──────────────────────────────────────────────────────
-    local sPanel = Instance.new("Frame")
-    sPanel.Size = UDim2.new(1,-22,0,158)
-    sPanel.Position = UDim2.new(0,11,1,-170)
-    sPanel.BackgroundColor3 = C.PANEL
-    sPanel.BorderSizePixel = 0
-    sPanel.ZIndex = 4
-    sPanel.Parent = win
-    mkCorner(sPanel, 10)
-    mkStroke(sPanel, C.BORDER, 1.5)
-
-    -- "STATUS" label
-    local sHdr = Instance.new("TextLabel")
-    sHdr.Size = UDim2.new(1,-16,0,18)
-    sHdr.Position = UDim2.new(0,10,0,8)
-    sHdr.BackgroundTransparency = 1
-    sHdr.Font = Enum.Font.GothamBold
-    sHdr.TextSize = 11
-    sHdr.Text = "STATUS"
-    sHdr.TextColor3 = C.SUB
-    sHdr.TextXAlignment = Enum.TextXAlignment.Left
-    sHdr.ZIndex = 5
-    sHdr.Parent = sPanel
-
-    -- Main status text
-    statusLbl = Instance.new("TextLabel")
-    statusLbl.Size = UDim2.new(1,-16,0,40)
-    statusLbl.Position = UDim2.new(0,10,0,26)
-    statusLbl.BackgroundTransparency = 1
-    statusLbl.Font = Enum.Font.Gotham
-    statusLbl.TextSize = 13
-    statusLbl.Text = "Ready. Select a save option above."
-    statusLbl.TextColor3 = C.TEXT
-    statusLbl.TextXAlignment = Enum.TextXAlignment.Left
-    statusLbl.TextYAlignment = Enum.TextYAlignment.Top
-    statusLbl.TextWrapped = true
-    statusLbl.ZIndex = 5
-    statusLbl.Parent = sPanel
-
-    -- Stats line
-    statsLbl = Instance.new("TextLabel")
-    statsLbl.Size = UDim2.new(1,-16,0,18)
-    statsLbl.Position = UDim2.new(0,10,0,70)
-    statsLbl.BackgroundTransparency = 1
-    statsLbl.Font = Enum.Font.GothamMedium
-    statsLbl.TextSize = 11
-    statsLbl.Text = "🧱 0 inst  |  🔧 0 props  |  📜 0 scripts  |  ❌ 0 failed"
-    statsLbl.TextColor3 = C.SUB
-    statsLbl.TextXAlignment = Enum.TextXAlignment.Left
-    statsLbl.ZIndex = 5
-    statsLbl.Parent = sPanel
-
-    -- Progress bar background
-    local pbBg = Instance.new("Frame")
-    pbBg.Size = UDim2.new(1,-20,0,22)
-    pbBg.Position = UDim2.new(0,10,0,94)
-    pbBg.BackgroundColor3 = C.BARBG
-    pbBg.BorderSizePixel = 0
-    pbBg.ZIndex = 5
-    pbBg.Parent = sPanel
-    mkCorner(pbBg, 6)
-
-    -- Progress bar fill
-    progBar = Instance.new("Frame")
-    progBar.Size = UDim2.new(0,0,1,0)
-    progBar.BackgroundColor3 = C.GREEN
-    progBar.BorderSizePixel = 0
-    progBar.ZIndex = 6
-    progBar.Parent = pbBg
-    mkCorner(progBar, 6)
-
-    local grad = Instance.new("UIGradient")
-    grad.Color = ColorSequence.new{
-        ColorSequenceKeypoint.new(0, C.GREEN),
-        ColorSequenceKeypoint.new(1, C.ACCENT),
-    }
-    grad.Parent = progBar
-
-    -- Progress percent text
-    progPct = Instance.new("TextLabel")
-    progPct.Size = UDim2.new(1,0,1,0)
-    progPct.BackgroundTransparency = 1
-    progPct.Font = Enum.Font.GothamBold
-    progPct.TextSize = 12
-    progPct.Text = "0%"
-    progPct.TextColor3 = Color3.new(1,1,1)
-    progPct.TextXAlignment = Enum.TextXAlignment.Center
-    progPct.ZIndex = 7
-    progPct.Parent = pbBg
-
-    -- Executor badge
-    local badge = Instance.new("Frame")
-    badge.Size = UDim2.new(0,0,0,22)
-    badge.Position = UDim2.new(0,10,0,124)
-    badge.BackgroundColor3 = C.ACCENT
-    badge.BorderSizePixel = 0
-    badge.AutomaticSize = Enum.AutomaticSize.X
-    badge.ZIndex = 5
-    badge.Parent = sPanel
-    mkCorner(badge, 6)
-    local badgePad = Instance.new("UIPadding")
-    badgePad.PaddingLeft = UDim.new(0,8)
-    badgePad.PaddingRight = UDim.new(0,8)
-    badgePad.Parent = badge
-    local badgeLbl = Instance.new("TextLabel")
-    badgeLbl.Size = UDim2.new(0,200,1,0)
-    badgeLbl.BackgroundTransparency = 1
-    badgeLbl.Font = Enum.Font.GothamBold
-    badgeLbl.TextSize = 11
-    badgeLbl.Text = "🖥  " .. ENV.Name
-    badgeLbl.TextColor3 = Color3.new(1,1,1)
-    badgeLbl.TextXAlignment = Enum.TextXAlignment.Left
-    badgeLbl.ZIndex = 6
-    badgeLbl.Parent = badge
-
-    return sg
+    
+    return results
 end
 
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
--- SECTION 19: SHOW MENU / AUTO-RUN
--- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-function SaveInstance.ShowMenu()
-    buildGUI()
-    SaveInstance.Notify(
-        "SaveInstance Pro v5.0",
-        "Anti-Freeze Edition — " .. ENV.Name, 4)
+---Build fallback stub
+local function buildDecompileStub(scr, reason, bytecodeSize, executor, customStub)
+    if customStub then return customStub end
+    return ("--[[\n"
+        .. "    SaveInstance Ultimate Decompilation Report\n"
+        .. "    Script    : %s\n"
+        .. "    ClassName : %s\n"
+        .. "    Failure   : %s\n"
+        .. "    Executor  : %s\n"
+        .. "    Timestamp : %s\n"
+        .. "    BytecodeSize : %d bytes\n"
+        .. "    \n"
+        .. "    All 8 decompilation strategies failed.\n"
+        .. "    This script may be heavily obfuscated or corrupted.\n"
+        .. "]]"):format(
+            scr:GetFullName(),
+            scr.ClassName,
+            reason,
+            executor,
+            os.date("%Y-%m-%d %H:%M:%S"),
+            bytecodeSize)
 end
 
-if not _G.__SI_V5 then
-    _G.__SI_V5 = true
-    task.spawn(function()
-        task.wait(0.25)
-        SaveInstance.ShowMenu()
-    end)
-end
-
-return SaveInstance
-
---[[
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- USAGE
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-  -- GUI (recommended)
-  loadstring(game:HttpGet("url"))()
-
-  -- Programmatic
-  local SI = loadstring(game:HttpGet("url"))()
-  SI.Save({
-      SaveObject        = workspace,
-      DecompileScripts  = true,
-      SaveTerrain       = true,
-      YieldInterval     = 30,    -- lower = smoother, slower
-      DecompTimeout     = 10,    -- per-script deadline
-      StatusCallback    = function(msg, pct)
-          print(string.format("[%.0f%%] %s", pct*100, msg))
-      end,
-  })
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- TODO
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- 1. Binary .rbxl/.rbxm  (needs LZ4 + chunk format, see dom.rojo.space/binary)
- 2. Asset downloading (meshes, images)
- 3. Incremental / diff saves
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-]]
+-- Export ultimate decompilation system
+_G.SaveInstanceDecompiler = {
+    Disassembler = LuauDisassembler,
+    ConstantExtractor = ConstantExtractor,
+    ObfuscationDetector = ObfuscationDetector,
+    QualityScorer = QualityScorer,
+    Beautifier = SourceBeautifier,
+    PatternLibrary = PatternLibrary,
+    Strategies = DecompileStrategies
+}
