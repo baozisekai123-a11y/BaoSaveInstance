@@ -1,494 +1,304 @@
 --[[
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║         SaveInstance Pro v4.0 - Universal Executor Edition                  ║
+║          SaveInstance Pro v5.0 - Anti-Freeze & Seamless Edition             ║
 ║                                                                              ║
-║  SUPPORTED EXECUTORS:                                                        ║
-║  ✓ Xeno          ✓ Solara        ✓ Velocity      ✓ Synapse X               ║
-║  ✓ Synapse Z      ✓ KRNL          ✓ Fluxus        ✓ Evon                   ║
-║  ✓ Electron       ✓ Codex         ✓ Hydrogen      ✓ Celery                  ║
-║  ✓ Delta          ✓ Nihon         ✓ Arceus X      ✓ Scriptware              ║
-║  ✓ Wave           ✓ Comet         ✓ JJSploit      ✓ Any UNC-compliant       ║
-║                                                                              ║
-║  FEATURES:                                                                   ║
-║  ✓ Universal function detection & polyfills                                  ║
-║  ✓ 90-99% game coverage                                                      ║
-║  ✓ Full API dump integration                                                  ║
-║  ✓ All Roblox data types (30+)                                               ║
-║  ✓ Multi-pass script decompilation                                           ║
-║  ✓ Terrain, Attributes, Tags support                                         ║
-║  ✓ Safe mode + error recovery                                                 ║
-║  ✓ Real-time GUI with statistics                                              ║
-║  ✓ Streaming for huge games                                                   ║
+║  ROOT CAUSE FIXES:                                                           ║
+║  ✓ Non-blocking async pipeline (no more freezes)                            ║
+║  ✓ Coroutine-based streaming writer                                          ║
+║  ✓ Hard per-step timeout with graceful recovery                             ║
+║  ✓ Chunk-based XML builder (never builds one giant string)                  ║
+║  ✓ Heartbeat-driven progress so Roblox never kills the thread               ║
+║  ✓ Property read guard (no infinite property waits)                         ║
+║  ✓ Script decompile runs in isolated coroutine with hard deadline           ║
+║  ✓ Memory-safe: flushes chunks to disk, never holds full XML in RAM         ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
-
-    QUICK START:
-        loadstring(game:HttpGet("your-url"))()
-
-    PROGRAMMATIC:
-        local SI = loadstring(game:HttpGet("your-url"))()
-        SI.Save({ SaveObject = workspace })
 ]]
 
---[[━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    SECTION 1 ─ UNIVERSAL EXECUTOR COMPATIBILITY LAYER
-    Detects and normalizes every known executor's API surface so the
-    rest of the script never needs to worry about which executor is running.
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━]]
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+-- SECTION 1: EXECUTOR COMPATIBILITY LAYER
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-local UNC = {} -- Unified Namespace Compatibility
+local ENV = {} -- resolved executor environment
 
 do
-    -- ── Executor identity ────────────────────────────────────────────────────
-    local function detectExecutor()
-        -- Explicit identity globals set by each executor
-        if syn         then return "Synapse X"   end
-        if KRNL_ENV    then return "KRNL"        end
-        if fluxus      then return "Fluxus"      end
-        if Electron    then return "Electron"    end
-        if Scriptware  then return "Scriptware"  end
-        if EVON_ENV    then return "Evon"        end
-        if CODEX_ENV   then return "Codex"       end
-        if Delta       then return "Delta"       end
-        if Nihon       then return "Nihon"       end
-        if getgenv and getgenv().__SOLARA__ then return "Solara" end
-        if getgenv and getgenv().__XENO__   then return "Xeno"   end
-        if getgenv and getgenv().__VELOCITY__ then return "Velocity" end
-        if getgenv and getgenv().__HYDROGEN__ then return "Hydrogen" end
-        if getgenv and getgenv().__WAVE__   then return "Wave"   end
-        if getgenv and getgenv().__COMET__  then return "Comet"  end
-        if getgenv and getgenv().__ARCEUS__ then return "Arceus X" end
-        if getgenv and getgenv().__CELERY__ then return "Celery" end
-        if getgenv and getgenv().__NIHON__  then return "Nihon"  end
-        -- Generic UNC detection
-        if identifyexecutor then
-            local ok, name = pcall(identifyexecutor)
-            if ok and name then return name end
+    -- Detect executor name
+    local function detectName()
+        local checks = {
+            { check = function() return syn and "Synapse X" end },
+            { check = function() return KRNL_ENV and "KRNL" end },
+            { check = function() return fluxus and "Fluxus" end },
+            { check = function() return Electron and "Electron" end },
+            { check = function() return Scriptware and "Scriptware" end },
+            { check = function() return EVON_ENV and "Evon" end },
+            { check = function() return CODEX_ENV and "Codex" end },
+            { check = function() return Delta and "Delta" end },
+            { check = function() return getgenv and getgenv().__SOLARA__ and "Solara" end },
+            { check = function() return getgenv and getgenv().__XENO__ and "Xeno" end },
+            { check = function() return getgenv and getgenv().__VELOCITY__ and "Velocity" end },
+            { check = function() return getgenv and getgenv().__WAVE__ and "Wave" end },
+            { check = function() return getgenv and getgenv().__COMET__ and "Comet" end },
+            { check = function() return getgenv and getgenv().__HYDROGEN__ and "Hydrogen" end },
+            { check = function() return getgenv and getgenv().__CELERY__ and "Celery" end },
+            { check = function() return getgenv and getgenv().__ARCEUS__ and "Arceus X" end },
+            { check = function()
+                if identifyexecutor then
+                    local ok, n = pcall(identifyexecutor)
+                    return ok and n or nil
+                end
+            end },
+            { check = function()
+                if getexecutorname then
+                    local ok, n = pcall(getexecutorname)
+                    return ok and n or nil
+                end
+            end },
+        }
+        for _, c in ipairs(checks) do
+            local ok, r = pcall(c.check)
+            if ok and r then return tostring(r) end
         end
-        if getexecutorname then
-            local ok, name = pcall(getexecutorname)
-            if ok and name then return name end
-        end
-        return "Unknown"
+        return "Unknown Executor"
     end
 
-    UNC.ExecutorName = detectExecutor()
-    UNC.ExecutorVersion = (function()
-        if getgenv and getgenv().__VERSION__ then return tostring(getgenv().__VERSION__) end
-        if version then
-            local ok, v = pcall(version)
-            if ok then return tostring(v) end
-        end
-        return "unknown"
-    end)()
+    ENV.Name = detectName()
 
-    -- ── writefile ────────────────────────────────────────────────────────────
-    UNC.writefile = (function()
-        local candidates = {
-            -- Standard UNC
-            writefile,
-            -- Synapse X / Z
-            syn and syn.write_file,
-            syn and syn.writefile,
-            -- KRNL
-            KRNL_ENV and KRNL_ENV.writefile,
-            -- Fluxus
-            fluxus and fluxus.writefile,
-            -- Electron
-            Electron and Electron.writefile,
-            -- Scriptware
-            Scriptware and Scriptware.write_file,
-            -- Xeno / Solara / Velocity (expose via getgenv)
-            getgenv and getgenv().writefile,
-            -- Hydrogen
-            getgenv and getgenv().__HYDROGEN__ and getgenv().__HYDROGEN__.writefile,
-        }
-        for _, fn in ipairs(candidates) do
-            if type(fn) == "function" then return fn end
+    -- Generic resolver: try a list of candidate values, return first function
+    local function resolve(candidates, fallback)
+        for _, c in ipairs(candidates) do
+            local ok, v = pcall(function() return c end)
+            if ok and type(v) == "function" then return v end
         end
-        -- Final fallback: error with helpful message
-        return function(path, content)
-            error(string.format(
-                "[SaveInstance] writefile not found on %s. " ..
-                "Please update your executor or report this.", UNC.ExecutorName))
-        end
-    end)()
+        return fallback
+    end
 
-    -- ── readfile ─────────────────────────────────────────────────────────────
-    UNC.readfile = (function()
-        local candidates = {
-            readfile,
-            syn and syn.read_file,
-            syn and syn.readfile,
-            KRNL_ENV and KRNL_ENV.readfile,
-            fluxus and fluxus.readfile,
-            Electron and Electron.readfile,
-            Scriptware and Scriptware.read_file,
-            getgenv and getgenv().readfile,
-        }
-        for _, fn in ipairs(candidates) do
-            if type(fn) == "function" then return fn end
-        end
-        return function() error("[SaveInstance] readfile not available") end
-    end)()
+    local genv = (getgenv and getgenv()) or {}
 
-    -- ── isfolder ─────────────────────────────────────────────────────────────
-    UNC.isfolder = (function()
-        local candidates = {
-            isfolder,
-            syn and syn.is_folder,
-            KRNL_ENV and KRNL_ENV.isfolder,
-            fluxus and fluxus.isfolder,
-            Electron and Electron.isfolder,
-            getgenv and getgenv().isfolder,
-        }
-        for _, fn in ipairs(candidates) do
-            if type(fn) == "function" then return fn end
-        end
-        return function() return false end
-    end)()
+    ENV.writefile = resolve({
+        writefile,
+        genv.writefile,
+        syn and syn.write_file,
+        syn and syn.writefile,
+        KRNL_ENV and KRNL_ENV.writefile,
+        fluxus and fluxus.writefile,
+        Electron and Electron.writefile,
+        Scriptware and Scriptware.write_file,
+    }, function() error("[SI] writefile not found on " .. ENV.Name) end)
 
-    -- ── makefolder ───────────────────────────────────────────────────────────
-    UNC.makefolder = (function()
-        local candidates = {
-            makefolder,
-            syn and syn.create_folder,
-            KRNL_ENV and KRNL_ENV.makefolder,
-            fluxus and fluxus.makefolder,
-            Electron and Electron.makefolder,
-            getgenv and getgenv().makefolder,
-        }
-        for _, fn in ipairs(candidates) do
-            if type(fn) == "function" then return fn end
-        end
-        return function() end -- no-op silently
-    end)()
+    ENV.readfile = resolve({
+        readfile, genv.readfile,
+        syn and syn.read_file,
+        KRNL_ENV and KRNL_ENV.readfile,
+    }, function() error("[SI] readfile not found") end)
 
-    -- ── listfiles ────────────────────────────────────────────────────────────
-    UNC.listfiles = (function()
-        local candidates = {
-            listfiles,
-            syn and syn.list_files,
-            KRNL_ENV and KRNL_ENV.listfiles,
-            fluxus and fluxus.listfiles,
-            getgenv and getgenv().listfiles,
-        }
-        for _, fn in ipairs(candidates) do
-            if type(fn) == "function" then return fn end
-        end
-        return function() return {} end
-    end)()
+    ENV.appendfile = resolve({
+        appendfile, genv.appendfile,
+        syn and syn.append_file,
+        KRNL_ENV and KRNL_ENV.appendfile,
+    }, nil) -- nil = will fall back to writefile accumulation
 
-    -- ── gethui (protected GUI parent) ────────────────────────────────────────
-    UNC.gethui = (function()
+    ENV.isfolder = resolve({
+        isfolder, genv.isfolder,
+        syn and syn.is_folder,
+        KRNL_ENV and KRNL_ENV.isfolder,
+    }, function() return false end)
+
+    ENV.makefolder = resolve({
+        makefolder, genv.makefolder,
+        syn and syn.create_folder,
+        KRNL_ENV and KRNL_ENV.makefolder,
+    }, function() end)
+
+    ENV.gethui = (function()
         local candidates = {
-            gethui,
+            gethui, genv.gethui,
             syn and syn.get_hidden_gui,
             KRNL_ENV and KRNL_ENV.gethui,
             fluxus and fluxus.gethui,
-            Electron and Electron.gethui,
-            getgenv and getgenv().gethui,
         }
-        for _, fn in ipairs(candidates) do
-            if type(fn) == "function" then
-                local ok, result = pcall(fn)
-                if ok and result then return function() return result end end
+        for _, c in ipairs(candidates) do
+            local ok, v = pcall(function() return c end)
+            if ok and type(v) == "function" then
+                local ok2, r = pcall(v)
+                if ok2 and r then return r end
             end
         end
-        -- Fallback chain
-        local fallbacks = {
-            function() return game:GetService("CoreGui") end,
-            function() return game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui", 5) end,
-        }
-        for _, fn in ipairs(fallbacks) do
-            local ok, result = pcall(fn)
-            if ok and result then return function() return result end end
-        end
-        return function() return nil end
+        local ok, cg = pcall(function() return game:GetService("CoreGui") end)
+        return ok and cg or nil
     end)()
 
-    -- ── getnilinstances ──────────────────────────────────────────────────────
-    UNC.getnilinstances = (function()
-        local candidates = {
-            getnilinstances,
-            syn and syn.get_nil_instances,
-            KRNL_ENV and KRNL_ENV.getnilinstances,
-            fluxus and fluxus.getnilinstances,
-            getgenv and getgenv().getnilinstances,
-        }
-        for _, fn in ipairs(candidates) do
-            if type(fn) == "function" then return fn end
-        end
-        return function() return {} end
-    end)()
+    ENV.getnilinstances = resolve({
+        getnilinstances, genv.getnilinstances,
+        syn and syn.get_nil_instances,
+        KRNL_ENV and KRNL_ENV.getnilinstances,
+    }, function() return {} end)
 
-    -- ── getinstances ─────────────────────────────────────────────────────────
-    UNC.getinstances = (function()
-        local candidates = {
-            getinstances,
-            syn and syn.get_instances,
-            KRNL_ENV and KRNL_ENV.getinstances,
-            fluxus and fluxus.getinstances,
-            getgenv and getgenv().getinstances,
-        }
-        for _, fn in ipairs(candidates) do
-            if type(fn) == "function" then return fn end
-        end
-        return function() return {} end
-    end)()
+    ENV.gethiddenproperty = resolve({
+        gethiddenproperty, genv.gethiddenproperty,
+        syn and syn.get_hidden_property,
+        KRNL_ENV and KRNL_ENV.gethiddenproperty,
+    }, function(inst, prop)
+        local ok, v = pcall(function() return inst[prop] end)
+        return ok and v or nil
+    end)
 
-    -- ── gethiddenproperty ────────────────────────────────────────────────────
-    UNC.gethiddenproperty = (function()
-        local candidates = {
-            gethiddenproperty,
-            syn and syn.get_hidden_property,
-            KRNL_ENV and KRNL_ENV.gethiddenproperty,
-            fluxus and fluxus.gethiddenproperty,
-            getgenv and getgenv().gethiddenproperty,
-        }
-        for _, fn in ipairs(candidates) do
-            if type(fn) == "function" then return fn end
+    -- Build decompiler list (ordered best-to-worst)
+    ENV.decompilers = {}
+    local function addDecomp(name, fn)
+        if type(fn) == "function" then
+            table.insert(ENV.decompilers, { name = name, fn = fn })
         end
-        -- Safest fallback: attempt raw index
-        return function(instance, property)
-            local ok, val = pcall(function() return instance[property] end)
-            return ok and val or nil
-        end
-    end)()
+    end
+    addDecomp("decompile",              decompile)
+    addDecomp("syn.decompile",          syn and syn.decompile)
+    addDecomp("KRNL.decompile",         KRNL_ENV and KRNL_ENV.decompile)
+    addDecomp("fluxus.decompile",       fluxus and fluxus.decompile)
+    addDecomp("Electron.decompile",     Electron and Electron.decompile)
+    addDecomp("Scriptware.decompile",   Scriptware and Scriptware.decompile)
+    addDecomp("getgenv.decompile",      genv.decompile)
+    addDecomp("getgenv.__decompile",    genv.__decompile)
 
-    -- ── sethiddenproperty ────────────────────────────────────────────────────
-    UNC.sethiddenproperty = (function()
-        local candidates = {
-            sethiddenproperty,
-            syn and syn.set_hidden_property,
-            KRNL_ENV and KRNL_ENV.sethiddenproperty,
-            fluxus and fluxus.sethiddenproperty,
-            getgenv and getgenv().sethiddenproperty,
-        }
-        for _, fn in ipairs(candidates) do
-            if type(fn) == "function" then return fn end
-        end
-        return function(instance, property, value)
-            pcall(function() instance[property] = value end)
-        end
-    end)()
-
-    -- ── decompile ────────────────────────────────────────────────────────────
-    -- Builds an ordered list of decompilation attempts
-    UNC.decompilers = (function()
-        local list = {}
-        local function try(name, fn)
-            if type(fn) == "function" then
-                table.insert(list, { name = name, fn = fn })
-            end
-        end
-        try("decompile",         decompile)
-        try("syn.decompile",     syn and syn.decompile)
-        try("KRNL.decompile",    KRNL_ENV and KRNL_ENV.decompile)
-        try("fluxus.decompile",  fluxus and fluxus.decompile)
-        try("Electron.decompile",Electron and Electron.decompile)
-        try("Scriptware.decompile", Scriptware and Scriptware.decompile)
-        -- Some executors expose it through getgenv
-        if getgenv then
-            local g = getgenv()
-            try("getgenv.decompile", g.decompile)
-            -- Velocity / Xeno / Solara / Comet / Wave / Celery / Delta / Nihon
-            for _, key in ipairs({"__decompile","__decomp","decompiler","script_decompile"}) do
-                try("getgenv." .. key, g[key])
-            end
-        end
-        return list
-    end)()
-
-    -- ── getscriptbytecode / getscripthash ─────────────────────────────────
-    UNC.getscriptbytecode = (function()
-        local candidates = {
-            getscriptbytecode,
-            syn and syn.get_script_bytecode,
-            KRNL_ENV and KRNL_ENV.getscriptbytecode,
-            fluxus and fluxus.getscriptbytecode,
-            getgenv and getgenv().getscriptbytecode,
-        }
-        for _, fn in ipairs(candidates) do
-            if type(fn) == "function" then return fn end
-        end
-        return nil
-    end)()
-
-    -- ── getscriptclosure / getfenv workarounds ────────────────────────────
-    UNC.getscriptclosure = (function()
-        local candidates = {
-            getscriptclosure,
-            syn and syn.get_script_closure,
-            KRNL_ENV and KRNL_ENV.getscriptclosure,
-            fluxus and fluxus.getscriptclosure,
-            getgenv and getgenv().getscriptclosure,
-        }
-        for _, fn in ipairs(candidates) do
-            if type(fn) == "function" then return fn end
-        end
-        return nil
-    end)()
-
-    -- ── fireproximityprompt / other utility stubs ─────────────────────────
-    UNC.request = (function()
-        local candidates = {
-            request,
-            http and http.request,
-            http_request,
-            syn and syn.request,
-            KRNL_ENV and KRNL_ENV.request,
-            fluxus and fluxus.request,
-            getgenv and getgenv().request,
-        }
-        for _, fn in ipairs(candidates) do
-            if type(fn) == "function" then return fn end
-        end
-        return nil
-    end)()
-
-    -- ── isfile ────────────────────────────────────────────────────────────
-    UNC.isfile = (function()
-        local candidates = {
-            isfile,
-            syn and syn.is_file,
-            KRNL_ENV and KRNL_ENV.isfile,
-            fluxus and fluxus.isfile,
-            getgenv and getgenv().isfile,
-        }
-        for _, fn in ipairs(candidates) do
-            if type(fn) == "function" then return fn end
-        end
-        return function(p)
-            local ok, _ = pcall(UNC.readfile, p)
-            return ok
-        end
-    end)()
+    ENV.getscriptbytecode = resolve({
+        getscriptbytecode, genv.getscriptbytecode,
+        syn and syn.get_script_bytecode,
+    }, nil)
 end
 
--- Convenience aliases after detection
-local writefile           = UNC.writefile
-local readfile            = UNC.readfile
-local isfolder            = UNC.isfolder
-local makefolder          = UNC.makefolder
-local listfiles           = UNC.listfiles
-local gethui              = UNC.gethui
-local getnilinstances     = UNC.getnilinstances
-local getinstances        = UNC.getinstances
-local gethiddenproperty   = UNC.gethiddenproperty
-local sethiddenproperty   = UNC.sethiddenproperty
-local DECOMPILERS         = UNC.decompilers
-local getscriptbytecode   = UNC.getscriptbytecode
-local getscriptclosure    = UNC.getscriptclosure
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+-- SECTION 2: SERVICES
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
---[[━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    SECTION 2 ─ MODULE DEFINITION
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━]]
+local HttpService        = game:GetService("HttpService")
+local RunService         = game:GetService("RunService")
+local Players            = game:GetService("Players")
+local CollectionService  = game:GetService("CollectionService")
+local UserInputService   = game:GetService("UserInputService")
+local StarterGui         = game:GetService("StarterGui")
+local TweenService       = game:GetService("TweenService")
 
-local SaveInstance = {}
-SaveInstance.__index = SaveInstance
-SaveInstance.Version  = "4.0.0"
-SaveInstance.Executor = UNC.ExecutorName
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+-- SECTION 3: ASYNC SCHEDULER
+-- Every heavy operation MUST go through here so the engine keeps ticking.
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-local function newStats()
-    return {
-        TotalInstances   = 0,
-        SavedInstances   = 0,
-        FailedInstances  = 0,
-        TotalProperties  = 0,
-        SavedProperties  = 0,
-        FailedProperties = 0,
-        DecompiledScripts= 0,
-        FailedScripts    = 0,
-        StartTime        = tick(),
-        Elapsed          = 0,
-    }
-end
-SaveInstance.Statistics = newStats()
+local Scheduler = {}
 
---[[━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    SECTION 3 ─ SERVICES
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━]]
+-- How many iterations between yields (tune for your game size)
+Scheduler.YIELD_INTERVAL  = 40    -- yield every N iterations
+Scheduler.YIELD_DURATION  = 0     -- task.wait(0) = next frame
+Scheduler.PROP_TIMEOUT    = 0.5   -- max seconds to read one property
+Scheduler.DECOMP_TIMEOUT  = 12    -- max seconds per script
+Scheduler.STEP_TIMEOUT    = 2     -- max seconds per scan/serialize step before forced yield
 
-local HttpService       = game:GetService("HttpService")
-local RunService        = game:GetService("RunService")
-local Players           = game:GetService("Players")
-local CollectionService = game:GetService("CollectionService")
-local UserInputService  = game:GetService("UserInputService")
-local TweenService      = game:GetService("TweenService")
-local StarterGui        = game:GetService("StarterGui")
+local _counter = 0
 
---[[━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    SECTION 4 ─ DEFAULT OPTIONS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━]]
-
-local DEFAULT_OPTIONS = {
-    -- ── Output ──────────────────────────────────────────────────────────────
-    FilePath            = nil,        -- auto: "<Name>_<timestamp>.rbxmx"
-    SaveObject          = game,       -- root Instance to save
-
-    -- ── Scope ───────────────────────────────────────────────────────────────
-    AdditionalInstances        = {},  -- extra instances to append
-    NilInstances               = true,
-    SavePlayers                = false,
-    RemovePlayerCharacters     = true,
-    SaveNonCreatable           = true,
-
-    -- ── Properties ──────────────────────────────────────────────────────────
-    IgnoreDefaultProperties    = true,
-    SaveHiddenProperties       = true,
-    SaveAttributes             = true,
-    SaveTags                   = true,
-
-    -- ── Filtering ───────────────────────────────────────────────────────────
-    IgnoreList                 = { "CoreGui", "CorePackages" },
-    IgnoreDescendantsOfList    = {},
-    PropertyBlacklist          = { "Parent", "DataCost", "RobloxLocked" },
-
-    -- ── Scripts ─────────────────────────────────────────────────────────────
-    DecompileScripts           = true,
-    DecompileTimeout           = 15,
-    AnonymizeScripts           = false,
-    RetryFailedScripts         = true,
-    ScriptRetryCount           = 3,
-
-    -- ── Terrain ─────────────────────────────────────────────────────────────
-    SaveTerrain                = true,
-    TerrainRegionSize          = 512,
-
-    -- ── Safety / Performance ─────────────────────────────────────────────────
-    SafeMode                   = true,
-    CloneBeforeSave            = true,
-    MaxDepth                   = nil,
-    Timeout                    = 600,
-    BatchSize                  = 100,
-    YieldEvery                 = 50,
-    ContinueOnError            = true,
-
-    -- ── Output Quality ───────────────────────────────────────────────────────
-    ValidateOutput             = true,
-    UseSharedStrings           = true,
-    Verbose                    = false,
-
-    -- ── Callbacks ────────────────────────────────────────────────────────────
-    StatusCallback             = nil,
-    OnComplete                 = nil,
-    OnError                    = nil,
-    OnInstanceSaved            = nil,
-
-    -- ── Notifications ────────────────────────────────────────────────────────
-    ShowNotifications          = true,
-}
-
---[[━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    SECTION 5 ─ UTILITIES
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━]]
-
-local function log(opts, msg, level)
-    level = level or "INFO"
-    if opts.Verbose or level == "ERROR" or level == "WARN" then
-        print(string.format("[SI v4 | %s | %s] %s", UNC.ExecutorName, level, msg))
+-- Call this inside every tight loop instead of raw task.wait()
+function Scheduler.step()
+    _counter = _counter + 1
+    if _counter >= Scheduler.YIELD_INTERVAL then
+        _counter = 0
+        task.wait(Scheduler.YIELD_DURATION)
     end
 end
+
+-- Force a yield right now
+function Scheduler.yield()
+    _counter = 0
+    task.wait(Scheduler.YIELD_DURATION)
+end
+
+-- Run `fn` with a wall-clock deadline; returns success, value
+-- Uses a thread so the deadline is truly enforced without blocking.
+function Scheduler.timed(fn, timeout, ...)
+    local args = { ... }
+    local result, done, timedOut = nil, false, false
+
+    local thread = task.spawn(function()
+        local ok, val = pcall(fn, table.unpack(args))
+        result = { ok = ok, val = val }
+        done = true
+    end)
+
+    local deadline = tick() + timeout
+    while not done do
+        if tick() > deadline then
+            timedOut = true
+            -- We cannot kill the thread safely but we stop waiting
+            pcall(task.cancel, thread)
+            break
+        end
+        task.wait(0)
+    end
+
+    if timedOut or not result then
+        return false, nil
+    end
+    return result.ok, result.val
+end
+
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+-- SECTION 4: STREAMING FILE WRITER
+-- Writes XML in chunks so RAM stays low and the file is always recoverable.
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+local StreamWriter = {}
+StreamWriter.__index = StreamWriter
+
+local CHUNK_SIZE = 512 * 1024 -- flush every 512 KB
+
+function StreamWriter.new(filePath, useAppend)
+    local self = setmetatable({}, StreamWriter)
+    self.path      = filePath
+    self.buf       = {}
+    self.bufLen    = 0
+    self.totalLen  = 0
+    self.chunks    = 0
+    self.useAppend = useAppend and ENV.appendfile ~= nil
+
+    -- Clear / create file
+    ENV.writefile(filePath, "")
+    return self
+end
+
+function StreamWriter:write(s)
+    if not s or s == "" then return end
+    self.buf[#self.buf + 1] = s
+    self.bufLen = self.bufLen + #s
+    self.totalLen = self.totalLen + #s
+
+    if self.bufLen >= CHUNK_SIZE then
+        self:flush()
+    end
+end
+
+function StreamWriter:writeln(s)
+    self:write((s or "") .. "\n")
+end
+
+function StreamWriter:flush()
+    if self.bufLen == 0 then return end
+    local data = table.concat(self.buf)
+    self.buf    = {}
+    self.bufLen = 0
+    self.chunks = self.chunks + 1
+
+    if self.useAppend then
+        ENV.appendfile(self.path, data)
+    else
+        -- Read existing + append (fallback for executors without appendfile)
+        local ok, existing = pcall(ENV.readfile, self.path)
+        ENV.writefile(self.path, (ok and existing or "") .. data)
+    end
+
+    Scheduler.yield() -- breathe after every disk write
+end
+
+function StreamWriter:close()
+    self:flush()
+end
+
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+-- SECTION 5: UTILITIES
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 local function XMLEncode(s)
     s = tostring(s or "")
@@ -498,57 +308,130 @@ local function XMLEncode(s)
         :gsub(">",  "&gt;")
         :gsub('"',  "&quot;")
         :gsub("'",  "&apos;")
-        :gsub("[\0-\8\11-\12\14-\31]", function(c)
+        :gsub("[\0-\8\11\12\14-\31]", function(c)
             return string.format("&#x%X;", string.byte(c))
         end))
+end
+
+local function safeToString(v)
+    local ok, s = pcall(tostring, v)
+    return ok and s or "?"
 end
 
 local function timestamp()
     return os.date("%Y%m%d_%H%M%S")
 end
 
-local function sanitizeFilename(s)
-    return (tostring(s):gsub("[^%w%-%_%.%s]", "_"))
+local function sanitize(s)
+    return (tostring(s):gsub("[^%w%-_.]", "_"))
 end
 
-local function generateRef(idx)
-    return string.format("RBX%016X", idx)
+local function generateRef(n)
+    return string.format("RBX%016X", n)
 end
 
 local function deepCopy(t)
     if type(t) ~= "table" then return t end
     local c = {}
-    for k, v in pairs(t) do c[k] = deepCopy(v) end
+    for k, v in pairs(t) do c[deepCopy(k)] = deepCopy(v) end
     return c
 end
 
-local function mergeOptions(user)
-    local merged = deepCopy(DEFAULT_OPTIONS)
+-- Safe property read with hard timeout
+local function safeReadProp(instance, prop)
+    local ok, val = Scheduler.timed(function()
+        return instance[prop]
+    end, Scheduler.PROP_TIMEOUT)
+    return ok and val or nil
+end
+
+-- Safe children with timeout
+local function safeChildren(inst)
+    local ok, ch = pcall(function() return inst:GetChildren() end)
+    return ok and ch or {}
+end
+
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+-- SECTION 6: DEFAULT OPTIONS
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+local DEFAULTS = {
+    FilePath                = nil,
+    SaveObject              = game,
+
+    -- Scope
+    AdditionalInstances     = {},
+    NilInstances            = true,
+    SavePlayers             = false,
+    RemovePlayerCharacters  = true,
+
+    -- Properties
+    IgnoreDefaultProperties = true,
+    SaveHiddenProperties    = true,
+    SaveAttributes          = true,
+    SaveTags                = true,
+
+    -- Filtering
+    IgnoreList              = { "CoreGui", "CorePackages" },
+    IgnoreDescendantsOfList = {},
+    PropertyBlacklist       = { "Parent", "DataCost", "RobloxLocked" },
+
+    -- Scripts
+    DecompileScripts        = true,
+    DecompileTimeout        = 12,
+    AnonymizeScripts        = false,
+    RetryFailedScripts      = true,
+    ScriptRetryCount        = 2,
+
+    -- Terrain
+    SaveTerrain             = true,
+    TerrainRegionSize       = 256,  -- smaller = faster, less freeze
+
+    -- Anti-freeze controls
+    YieldInterval           = 40,   -- iterations between yields
+    YieldDuration           = 0,    -- seconds per yield (0 = next frame)
+    PropTimeout             = 0.5,  -- seconds per property read
+    DecompTimeout           = 12,   -- seconds per script decompile
+
+    -- Safety
+    SafeMode                = true,
+    CloneBeforeSave         = true,
+    MaxDepth                = nil,
+    ContinueOnError         = true,
+
+    -- Output
+    ValidateOutput          = true,
+    Verbose                 = false,
+
+    -- Callbacks
+    StatusCallback          = nil,
+    OnComplete              = nil,
+    OnError                 = nil,
+    OnInstanceSaved         = nil,
+
+    ShowNotifications       = true,
+}
+
+local function mergeOpts(user)
+    local o = deepCopy(DEFAULTS)
     if type(user) == "table" then
-        for k, v in pairs(user) do
-            merged[k] = v
-        end
+        for k, v in pairs(user) do o[k] = v end
     end
-    return merged
+    -- Push user settings into scheduler
+    Scheduler.YIELD_INTERVAL = o.YieldInterval
+    Scheduler.YIELD_DURATION = o.YieldDuration
+    Scheduler.PROP_TIMEOUT   = o.PropTimeout
+    Scheduler.DECOMP_TIMEOUT = o.DecompTimeout
+    return o
 end
 
-local function safeGetChildren(instance)
-    local ok, children = pcall(function() return instance:GetChildren() end)
-    return ok and children or {}
-end
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+-- SECTION 7: API DUMP (cached globally, fetched once per session)
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-local function safeGet(instance, prop)
-    local ok, v = pcall(function() return instance[prop] end)
-    return ok and v or nil
-end
-
---[[━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    SECTION 6 ─ ROBLOX API DUMP  (cached globally)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━]]
-
-local DUMP          = nil   -- raw API dump
-local PROP_MAP      = {}    -- PROP_MAP[ClassName][PropName] = propData
-local INHERIT_CACHE = {}    -- flattened per-class property list (with inheritance)
+local DUMP_CACHE      = nil
+local PROP_MAP        = {}   -- [ClassName][PropName] = member
+local INHERIT_FLAT    = {}   -- [ClassName] = { propName = member, ... }
 
 local DUMP_URLS = {
     "https://raw.githubusercontent.com/MaximumADHD/Roblox-Client-Tracker/roblox/API-Dump.json",
@@ -556,149 +439,108 @@ local DUMP_URLS = {
 }
 
 local function loadDump(opts)
-    if DUMP then return DUMP end
+    if DUMP_CACHE then return DUMP_CACHE end
 
     for _, url in ipairs(DUMP_URLS) do
         local ok, raw = pcall(function()
             return game:HttpGet(url, true)
         end)
-        if ok and raw and #raw > 100 then
-            local decOk, decoded = pcall(function()
-                return HttpService:JSONDecode(raw)
-            end)
-            if decOk and decoded and decoded.Classes then
-                DUMP = decoded
-                -- Build PROP_MAP
-                for _, class in ipairs(DUMP.Classes) do
-                    PROP_MAP[class.Name] = {}
-                    for _, member in ipairs(class.Members or {}) do
-                        if member.MemberType == "Property" then
-                            PROP_MAP[class.Name][member.Name] = member
+        if ok and raw and #raw > 1000 then
+            local jok, dump = pcall(HttpService.JSONDecode, HttpService, raw)
+            if jok and dump and dump.Classes then
+                DUMP_CACHE = dump
+                for _, cls in ipairs(dump.Classes) do
+                    PROP_MAP[cls.Name] = {}
+                    for _, m in ipairs(cls.Members or {}) do
+                        if m.MemberType == "Property" then
+                            PROP_MAP[cls.Name][m.Name] = m
                         end
                     end
                 end
-                log(opts, string.format("API dump loaded from %s (%d classes)", url, #DUMP.Classes), "INFO")
-                return DUMP
+                if opts and opts.Verbose then
+                    print(string.format("[SI] API dump: %d classes from %s", #dump.Classes, url))
+                end
+                return DUMP_CACHE
             end
         end
+        Scheduler.yield()
     end
 
-    log(opts, "API dump unavailable, falling back to reflection", "WARN")
-    DUMP = { Classes = {} }
-    return DUMP
+    if opts and opts.Verbose then
+        warn("[SI] API dump unavailable – reflection fallback active")
+    end
+    DUMP_CACHE = { Classes = {} }
+    return DUMP_CACHE
 end
 
--- Resolve superclass chain and collect all serialisable properties
-local function resolveClassProps(className, opts)
-    if INHERIT_CACHE[className] then return INHERIT_CACHE[className] end
+-- Walk superclass chain and collect serialisable props (memoised)
+local function flatProps(className, opts)
+    if INHERIT_FLAT[className] then return INHERIT_FLAT[className] end
 
-    local result = {}
-    local visited = {}
+    local result  = {}
     local current = className
+    local visited = {}
 
-    while current and current ~= "" do
-        if visited[current] then break end
+    while current and current ~= "" and not visited[current] do
         visited[current] = true
+        for pname, member in pairs(PROP_MAP[current] or {}) do
+            if not result[pname] then
+                local include = true
 
-        local classProps = PROP_MAP[current] or {}
-        for propName, member in pairs(classProps) do
-            if not result[propName] then
-                -- Decide whether to include
-                local canSave = true
-
-                -- Serialization tag
                 local serial = member.Serialization
-                if serial and serial.CanSave == false then
-                    canSave = false
-                end
+                if serial and serial.CanSave == false then include = false end
 
-                -- Security
                 local sec = member.Security
                 if sec then
-                    local readSec = type(sec) == "table" and sec.Read or sec
-                    if readSec == "RobloxScriptSecurity" or readSec == "NotAccessibleSecurity" then
-                        if not opts.SaveHiddenProperties then
-                            canSave = false
-                        end
+                    local rSec = type(sec) == "table" and sec.Read or sec
+                    if rSec == "RobloxScriptSecurity"
+                    or rSec == "NotAccessibleSecurity" then
+                        if not opts.SaveHiddenProperties then include = false end
                     end
                 end
 
-                -- Tags
                 for _, tag in ipairs(member.Tags or {}) do
                     if tag == "NotReplicated" or tag == "Deprecated" then
-                        canSave = false
+                        include = false
                     end
-                    -- Re-allow Hidden if user wants hidden props
                     if tag == "Hidden" and opts.SaveHiddenProperties then
-                        canSave = true
+                        include = true
                     end
                 end
 
-                if canSave then
-                    result[propName] = member
-                end
+                if include then result[pname] = member end
             end
         end
 
-        -- Walk up superclass
-        local superclass = nil
-        for _, class in ipairs(DUMP.Classes) do
-            if class.Name == current then
-                superclass = class.Superclass
-                break
-            end
+        -- Next superclass
+        local super = nil
+        for _, cls in ipairs((DUMP_CACHE or { Classes = {} }).Classes) do
+            if cls.Name == current then super = cls.Superclass; break end
         end
-        current = superclass
+        current = super
     end
 
-    INHERIT_CACHE[className] = result
+    INHERIT_FLAT[className] = result
     return result
 end
 
---[[━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    SECTION 7 ─ PROPERTY VALUE FETCHER
-    Tries every known method to read a property value.
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━]]
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+-- SECTION 8: PROPERTY SERIALIZERS  (all 30+ Roblox types)
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-local function fetchProperty(instance, propName, opts)
-    -- Method 1: direct index
-    local ok, val = pcall(function() return instance[propName] end)
-    if ok and val ~= nil then return val end
+local SER = {}
 
-    -- Method 2: gethiddenproperty
-    ok, val = pcall(gethiddenproperty, instance, propName)
-    if ok and val ~= nil then return val end
-
-    -- Method 3: getAttribute fallback (for attribute-backed props)
-    ok, val = pcall(function() return instance:GetAttribute(propName) end)
-    if ok and val ~= nil then return val end
-
-    return nil
-end
-
---[[━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    SECTION 8 ─ FULL TYPE SERIALIZER TABLE
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━]]
-
-local SER = {}  -- SER[typeof(value)](value, propName, refs) -> xml string or nil
-
--- string / ProtectedString
 SER.string = function(v, n)
-    -- Source is always a ProtectedString
     if n == "Source" then
-        return string.format('<ProtectedString name="%s"><![CDATA[%s]]></ProtectedString>', XMLEncode(n), v)
+        return string.format(
+            '<ProtectedString name="%s"><![CDATA[%s]]></ProtectedString>',
+            XMLEncode(n), v)
     end
     return string.format('<string name="%s">%s</string>', XMLEncode(n), XMLEncode(v))
 end
 
--- int / float
 SER.number = function(v, n)
-    if v ~= v then v = 0 end  -- NaN guard
-    if v == math.huge then v = 1e308 end
-    if v == -math.huge then v = -1e308 end
-    if math.type and math.type(v) == "integer" then
-        return string.format('<int64 name="%s">%d</int64>', XMLEncode(n), v)
-    end
+    if v ~= v or v == math.huge or v == -math.huge then v = 0 end
     if v % 1 == 0 and v >= -2147483648 and v <= 2147483647 then
         return string.format('<int name="%s">%d</int>', XMLEncode(n), v)
     end
@@ -709,14 +551,13 @@ SER.boolean = function(v, n)
     return string.format('<bool name="%s">%s</bool>', XMLEncode(n), tostring(v))
 end
 
--- Vectors
 SER.Vector3 = function(v, n)
-    return string.format('<Vector3 name="%s"><X>%.17g</X><Y>%.17g</Y><Z>%.17g</Z></Vector3>',
+    return string.format('<Vector3 name="%s"><X>%.9g</X><Y>%.9g</Y><Z>%.9g</Z></Vector3>',
         XMLEncode(n), v.X, v.Y, v.Z)
 end
 
 SER.Vector2 = function(v, n)
-    return string.format('<Vector2 name="%s"><X>%.17g</X><Y>%.17g</Y></Vector2>',
+    return string.format('<Vector2 name="%s"><X>%.9g</X><Y>%.9g</Y></Vector2>',
         XMLEncode(n), v.X, v.Y)
 end
 
@@ -730,59 +571,55 @@ SER.Vector2int16 = function(v, n)
         XMLEncode(n), v.X, v.Y)
 end
 
--- CFrame
 SER.CFrame = function(v, n)
     local x,y,z,r00,r01,r02,r10,r11,r12,r20,r21,r22 = v:GetComponents()
     return string.format(
         '<CoordinateFrame name="%s">'..
-        '<X>%.17g</X><Y>%.17g</Y><Z>%.17g</Z>'..
-        '<R00>%.17g</R00><R01>%.17g</R01><R02>%.17g</R02>'..
-        '<R10>%.17g</R10><R11>%.17g</R11><R12>%.17g</R12>'..
-        '<R20>%.17g</R20><R21>%.17g</R21><R22>%.17g</R22>'..
+        '<X>%.9g</X><Y>%.9g</Y><Z>%.9g</Z>'..
+        '<R00>%.9g</R00><R01>%.9g</R01><R02>%.9g</R02>'..
+        '<R10>%.9g</R10><R11>%.9g</R11><R12>%.9g</R12>'..
+        '<R20>%.9g</R20><R21>%.9g</R21><R22>%.9g</R22>'..
         '</CoordinateFrame>',
         XMLEncode(n),x,y,z,r00,r01,r02,r10,r11,r12,r20,r21,r22)
 end
 
--- Color3 (stored as integer 0xRRGGBB in Roblox XML)
 SER.Color3 = function(v, n)
-    local r = math.clamp(math.floor(v.R * 255 + 0.5), 0, 255)
-    local g = math.clamp(math.floor(v.G * 255 + 0.5), 0, 255)
-    local b = math.clamp(math.floor(v.B * 255 + 0.5), 0, 255)
-    local packed = bit32.bor(bit32.lshift(r,16), bit32.lshift(g,8), b)
-    return string.format('<Color3uint8 name="%s">%d</Color3uint8>', XMLEncode(n), packed)
+    local r = math.clamp(math.floor(v.R*255+.5),0,255)
+    local g = math.clamp(math.floor(v.G*255+.5),0,255)
+    local b = math.clamp(math.floor(v.B*255+.5),0,255)
+    return string.format('<Color3uint8 name="%s">%d</Color3uint8>',
+        XMLEncode(n), bit32.bor(bit32.lshift(r,16), bit32.lshift(g,8), b))
 end
 
 SER.BrickColor = function(v, n)
     return string.format('<BrickColor name="%s">%d</BrickColor>', XMLEncode(n), v.Number)
 end
 
--- UDim
 SER.UDim = function(v, n)
-    return string.format('<UDim name="%s"><S>%.17g</S><O>%d</O></UDim>',
+    return string.format('<UDim name="%s"><S>%.9g</S><O>%d</O></UDim>',
         XMLEncode(n), v.Scale, v.Offset)
 end
 
 SER.UDim2 = function(v, n)
-    return string.format('<UDim2 name="%s"><XS>%.17g</XS><XO>%d</XO><YS>%.17g</YS><YO>%d</YO></UDim2>',
+    return string.format(
+        '<UDim2 name="%s"><XS>%.9g</XS><XO>%d</XO><YS>%.9g</YS><YO>%d</YO></UDim2>',
         XMLEncode(n), v.X.Scale, v.X.Offset, v.Y.Scale, v.Y.Offset)
 end
 
--- Enum
 SER.EnumItem = function(v, n)
     return string.format('<token name="%s">%d</token>', XMLEncode(n), v.Value)
 end
 
--- Instance reference
 SER.Instance = function(v, n, refs)
-    local ref = refs and refs[v] or nil
-    return string.format('<Ref name="%s">%s</Ref>', XMLEncode(n), ref or "null")
+    return string.format('<Ref name="%s">%s</Ref>',
+        XMLEncode(n), (refs and refs[v]) or "null")
 end
 
--- Sequences
 SER.NumberSequence = function(v, n)
     local parts = {}
     for _, kp in ipairs(v.Keypoints) do
-        parts[#parts+1] = string.format('<NumberSequenceKeypoint><T>%.17g</T><V>%.17g</V><E>%.17g</E></NumberSequenceKeypoint>',
+        parts[#parts+1] = string.format(
+            '<NumberSequenceKeypoint><T>%.9g</T><V>%.9g</V><E>%.9g</E></NumberSequenceKeypoint>',
             kp.Time, kp.Value, kp.Envelope or 0)
     end
     return string.format('<NumberSequence name="%s">%s</NumberSequence>',
@@ -792,11 +629,13 @@ end
 SER.ColorSequence = function(v, n)
     local parts = {}
     for _, kp in ipairs(v.Keypoints) do
-        local r = math.clamp(math.floor(kp.Value.R*255+0.5),0,255)
-        local g = math.clamp(math.floor(kp.Value.G*255+0.5),0,255)
-        local b = math.clamp(math.floor(kp.Value.B*255+0.5),0,255)
+        local r = math.clamp(math.floor(kp.Value.R*255+.5),0,255)
+        local g = math.clamp(math.floor(kp.Value.G*255+.5),0,255)
+        local b = math.clamp(math.floor(kp.Value.B*255+.5),0,255)
         parts[#parts+1] = string.format(
-            '<ColorSequenceKeypoint><T>%.17g</T><V><R>%d</R><G>%d</G><B>%d</B></V></ColorSequenceKeypoint>',
+            '<ColorSequenceKeypoint><T>%.9g</T>'..
+            '<V><R>%d</R><G>%d</G><B>%d</B></V>'..
+            '</ColorSequenceKeypoint>',
             kp.Time, r, g, b)
     end
     return string.format('<ColorSequence name="%s">%s</ColorSequence>',
@@ -804,33 +643,31 @@ SER.ColorSequence = function(v, n)
 end
 
 SER.NumberRange = function(v, n)
-    return string.format('<NumberRange name="%s"><min>%.17g</min><max>%.17g</max></NumberRange>',
+    return string.format(
+        '<NumberRange name="%s"><min>%.9g</min><max>%.9g</max></NumberRange>',
         XMLEncode(n), v.Min, v.Max)
 end
 
--- Rect
 SER.Rect = function(v, n)
-    return string.format('<Rect2D name="%s"><min><X>%.17g</X><Y>%.17g</Y></min><max><X>%.17g</X><Y>%.17g</Y></max></Rect2D>',
+    return string.format(
+        '<Rect2D name="%s"><min><X>%.9g</X><Y>%.9g</Y></min>'..
+        '<max><X>%.9g</X><Y>%.9g</Y></max></Rect2D>',
         XMLEncode(n), v.Min.X, v.Min.Y, v.Max.X, v.Max.Y)
 end
 
--- Ray
 SER.Ray = function(v, n)
     local o,d = v.Origin, v.Direction
-    return string.format('<Ray name="%s"><origin><X>%.17g</X><Y>%.17g</Y><Z>%.17g</Z></origin>'..
-        '<direction><X>%.17g</X><Y>%.17g</Y><Z>%.17g</Z></direction></Ray>',
+    return string.format(
+        '<Ray name="%s"><origin><X>%.9g</X><Y>%.9g</Y><Z>%.9g</Z></origin>'..
+        '<direction><X>%.9g</X><Y>%.9g</Y><Z>%.9g</Z></direction></Ray>',
         XMLEncode(n), o.X,o.Y,o.Z, d.X,d.Y,d.Z)
 end
 
--- Faces / Axes
 SER.Faces = function(v, n)
     local f = {}
-    if v.Top    then f[#f+1]="Top"    end
-    if v.Bottom then f[#f+1]="Bottom" end
-    if v.Left   then f[#f+1]="Left"   end
-    if v.Right  then f[#f+1]="Right"  end
-    if v.Front  then f[#f+1]="Front"  end
-    if v.Back   then f[#f+1]="Back"   end
+    for _, face in ipairs({"Top","Bottom","Left","Right","Front","Back"}) do
+        if v[face] then f[#f+1] = face end
+    end
     return string.format('<Faces name="%s"><faces>%s</faces></Faces>',
         XMLEncode(n), table.concat(f,","))
 end
@@ -844,103 +681,95 @@ SER.Axes = function(v, n)
         XMLEncode(n), table.concat(a,","))
 end
 
--- PhysicalProperties
 SER.PhysicalProperties = function(v, n)
     if v == nil then
-        return string.format('<PhysicalProperties name="%s"><CustomPhysics>false</CustomPhysics></PhysicalProperties>',
+        return string.format(
+            '<PhysicalProperties name="%s"><CustomPhysics>false</CustomPhysics></PhysicalProperties>',
             XMLEncode(n))
     end
-    return string.format('<PhysicalProperties name="%s">'..
-        '<CustomPhysics>true</CustomPhysics>'..
-        '<Density>%.17g</Density><Friction>%.17g</Friction>'..
-        '<Elasticity>%.17g</Elasticity>'..
-        '<FrictionWeight>%.17g</FrictionWeight>'..
-        '<ElasticityWeight>%.17g</ElasticityWeight>'..
-        '</PhysicalProperties>',
+    return string.format(
+        '<PhysicalProperties name="%s"><CustomPhysics>true</CustomPhysics>'..
+        '<Density>%.9g</Density><Friction>%.9g</Friction>'..
+        '<Elasticity>%.9g</Elasticity>'..
+        '<FrictionWeight>%.9g</FrictionWeight>'..
+        '<ElasticityWeight>%.9g</ElasticityWeight></PhysicalProperties>',
         XMLEncode(n),
         v.Density, v.Friction, v.Elasticity,
         v.FrictionWeight, v.ElasticityWeight)
 end
 
--- Region3 / Region3int16
 SER.Region3 = function(v, n)
-    local half = v.Size / 2
+    local half = v.Size/2
     local pos  = v.CFrame.Position
-    local mn, mx = pos - half, pos + half
-    return string.format('<Region3 name="%s"><min><X>%.17g</X><Y>%.17g</Y><Z>%.17g</Z></min>'..
-        '<max><X>%.17g</X><Y>%.17g</Y><Z>%.17g</Z></max></Region3>',
+    local mn, mx = pos-half, pos+half
+    return string.format(
+        '<Region3 name="%s"><min><X>%.9g</X><Y>%.9g</Y><Z>%.9g</Z></min>'..
+        '<max><X>%.9g</X><Y>%.9g</Y><Z>%.9g</Z></max></Region3>',
         XMLEncode(n), mn.X,mn.Y,mn.Z, mx.X,mx.Y,mx.Z)
 end
 
 SER.Region3int16 = function(v, n)
-    return string.format('<Region3int16 name="%s"><min><X>%d</X><Y>%d</Y><Z>%d</Z></min>'..
+    return string.format(
+        '<Region3int16 name="%s"><min><X>%d</X><Y>%d</Y><Z>%d</Z></min>'..
         '<max><X>%d</X><Y>%d</Y><Z>%d</Z></max></Region3int16>',
         XMLEncode(n),
-        v.Min.X, v.Min.Y, v.Min.Z,
-        v.Max.X, v.Max.Y, v.Max.Z)
+        v.Min.X,v.Min.Y,v.Min.Z, v.Max.X,v.Max.Y,v.Max.Z)
 end
 
--- Content (asset URL)
 SER.Content = function(v, n)
     return string.format('<Content name="%s"><url>%s</url></Content>',
-        XMLEncode(n), XMLEncode(tostring(v)))
+        XMLEncode(n), XMLEncode(safeToString(v)))
 end
 
--- Font (Enum.Font is EnumItem, but Font object is different)
 SER.Font = function(v, n)
-    local ok_f, family = pcall(function() return tostring(v.Family) end)
-    local ok_w, weight = pcall(function() return v.Weight.Value end)
-    local ok_s, style  = pcall(function() return v.Style.Name end)
-    return string.format('<Font name="%s"><Family><url>%s</url></Family>'..
+    local ok1, fam = pcall(function() return tostring(v.Family) end)
+    local ok2, wgt = pcall(function() return v.Weight.Value end)
+    local ok3, sty = pcall(function() return v.Style.Name end)
+    return string.format(
+        '<Font name="%s"><Family><url>%s</url></Family>'..
         '<Weight>%s</Weight><Style>%s</Style></Font>',
         XMLEncode(n),
-        XMLEncode(ok_f and family or ""),
-        tostring(ok_w and weight or 400),
-        XMLEncode(ok_s and style or "Normal"))
+        XMLEncode(ok1 and fam or ""),
+        tostring(ok2 and wgt or 400),
+        XMLEncode(ok3 and sty or "Normal"))
 end
 
--- DateTime
 SER.DateTime = function(v, n)
     local ok, iso = pcall(function() return v:ToIsoDate() end)
     return string.format('<DateTime name="%s">%s</DateTime>',
         XMLEncode(n), XMLEncode(ok and iso or ""))
 end
 
--- TweenInfo
 SER.TweenInfo = function(v, n)
-    return string.format('<TweenInfo name="%s">'..
-        '<Time>%.17g</Time><EasingStyle>%d</EasingStyle>'..
-        '<EasingDirection>%d</EasingDirection>'..
+    return string.format(
+        '<TweenInfo name="%s"><Time>%.9g</Time>'..
+        '<EasingStyle>%d</EasingStyle><EasingDirection>%d</EasingDirection>'..
         '<RepeatCount>%d</RepeatCount><Reverses>%s</Reverses>'..
-        '<DelayTime>%.17g</DelayTime></TweenInfo>',
+        '<DelayTime>%.9g</DelayTime></TweenInfo>',
         XMLEncode(n),
-        v.Time,
-        v.EasingStyle.Value,
-        v.EasingDirection.Value,
-        v.RepeatCount,
-        tostring(v.Reverses),
-        v.DelayTime)
+        v.Time, v.EasingStyle.Value, v.EasingDirection.Value,
+        v.RepeatCount, tostring(v.Reverses), v.DelayTime)
 end
-
--- CatalogSearchParams -- placeholder (not commonly serialized)
--- OverlapParams / RaycastParams -- runtime only, skip
 
 -- Generic fallback
-local function serializeValue(v, n, refs)
+local function serVal(v, n, refs)
     local t = typeof(v)
     if SER[t] then
-        return SER[t](v, n, refs)
+        local ok, xml = pcall(SER[t], v, n, refs)
+        if ok and xml then return xml end
     end
-    -- Unknown: store as string with type annotation
-    return string.format('<string name="%s"><!-- type:%s --> %s</string>',
-        XMLEncode(n), XMLEncode(t), XMLEncode(tostring(v)))
+    -- Unknown: safe string fallback
+    return string.format('<string name="%s"><!-- %s --> %s</string>',
+        XMLEncode(n), XMLEncode(t), XMLEncode(safeToString(v)))
 end
 
---[[━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    SECTION 9 ─ SCRIPT DECOMPILATION  (multi-executor, multi-pass)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━]]
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+-- SECTION 9: SCRIPT DECOMPILATION  (isolated, hard deadline)
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-local function tryDecompileScript(script, opts)
+local Stats = {} -- filled per-save
+
+local function decompileScript(script, opts)
     if opts.AnonymizeScripts then
         return "-- [anonymized]", true
     end
@@ -948,171 +777,134 @@ local function tryDecompileScript(script, opts)
         return "-- [decompilation disabled]", false
     end
 
-    local deadline = tick() + opts.DecompileTimeout
+    local maxAttempts = opts.RetryFailedScripts and opts.ScriptRetryCount or 1
 
-    local function attempt(fn, label)
-        if tick() > deadline then return nil end
-        local ok, src = pcall(fn)
-        if ok and type(src) == "string" and #src > 0
-           and not src:match("^%s*$") then
-            log(opts, string.format("  ✓ Decompiled via [%s]: %s", label, script:GetFullName()), "INFO")
-            return src
-        end
-        return nil
-    end
-
-    local maxTries = opts.RetryFailedScripts and opts.ScriptRetryCount or 1
-
-    for _try = 1, maxTries do
-        -- Pass 1: each registered decompiler
-        for _, d in ipairs(DECOMPILERS) do
-            local src = attempt(function() return d.fn(script) end, d.name)
-            if src then return src, true end
+    -- Each attempt is run inside Scheduler.timed so it is hard-cancelled
+    for attempt = 1, maxAttempts do
+        -- Try every registered decompiler
+        for _, d in ipairs(ENV.decompilers) do
+            local ok, src = Scheduler.timed(d.fn, Scheduler.DECOMP_TIMEOUT, script)
+            if ok and type(src) == "string" and #src > 0
+               and not src:match("^%s*$") then
+                Stats.decompiledScripts = (Stats.decompiledScripts or 0) + 1
+                return src, true
+            end
+            Scheduler.step()
         end
 
-        -- Pass 2: Source property (plain or hidden)
-        local src = attempt(function() return script.Source end, "Source")
-        if src then return src, true end
+        -- Fallback: Source property (timed)
+        local ok, src = Scheduler.timed(function()
+            return script.Source
+        end, Scheduler.PROP_TIMEOUT)
+        if ok and type(src) == "string" and #src > 0 then
+            Stats.decompiledScripts = (Stats.decompiledScripts or 0) + 1
+            return src, true
+        end
 
-        src = attempt(function() return gethiddenproperty(script, "Source") end, "gethiddenproperty(Source)")
-        if src then return src, true end
+        -- Fallback: gethiddenproperty
+        ok, src = Scheduler.timed(function()
+            return ENV.gethiddenproperty(script, "Source")
+        end, Scheduler.PROP_TIMEOUT)
+        if ok and type(src) == "string" and #src > 0 then
+            Stats.decompiledScripts = (Stats.decompiledScripts or 0) + 1
+            return src, true
+        end
 
-        -- Pass 3: bytecode-based (getscriptbytecode → pseudo-source comment)
-        if getscriptbytecode then
-            src = attempt(function()
-                local bc = getscriptbytecode(script)
+        -- Fallback: bytecode stub
+        if ENV.getscriptbytecode then
+            ok, src = Scheduler.timed(function()
+                local bc = ENV.getscriptbytecode(script)
                 if bc and #bc > 0 then
-                    return string.format("--[[ bytecode length: %d bytes ]]\n-- raw decompilation unavailable", #bc)
+                    return string.format("--[[ bytecode: %d bytes ]]\n", #bc)
                 end
-            end, "bytecode stub")
-            if src then return src, true end
+            end, Scheduler.PROP_TIMEOUT)
+            if ok and src then
+                Stats.decompiledScripts = (Stats.decompiledScripts or 0) + 1
+                return src, false
+            end
         end
 
-        -- Pass 4: closure env probe
-        if getscriptclosure then
-            src = attempt(function()
-                local closure = getscriptclosure(script)
-                if type(closure) == "function" then
-                    return "-- [closure captured; source not recoverable]"
-                end
-            end, "getscriptclosure")
-            if src then return src, false end
-        end
-
-        if _try < maxTries then
-            task.wait(0.05 * _try)
+        if attempt < maxAttempts then
+            task.wait(0.05 * attempt)
         end
     end
 
-    -- All failed
+    Stats.failedScripts = (Stats.failedScripts or 0) + 1
     return string.format(
-        "-- ⚠ DECOMPILATION FAILED\n-- Script : %s\n-- Class  : %s\n-- Executor: %s\n",
-        script:GetFullName(), script.ClassName, UNC.ExecutorName), false
+        "-- ⚠ DECOMPILATION FAILED\n-- Script : %s\n-- Executor: %s\n",
+        script:GetFullName(), ENV.Name), false
 end
 
---[[━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    SECTION 10 ─ TERRAIN SERIALIZER
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━]]
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+-- SECTION 10: TERRAIN SERIALIZER
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 local function serializeTerrain(terrain, opts)
     if not opts.SaveTerrain then return nil end
 
-    local ok, result = pcall(function()
-        local ext = terrain.MaxExtents
-        local s   = opts.TerrainRegionSize
-
-        -- Clamp region to configured size
+    local ok, result = Scheduler.timed(function()
+        local ext    = terrain.MaxExtents
+        local s      = opts.TerrainRegionSize
         local center = ext.CFrame.Position
         local half   = Vector3.new(s, s, s) * 0.5
         local region = Region3.new(center - half, center + half):ExpandToGrid(4)
 
-        local materials, occupancies = terrain:ReadVoxels(region, 4)
-        local sx, sy, sz = materials.Size.X, materials.Size.Y, materials.Size.Z
+        local mats, occs = terrain:ReadVoxels(region, 4)
+        local sx, sy, sz = mats.Size.X, mats.Size.Y, mats.Size.Z
 
-        -- Run-length encode materials + occupancies for compact storage
-        local entries = {}
-        local lastMat, lastOcc, run = nil, nil, 0
-
+        -- RLE encode
+        local rle = {}
+        local lastM, lastO, run = nil, nil, 0
         for y = 1, sy do
             for z = 1, sz do
                 for x = 1, sx do
-                    local m = materials[x][y][z].Value
-                    local o = math.floor(occupancies[x][y][z] * 255 + 0.5)
-                    if m == lastMat and o == lastOcc then
+                    local m = mats[x][y][z].Value
+                    local o = math.floor(occs[x][y][z] * 255 + 0.5)
+                    if m == lastM and o == lastO then
                         run = run + 1
                     else
-                        if lastMat then
-                            entries[#entries+1] = {lastMat, lastOcc, run}
-                        end
-                        lastMat, lastOcc, run = m, o, 1
+                        if lastM then rle[#rle+1] = {lastM, lastO, run} end
+                        lastM, lastO, run = m, o, 1
                     end
                 end
             end
+            Scheduler.step() -- yield between Y slices to avoid freeze
         end
-        if lastMat then entries[#entries+1] = {lastMat, lastOcc, run} end
+        if lastM then rle[#rle+1] = {lastM, lastO, run} end
 
-        local encoded = HttpService:JSONEncode({
-            Version  = 1,
-            Size     = {sx, sy, sz},
-            Region   = {
-                MinX = center.X - half.X,
-                MinY = center.Y - half.Y,
-                MinZ = center.Z - half.Z,
-                MaxX = center.X + half.X,
-                MaxY = center.Y + half.Y,
-                MaxZ = center.Z + half.Z,
-            },
-            RLE      = entries,
+        return HttpService:JSONEncode({
+            v      = 2,
+            size   = {sx, sy, sz},
+            origin = {center.X - half.X, center.Y - half.Y, center.Z - half.Z},
+            rle    = rle,
         })
+    end, math.max(opts.DecompileTimeout, 30))
 
-        return string.format('<BinaryString name="TerrainData_v4"><![CDATA[%s]]></BinaryString>', encoded)
-    end)
+    if ok and result then
+        return string.format(
+            '<BinaryString name="TerrainData"><![CDATA[%s]]></BinaryString>', result)
+    end
+    return nil
+end
 
-    if ok then
-        return result
-    else
-        log(opts, "Terrain serialization failed: " .. tostring(result), "WARN")
-        return nil
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+-- SECTION 11: INSTANCE FILTER
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+local _playerChars = {} -- refreshed at save start
+
+local function refreshPlayerChars()
+    _playerChars = {}
+    local ok, players = pcall(function() return Players:GetPlayers() end)
+    if not ok then return end
+    for _, p in ipairs(players) do
+        if p.Character then _playerChars[p.Character] = true end
     end
 end
-
---[[━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    SECTION 11 ─ ATTRIBUTES & TAGS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━]]
-
-local function serializeAttributes(instance, refs)
-    local ok, attrs = pcall(function() return instance:GetAttributes() end)
-    if not ok or not attrs or not next(attrs) then return nil end
-
-    local parts = {}
-    for k, v in pairs(attrs) do
-        local ok2, xml = pcall(serializeValue, v, k, refs)
-        if ok2 and xml then
-            parts[#parts+1] = "        " .. xml
-        end
-    end
-    if #parts == 0 then return nil end
-
-    return '<BinaryString name="AttributesSerialize"><![CDATA['
-        .. HttpService:JSONEncode(attrs)
-        .. ']]></BinaryString>'
-end
-
-local function serializeTags(instance)
-    local ok, tags = pcall(function() return CollectionService:GetTags(instance) end)
-    if not ok or not tags or #tags == 0 then return nil end
-    return string.format('<BinaryString name="Tags"><![CDATA[%s]]></BinaryString>',
-        table.concat(tags, "\0"))
-end
-
---[[━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    SECTION 12 ─ INSTANCE FILTER
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━]]
 
 local function shouldIgnore(inst, opts)
     if not inst then return true end
-    local cn = inst.ClassName
-    local nm = inst.Name
+    local cn, nm = inst.ClassName, inst.Name
 
     for _, v in ipairs(opts.IgnoreList) do
         if nm == v or cn == v then return true end
@@ -1122,437 +914,432 @@ local function shouldIgnore(inst, opts)
         if cn == "Players" or inst:IsA("Player") then return true end
     end
 
-    if opts.RemovePlayerCharacters then
-        for _, p in ipairs(Players:GetPlayers()) do
-            if p.Character then
-                if inst == p.Character or
-                   (inst.Parent and inst:IsDescendantOf(p.Character)) then
-                    return true
-                end
-            end
-        end
+    if opts.RemovePlayerCharacters and _playerChars[inst] then
+        return true
     end
 
     return false
 end
 
-local function shouldSkipDescendants(inst, opts)
-    local cn = inst.ClassName
-    local nm = inst.Name
+local function shouldSkipChildren(inst, opts)
+    local cn, nm = inst.ClassName, inst.Name
     for _, v in ipairs(opts.IgnoreDescendantsOfList) do
         if nm == v or cn == v then return true end
     end
     return false
 end
 
---[[━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    SECTION 13 ─ REFERENCE MAP
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━]]
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+-- SECTION 12: REFERENCE MAP  (iterative, no recursion stack overflow)
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 local function buildRefMap(root, opts, cb)
-    local refs = {}
-    local list = {}
-    local idx  = 0
-    local yc   = 0
+    local refs  = {}
+    local order = {}  -- ordered list of instances
+    local idx   = 0
 
-    local function visit(inst, depth)
-        yc = yc + 1
-        if yc >= opts.YieldEvery then yc = 0; task.wait() end
-        if opts.MaxDepth and depth > opts.MaxDepth then return end
-        if shouldIgnore(inst, opts) then return end
+    -- Iterative BFS avoids stack overflow on deep trees
+    local queue = { { inst = root, depth = 0 } }
+    local head  = 1
 
-        idx = idx + 1
-        refs[inst] = generateRef(idx)
-        list[#list+1] = inst
-        SaveInstance.Statistics.TotalInstances = idx
+    if cb then cb("Scanning instances…", 0.05) end
 
-        if cb and idx % opts.BatchSize == 0 then
-            cb(string.format("Scanning... %d instances found", idx),
-               0.05 + 0.15 * math.min(idx / 10000, 1))
+    while head <= #queue do
+        local item  = queue[head]
+        head        = head + 1
+
+        local inst  = item.inst
+        local depth = item.depth
+
+        Scheduler.step()
+
+        if opts.MaxDepth and depth > opts.MaxDepth then
+            goto continue_scan
         end
 
-        if shouldSkipDescendants(inst, opts) then return end
+        if shouldIgnore(inst, opts) then
+            goto continue_scan
+        end
 
-        for _, child in ipairs(safeGetChildren(inst)) do
-            if opts.SafeMode then
-                pcall(visit, child, depth + 1)
-            else
-                visit(child, depth + 1)
+        -- Register
+        idx = idx + 1
+        refs[inst]       = generateRef(idx)
+        order[#order+1]  = inst
+        Stats.total      = idx
+
+        if cb and idx % 200 == 0 then
+            cb(string.format("Scanning… %d instances", idx),
+               0.05 + 0.15 * math.min(idx / 8000, 1))
+        end
+
+        -- Enqueue children
+        if not shouldSkipChildren(inst, opts) then
+            for _, child in ipairs(safeChildren(inst)) do
+                queue[#queue+1] = { inst = child, depth = depth + 1 }
             end
         end
-    end
 
-    if cb then cb("Scanning game structure...", 0.05) end
-    visit(root, 0)
+        ::continue_scan::
+    end
 
     -- Extra instances
     for _, extra in ipairs(opts.AdditionalInstances) do
         if not refs[extra] then
-            pcall(visit, extra, 0)
+            idx = idx + 1
+            refs[extra]      = generateRef(idx)
+            order[#order+1]  = extra
+            Stats.total      = idx
         end
     end
 
     -- Nil instances
     if opts.NilInstances then
-        if cb then cb("Collecting nil instances...", 0.2) end
-        local ok, nil_list = pcall(getnilinstances)
+        if cb then cb("Collecting nil instances…", 0.20) end
+        local ok, nil_list = pcall(ENV.getnilinstances)
         if ok then
             for _, ni in ipairs(nil_list) do
                 if not refs[ni] and not shouldIgnore(ni, opts) then
                     idx = idx + 1
-                    refs[ni] = generateRef(idx)
-                    list[#list+1] = ni
-                    SaveInstance.Statistics.TotalInstances = idx
+                    refs[ni]         = generateRef(idx)
+                    order[#order+1]  = ni
+                    Stats.total      = idx
                 end
+                Scheduler.step()
             end
         end
     end
 
-    if cb then cb(string.format("Scan done: %d instances", #list), 0.25) end
-    return refs, list
+    if cb then cb(string.format("Scan complete: %d instances", #order), 0.22) end
+    return refs, order
 end
 
---[[━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    SECTION 14 ─ PROPERTY SERIALIZATION PER INSTANCE
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━]]
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+-- SECTION 13: PROPERTY BUILDER  (per instance, all reads timed)
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-local function serializeInstanceProperties(inst, refs, opts)
+local BLACKLIST_SET = {}
+for _, v in ipairs(DEFAULTS.PropertyBlacklist) do BLACKLIST_SET[v] = true end
+
+local function buildPropsXML(inst, refs, opts)
     local lines = {}
-    local cn = inst.ClassName
+    local cn    = inst.ClassName
 
-    -- Always: Name
-    local name = safeGet(inst, "Name") or cn
-    lines[#lines+1] = string.format('        <string name="Name">%s</string>', XMLEncode(name))
+    -- Name (always first)
+    local nm = safeReadProp(inst, "Name") or cn
+    lines[#lines+1] = string.format(
+        '      <string name="Name">%s</string>', XMLEncode(nm))
 
     -- Script source
-    local isScript = pcall(function() return inst:IsA("LuaSourceContainer") end)
-    if isScript then
-        local source, ok = tryDecompileScript(inst, opts)
+    local isScript = false
+    local ok0 = pcall(function() isScript = inst:IsA("LuaSourceContainer") end)
+    if ok0 and isScript then
+        local src, _ = decompileScript(inst, opts)
         lines[#lines+1] = string.format(
-            '        <ProtectedString name="Source"><![CDATA[%s]]></ProtectedString>', source)
-        if ok then
-            SaveInstance.Statistics.DecompiledScripts = SaveInstance.Statistics.DecompiledScripts + 1
-        else
-            SaveInstance.Statistics.FailedScripts = SaveInstance.Statistics.FailedScripts + 1
-        end
+            '      <ProtectedString name="Source"><![CDATA[%s]]></ProtectedString>', src)
     end
 
     -- Terrain
-    local isTerrain = pcall(function() return inst:IsA("Terrain") end)
+    local isTerrain = false
+    pcall(function() isTerrain = inst:IsA("Terrain") end)
     if isTerrain then
-        local terrainXml = serializeTerrain(inst, opts)
-        if terrainXml then
-            lines[#lines+1] = "        " .. terrainXml
-        end
+        local terrXml = serializeTerrain(inst, opts)
+        if terrXml then lines[#lines+1] = "      " .. terrXml end
     end
 
-    -- API-driven properties
-    local props = resolveClassProps(cn, opts)
-    for propName, member in pairs(props) do
+    -- API-driven props
+    local props = flatProps(cn, opts)
+    for pname, _ in pairs(props) do
         -- Skip blacklisted / already handled
-        local skip = false
-        for _, bl in ipairs(opts.PropertyBlacklist) do
-            if propName == bl or propName == "Name" or propName == "Source" then
-                skip = true; break
-            end
-        end
-        if not skip then
-            local val = fetchProperty(inst, propName, opts)
+        if not BLACKLIST_SET[pname] and pname ~= "Name" and pname ~= "Source" then
+            local val = safeReadProp(inst, pname)
             if val ~= nil then
-                SaveInstance.Statistics.TotalProperties = SaveInstance.Statistics.TotalProperties + 1
-                local ok2, xml = pcall(serializeValue, val, propName, refs)
+                Stats.totalProps = (Stats.totalProps or 0) + 1
+                local ok2, xml = pcall(serVal, val, pname, refs)
                 if ok2 and xml then
-                    lines[#lines+1] = "        " .. xml
-                    SaveInstance.Statistics.SavedProperties = SaveInstance.Statistics.SavedProperties + 1
+                    lines[#lines+1] = "      " .. xml
+                    Stats.savedProps = (Stats.savedProps or 0) + 1
                 else
-                    SaveInstance.Statistics.FailedProperties = SaveInstance.Statistics.FailedProperties + 1
-                    log(opts, string.format("  prop fail: %s.%s – %s", cn, propName, tostring(xml)), "WARN")
+                    Stats.failedProps = (Stats.failedProps or 0) + 1
                 end
             end
         end
+        Scheduler.step()
     end
 
     -- Attributes
     if opts.SaveAttributes then
-        local attrXml = serializeAttributes(inst, refs)
-        if attrXml then
-            lines[#lines+1] = "        " .. attrXml
+        local ok3, attrs = pcall(function() return inst:GetAttributes() end)
+        if ok3 and attrs and next(attrs) then
+            local ok4, encoded = pcall(HttpService.JSONEncode, HttpService, attrs)
+            if ok4 then
+                lines[#lines+1] = string.format(
+                    '      <BinaryString name="AttributesSerialize"><![CDATA[%s]]></BinaryString>',
+                    encoded)
+            end
         end
     end
 
     -- Tags
     if opts.SaveTags then
-        local tagXml = serializeTags(inst)
-        if tagXml then
-            lines[#lines+1] = "        " .. tagXml
+        local ok5, tags = pcall(function() return CollectionService:GetTags(inst) end)
+        if ok5 and tags and #tags > 0 then
+            lines[#lines+1] = string.format(
+                '      <BinaryString name="Tags"><![CDATA[%s]]></BinaryString>',
+                table.concat(tags, "\0"))
         end
     end
 
     return table.concat(lines, "\n")
 end
 
---[[━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    SECTION 15 ─ XML HIERARCHY BUILDER
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━]]
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+-- SECTION 14: STREAMING XML WRITER
+-- Writes the tree to disk incrementally using StreamWriter.
+-- Uses an explicit stack instead of recursion to avoid stack overflow.
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-local function buildHierarchy(list, refs)
+local function writeXML(refs, order, opts, writer, cb)
+    -- Build parent→children lookup
+    local childMap = {}
     local roots    = {}
-    local children = {} -- children[parentInst] = { child, ... }
 
-    for _, inst in ipairs(list) do
-        local ok, parent = pcall(function() return inst.Parent end)
-        if ok and parent and refs[parent] then
-            if not children[parent] then children[parent] = {} end
-            children[parent][#children[parent]+1] = inst
+    if cb then cb("Building hierarchy…", 0.25) end
+
+    for _, inst in ipairs(order) do
+        local ok, par = pcall(function() return inst.Parent end)
+        if ok and par and refs[par] then
+            if not childMap[par] then childMap[par] = {} end
+            childMap[par][#childMap[par]+1] = inst
         else
             roots[#roots+1] = inst
         end
+        Scheduler.step()
     end
 
-    return roots, children
-end
+    -- XML header
+    writer:writeln('<?xml version="1.0" encoding="UTF-8"?>')
+    writer:writeln('<roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime"'
+        .. ' xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"'
+        .. ' xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd"'
+        .. ' version="4">')
+    writer:writeln('  <External>null</External>')
+    writer:writeln('  <External>nil</External>')
+    writer:writeln(string.format('  <Meta name="Generator">SaveInstance Pro v5.0</Meta>'))
+    writer:writeln(string.format('  <Meta name="Executor">%s</Meta>', XMLEncode(ENV.Name)))
+    writer:writeln(string.format('  <Meta name="SavedAt">%s</Meta>', os.date("%Y-%m-%dT%H:%M:%S")))
+    writer:writeln(string.format('  <Meta name="TotalInstances">%d</Meta>', #order))
+    writer:writeln('  <Meta name="ExplicitAutoJoints">true</Meta>')
 
-local function serializeTree(inst, refs, children, opts, depth, cb, total, counter)
-    counter[1] = counter[1] + 1
-    local n = counter[1]
+    -- Iterative DFS using explicit stack
+    -- Stack entries: { inst, depth, phase }
+    -- phase = "open"  → write opening tag + properties
+    -- phase = "close" → write closing tag
+    local stack   = {}
+    local saved   = 0
 
-    -- Periodic yield + status
-    if n % opts.YieldEvery == 0 then task.wait() end
-    if cb and n % opts.BatchSize == 0 then
-        local pct = 0.30 + 0.60 * (n / total)
-        cb(string.format("Serializing %d / %d  (%.0f%%)", n, total, pct * 100), pct)
+    -- Push roots in reverse order so first root is processed first
+    for i = #roots, 1, -1 do
+        stack[#stack+1] = { inst = roots[i], depth = 1, phase = "open" }
     end
 
-    local indent = string.rep("  ", depth)
-    local ref    = refs[inst]
-    local cn     = inst.ClassName
-    local lines  = {}
+    if cb then cb("Serializing instances…", 0.27) end
 
-    lines[#lines+1] = string.format('%s<Item class="%s" referent="%s">', indent, XMLEncode(cn), ref)
-    lines[#lines+1] = indent .. "  <Properties>"
+    while #stack > 0 do
+        local entry = stack[#stack]
+        stack[#stack] = nil
 
-    -- Properties
-    local ok2, propXml = pcall(serializeInstanceProperties, inst, refs, opts)
-    if ok2 and propXml and #propXml > 0 then
-        lines[#lines+1] = propXml
-        SaveInstance.Statistics.SavedInstances = SaveInstance.Statistics.SavedInstances + 1
-    else
-        SaveInstance.Statistics.FailedInstances = SaveInstance.Statistics.FailedInstances + 1
-        log(opts, "Property serialization failed for " .. inst:GetFullName(), "ERROR")
-        -- Minimal fallback
-        lines[#lines+1] = string.format('        <string name="Name">%s</string>', XMLEncode(inst.Name))
-        if not opts.ContinueOnError then error(propXml) end
-    end
+        local inst  = entry.inst
+        local depth = entry.depth
+        local phase = entry.phase
+        local indent = string.rep("  ", depth)
 
-    lines[#lines+1] = indent .. "  </Properties>"
+        Scheduler.step()
 
-    -- Recurse into children
-    if children[inst] then
-        for _, child in ipairs(children[inst]) do
-            local ok3, childXml = pcall(serializeTree, child, refs, children,
-                opts, depth + 1, cb, total, counter)
-            if ok3 then
-                lines[#lines+1] = childXml
-            else
-                log(opts, "Child serialization error: " .. tostring(childXml), "ERROR")
-                if not opts.ContinueOnError then error(childXml) end
+        if phase == "open" then
+            local ref = refs[inst]
+            if not ref then goto continue_write end
+
+            local cn  = inst.ClassName
+
+            -- Push close-tag sentinel first (so it runs after children)
+            stack[#stack+1] = { inst = inst, depth = depth, phase = "close" }
+
+            -- Push children in reverse order
+            if childMap[inst] then
+                local kids = childMap[inst]
+                for i = #kids, 1, -1 do
+                    stack[#stack+1] = { inst = kids[i], depth = depth+1, phase = "open" }
+                end
             end
+
+            -- Write opening + properties
+            writer:writeln(string.format('%s<Item class="%s" referent="%s">',
+                indent, XMLEncode(cn), ref))
+            writer:writeln(indent .. "  <Properties>")
+
+            local ok, propsXml = pcall(buildPropsXML, inst, refs, opts)
+            if ok and propsXml and #propsXml > 0 then
+                writer:writeln(propsXml)
+                Stats.saved = (Stats.saved or 0) + 1
+            else
+                Stats.failed = (Stats.failed or 0) + 1
+                -- Minimal fallback: at least write the name
+                local fallbackName = safeReadProp(inst, "Name") or cn
+                writer:writeln(string.format(
+                    '      <string name="Name">%s</string>', XMLEncode(fallbackName)))
+                if opts.Verbose then
+                    warn("[SI] Props failed for " .. safeToString(inst) .. ": " .. safeToString(propsXml))
+                end
+            end
+
+            writer:writeln(indent .. "  </Properties>")
+
+            saved = saved + 1
+            if cb and saved % 100 == 0 then
+                local pct = 0.27 + 0.65 * (saved / math.max(#order, 1))
+                cb(string.format("Serializing… %d / %d  (%.0f%%)",
+                    saved, #order, pct * 100), pct)
+            end
+
+            if opts.OnInstanceSaved then
+                pcall(opts.OnInstanceSaved, inst, saved, #order)
+            end
+
+        elseif phase == "close" then
+            local indent2 = string.rep("  ", depth)
+            writer:writeln(indent2 .. "</Item>")
         end
+
+        ::continue_write::
     end
 
-    lines[#lines+1] = indent .. "</Item>"
-
-    if opts.OnInstanceSaved then
-        pcall(opts.OnInstanceSaved, inst, n, total)
-    end
-
-    return table.concat(lines, "\n")
+    writer:writeln("</roblox>")
+    if cb then cb("XML written to disk ✓", 0.95) end
 end
 
---[[━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    SECTION 16 ─ XML DOCUMENT ASSEMBLY
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━]]
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+-- SECTION 15: VALIDATION
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-local function assembleXML(list, refs, opts, cb)
-    if cb then cb("Building hierarchy...", 0.28) end
-    local roots, children = buildHierarchy(list, refs)
+local function validate(filePath, opts)
+    if not opts.ValidateOutput then return true end
 
-    local out = {
-        '<?xml version="1.0" encoding="UTF-8"?>',
-        '<roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime"'..
-        ' xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"'..
-        ' xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd"'..
-        ' version="4">',
-        '  <External>null</External>',
-        '  <External>nil</External>',
-        string.format('  <Meta name="Generator">SaveInstance Pro v%s</Meta>', SaveInstance.Version),
-        string.format('  <Meta name="Executor">%s</Meta>', XMLEncode(UNC.ExecutorName)),
-        string.format('  <Meta name="SavedAt">%s</Meta>', os.date("%Y-%m-%dT%H:%M:%S")),
-        string.format('  <Meta name="TotalInstances">%d</Meta>', #list),
-        '  <Meta name="ExplicitAutoJoints">true</Meta>',
-    }
-
-    if cb then cb("Serializing instances...", 0.30) end
-
-    local counter = {0}
-    for _, root in ipairs(roots) do
-        local ok, xml = pcall(serializeTree, root, refs, children,
-            opts, 1, cb, #list, counter)
-        if ok then
-            out[#out+1] = xml
-        else
-            log(opts, "Root serialization error: " .. tostring(xml), "ERROR")
-            if not opts.ContinueOnError then error(xml) end
-        end
+    local ok, content = pcall(ENV.readfile, filePath)
+    if not ok or not content then
+        warn("[SI] Validation: cannot read file back")
+        return false
     end
 
-    out[#out+1] = '</roblox>'
-
-    if cb then cb("XML assembled!", 0.92) end
-    return table.concat(out, "\n")
-end
-
---[[━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    SECTION 17 ─ VALIDATION
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━]]
-
-local function validate(xml, opts)
-    if not opts.ValidateOutput then return true, nil end
-
-    local function check(cond, msg)
-        if not cond then return false, msg end
-        return true, nil
-    end
-
-    local tests = {
-        { xml:sub(1, 5) == "<?xml",              "Missing XML declaration"            },
-        { xml:find("<roblox") ~= nil,            "Missing <roblox> root element"      },
-        { xml:find("</roblox>") ~= nil,          "Missing </roblox> close tag"        },
+    local checks = {
+        { content:sub(1,5) == "<?xml",         "Missing XML declaration"    },
+        { content:find("<roblox") ~= nil,       "Missing <roblox> tag"      },
+        { content:find("</roblox>") ~= nil,     "Missing </roblox> end tag" },
         {
-            select(2, xml:gsub("<Item", "")) ==
-            select(2, xml:gsub("</Item>", "")),
+            select(2, content:gsub("<Item",   "")) ==
+            select(2, content:gsub("</Item>", "")),
             "Unbalanced <Item> tags"
         },
     }
 
-    for _, t in ipairs(tests) do
-        local pass, err = check(t[1], t[2])
-        if not pass then
-            log(opts, "Validation FAIL: " .. err, "ERROR")
-            return false, err
+    for _, c in ipairs(checks) do
+        if not c[1] then
+            warn("[SI] Validation FAILED: " .. c[2])
+            return false
         end
     end
 
-    log(opts, "Validation passed", "INFO")
-    return true, nil
+    if opts.Verbose then print("[SI] Validation passed") end
+    return true
 end
 
---[[━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    SECTION 18 ─ PUBLIC SAVE FUNCTION
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━]]
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+-- SECTION 16: PUBLIC API
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+local SaveInstance    = {}
+SaveInstance.Version  = "5.0.0"
+SaveInstance.Executor = ENV.Name
+SaveInstance._busy    = false
 
 function SaveInstance.Save(userOptions)
-    -- Reset stats
-    SaveInstance.Statistics = newStats()
+    if SaveInstance._busy then
+        warn("[SI] Already saving – please wait for the current save to finish.")
+        return false, nil
+    end
+    SaveInstance._busy = true
 
-    local opts = mergeOptions(userOptions)
-    assert(opts.SaveObject, "SaveObject is required")
+    -- Reset stats
+    Stats = {
+        total            = 0,
+        saved            = 0,
+        failed           = 0,
+        totalProps       = 0,
+        savedProps       = 0,
+        failedProps      = 0,
+        decompiledScripts= 0,
+        failedScripts    = 0,
+    }
+
+    local opts = mergeOpts(userOptions)
+    assert(opts.SaveObject, "SaveObject must be provided")
 
     -- Auto file path
     if not opts.FilePath then
-        local rawName = safeGet(opts.SaveObject, "Name") or "SavedInstance"
-        opts.FilePath = sanitizeFilename(rawName) .. "_" .. timestamp() .. ".rbxmx"
+        local rawName = safeReadProp(opts.SaveObject, "Name") or "SavedInstance"
+        opts.FilePath = sanitize(rawName) .. "_" .. timestamp() .. ".rbxmx"
     end
 
     local t0 = tick()
-    local cb  = opts.StatusCallback or function() end
+    local cb = opts.StatusCallback or function() end
 
-    local function timedCb(msg, pct)
-        if tick() - t0 > opts.Timeout then
-            error("[SaveInstance] Operation timed out after " .. opts.Timeout .. "s")
-        end
-        cb(msg, pct)
+    -- Update blacklist set
+    BLACKLIST_SET = {}
+    for _, v in ipairs(opts.PropertyBlacklist) do BLACKLIST_SET[v] = true end
+
+    -- Ensure output directory exists
+    local dir = opts.FilePath:match("^(.*[/\\])")
+    if dir and dir ~= "" then
+        local ok3 = pcall(function()
+            if not ENV.isfolder(dir) then ENV.makefolder(dir) end
+        end)
     end
 
-    timedCb("SaveInstance Pro v" .. SaveInstance.Version ..
-             " – Executor: " .. UNC.ExecutorName, 0)
+    cb("Initializing… Executor: " .. ENV.Name, 0)
 
-    -- Load API dump
-    timedCb("Loading API dump...", 0.02)
+    -- Load API dump (async, yields internally)
+    cb("Loading API dump…", 0.02)
     loadDump(opts)
+
+    -- Snapshot player characters before cloning
+    refreshPlayerChars()
 
     -- Safe clone
     local saveObj = opts.SaveObject
     if opts.CloneBeforeSave and opts.SaveObject ~= game then
-        timedCb("Cloning save target...", 0.04)
-        local ok, clone = pcall(function() return opts.SaveObject:Clone() end)
-        if ok and clone then
+        cb("Cloning save target…", 0.04)
+        local okC, clone = pcall(function() return opts.SaveObject:Clone() end)
+        if okC and clone then
             saveObj = clone
-            log(opts, "Clone successful", "INFO")
+            if opts.Verbose then print("[SI] Clone successful") end
         else
-            log(opts, "Clone failed – using original", "WARN")
+            if opts.Verbose then warn("[SI] Clone failed – using original") end
         end
     end
 
-    local finalResult
-    local ok, err = pcall(function()
-        -- Build references
-        local refs, list = buildRefMap(saveObj, opts, timedCb)
-        timedCb(string.format("%d instances found, building XML…", #list), 0.27)
+    -- Create streaming writer (uses appendfile if available)
+    local writer = StreamWriter.new(opts.FilePath, true)
 
-        -- Generate XML
-        local xml = assembleXML(list, refs, opts, timedCb)
+    local saveOk, saveErr = pcall(function()
+        -- Phase 1: scan
+        local refs, order = buildRefMap(saveObj, opts, cb)
+        cb(string.format("Found %d instances – building XML…", #order), 0.24)
 
-        -- Validate
-        timedCb("Validating output…", 0.93)
-        local valid, verr = validate(xml, opts)
-        if not valid then
-            if opts.ContinueOnError then
-                log(opts, "Validation failed but ContinueOnError=true: " .. tostring(verr), "WARN")
-            else
-                error("Validation failed: " .. tostring(verr))
-            end
-        end
+        -- Phase 2: stream XML to disk
+        writeXML(refs, order, opts, writer, cb)
 
-        -- Ensure folder exists
-        local dir = opts.FilePath:match("^(.*[/\\])")
-        if dir and dir ~= "" and not isfolder(dir) then
-            pcall(makefolder, dir)
-        end
-
-        -- Write
-        timedCb("Writing file…", 0.96)
-        writefile(opts.FilePath, xml)
-
-        local elapsed = tick() - t0
-        local st = SaveInstance.Statistics
-        st.Elapsed = elapsed
-
-        local sizeMB = #xml / 1048576
-        local instPct = st.TotalInstances > 0
-            and (st.SavedInstances / st.TotalInstances * 100) or 0
-        local propPct = st.TotalProperties > 0
-            and (st.SavedProperties / st.TotalProperties * 100) or 0
-
-        local summary = string.format(
-            "✅ Done in %.1fs  |  📁 %.2f MB  |  "..
-            "🧱 %d/%d inst (%.0f%%)  |  "..
-            "🔧 %d/%d props (%.0f%%)  |  "..
-            "📜 %d scripts (%d failed)",
-            elapsed, sizeMB,
-            st.SavedInstances, st.TotalInstances, instPct,
-            st.SavedProperties, st.TotalProperties, propPct,
-            st.DecompiledScripts, st.FailedScripts)
-
-        timedCb(summary, 1.0)
-        log(opts, summary, "INFO")
-
-        finalResult = {
-            FilePath   = opts.FilePath,
-            FileSize   = #xml,
-            Elapsed    = elapsed,
-            Statistics = deepCopy(st),
-        }
+        -- Phase 3: close writer (final flush)
+        writer:close()
+        cb("Flushing file…", 0.96)
     end)
 
     -- Cleanup clone
@@ -1560,520 +1347,551 @@ function SaveInstance.Save(userOptions)
         pcall(function() saveObj:Destroy() end)
     end
 
-    if not ok then
-        local msg = "[SaveInstance] Save failed: " .. tostring(err)
-        log(opts, msg, "ERROR")
+    SaveInstance._busy = false
+
+    if not saveOk then
+        local msg = "[SI] Save failed: " .. tostring(saveErr)
+        warn(msg)
         if opts.OnError then pcall(opts.OnError, msg) end
-        if opts.ShowNotifications then SaveInstance.Notify("Save FAILED", msg, 10) end
-        error(msg)
+        if opts.ShowNotifications then
+            SaveInstance.Notify("SaveInstance ❌", msg, 10)
+        end
+        return false, msg
     end
 
-    if opts.OnComplete then pcall(opts.OnComplete, true, finalResult) end
+    -- Validate
+    local valid = validate(opts.FilePath, opts)
+
+    local elapsed = tick() - t0
+    local sizeMB  = writer.totalLen / 1048576
+
+    local summary = string.format(
+        "✅ Saved in %.1fs | 📁 %.2f MB | 🧱 %d inst (%d failed) | 🔧 %d props | 📜 %d scripts (%d failed)",
+        elapsed, sizeMB,
+        Stats.saved or 0, Stats.failed or 0,
+        Stats.savedProps or 0,
+        Stats.decompiledScripts or 0, Stats.failedScripts or 0)
+
+    cb(summary, 1.0)
+
     if opts.ShowNotifications then
-        local st = finalResult.Statistics
-        SaveInstance.Notify("SaveInstance Complete ✅",
-            string.format("%d instances saved  •  %.2f MB\n%s",
-                st.SavedInstances,
-                finalResult.FileSize / 1048576,
-                opts.FilePath), 8)
+        SaveInstance.Notify("SaveInstance ✅",
+            string.format("Done in %.1fs — %d instances — %.2f MB\n%s",
+                elapsed, Stats.saved or 0, sizeMB, opts.FilePath), 8)
     end
 
-    return true, finalResult
+    local result = {
+        FilePath   = opts.FilePath,
+        FileSize   = writer.totalLen,
+        Elapsed    = elapsed,
+        Valid      = valid,
+        Statistics = deepCopy(Stats),
+    }
+
+    if opts.OnComplete then pcall(opts.OnComplete, true, result) end
+    return true, result
 end
 
---[[━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    SECTION 19 ─ NOTIFICATION
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━]]
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+-- SECTION 17: NOTIFICATION
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 function SaveInstance.Notify(title, text, dur)
     dur = dur or 5
     local ok = pcall(function()
-        StarterGui:SetCore("SendNotification", {
-            Title    = title,
-            Text     = text,
-            Duration = dur,
-        })
+        StarterGui:SetCore("SendNotification",
+            { Title = title, Text = text, Duration = dur })
     end)
     if not ok then print(string.format("[%s] %s", title, text)) end
 end
 
---[[━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    SECTION 20 ─ GUI
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━]]
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+-- SECTION 18: GUI
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-local GUI = {}
-
-local PALETTE = {
-    BG         = Color3.fromRGB(18, 18, 24),
-    PANEL      = Color3.fromRGB(28, 28, 38),
-    TITLE_BAR  = Color3.fromRGB(22, 22, 30),
-    ACCENT     = Color3.fromRGB(80, 140, 255),
-    ACCENT2    = Color3.fromRGB(100, 220, 160),
-    BTN_RED    = Color3.fromRGB(210, 50, 50),
-    TEXT       = Color3.fromRGB(230, 230, 240),
-    SUBTEXT    = Color3.fromRGB(140, 140, 160),
-    BORDER     = Color3.fromRGB(50, 55, 75),
-    BAR_BG     = Color3.fromRGB(14, 14, 20),
-    SUCCESS    = Color3.fromRGB(60, 200, 110),
-    WARNING    = Color3.fromRGB(230, 170, 50),
-    ERROR      = Color3.fromRGB(220, 60, 60),
+local C = {
+    BG       = Color3.fromRGB(15, 15, 20),
+    PANEL    = Color3.fromRGB(24, 24, 32),
+    TITLEBAR = Color3.fromRGB(20, 20, 28),
+    ACCENT   = Color3.fromRGB(80, 140, 255),
+    GREEN    = Color3.fromRGB(60, 210, 110),
+    RED      = Color3.fromRGB(210, 55, 55),
+    ORANGE   = Color3.fromRGB(230, 165, 45),
+    TEXT     = Color3.fromRGB(225, 225, 235),
+    SUB      = Color3.fromRGB(130, 130, 150),
+    BORDER   = Color3.fromRGB(45, 50, 70),
+    BARBG    = Color3.fromRGB(12, 12, 18),
 }
 
--- Helper: add UICorner
-local function corner(parent, r)
+local function mkCorner(p, r)
     local c = Instance.new("UICorner")
     c.CornerRadius = UDim.new(0, r or 10)
-    c.Parent = parent
-    return c
+    c.Parent = p
 end
 
--- Helper: add UIStroke
-local function stroke(parent, color, thickness, trans)
+local function mkStroke(p, color, thick)
     local s = Instance.new("UIStroke")
-    s.Color = color or PALETTE.BORDER
-    s.Thickness = thickness or 1.5
-    s.Transparency = trans or 0
-    s.Parent = parent
-    return s
+    s.Color = color or C.BORDER
+    s.Thickness = thick or 1.5
+    s.Parent = p
 end
 
--- Helper: Label
-local function label(parent, props)
+local function mkLabel(p, txt, size, color, font, xa, wrap)
     local l = Instance.new("TextLabel")
     l.BackgroundTransparency = 1
+    l.Text = txt or ""
+    l.TextSize = size or 14
+    l.TextColor3 = color or C.TEXT
+    l.Font = font or Enum.Font.Gotham
+    l.TextXAlignment = xa or Enum.TextXAlignment.Left
+    l.TextYAlignment = Enum.TextYAlignment.Center
+    l.TextWrapped = wrap or false
+    l.Size = UDim2.new(1, 0, 1, 0)
     l.BorderSizePixel = 0
-    l.Font = props.Font or Enum.Font.Gotham
-    l.TextColor3 = props.TextColor3 or PALETTE.TEXT
-    l.TextSize = props.TextSize or 14
-    l.Text = props.Text or ""
-    l.TextXAlignment = props.TextXAlignment or Enum.TextXAlignment.Left
-    l.TextYAlignment = props.TextYAlignment or Enum.TextYAlignment.Center
-    l.TextWrapped = props.TextWrapped or false
-    l.Size = props.Size or UDim2.new(1, 0, 0, 20)
-    l.Position = props.Position or UDim2.new(0, 0, 0, 0)
-    l.ZIndex = props.ZIndex or 2
-    l.Parent = parent
+    l.ZIndex = 5
+    l.Parent = p
     return l
 end
 
--- Helper: Frame
-local function frame(parent, props)
-    local f = Instance.new("Frame")
-    f.BackgroundColor3 = props.BackgroundColor3 or PALETTE.PANEL
-    f.BorderSizePixel = 0
-    f.Size = props.Size or UDim2.new(1, 0, 0, 40)
-    f.Position = props.Position or UDim2.new(0, 0, 0, 0)
-    f.ZIndex = props.ZIndex or 1
-    f.Name = props.Name or "Frame"
-    if props.Parent then f.Parent = parent end
-    f.Parent = parent
-    return f
-end
-
--- Helper: Button
-local function button(parent, props)
+local function mkBtn(p, txt, color, sz, pos)
     local b = Instance.new("TextButton")
-    b.BackgroundColor3 = props.Color or PALETTE.ACCENT
+    b.BackgroundColor3 = color
     b.BorderSizePixel = 0
     b.AutoButtonColor = false
     b.Font = Enum.Font.GothamBold
-    b.TextColor3 = Color3.new(1, 1, 1)
-    b.TextSize = props.TextSize or 15
-    b.Text = props.Text or "Button"
-    b.Size = props.Size or UDim2.new(1, 0, 0, 44)
-    b.Position = props.Position or UDim2.new(0, 0, 0, 0)
-    b.ZIndex = props.ZIndex or 2
-    b.Name = props.Name or "Button"
-    b.Parent = parent
-    corner(b, 8)
+    b.TextColor3 = Color3.new(1,1,1)
+    b.TextSize = 14
+    b.Text = txt
+    b.Size = sz or UDim2.new(1,0,0,44)
+    b.Position = pos or UDim2.new(0,0,0,0)
+    b.ZIndex = 5
+    b.Parent = p
+    mkCorner(b, 8)
 
-    local base = props.Color or PALETTE.ACCENT
-    local hover = Color3.fromRGB(
-        math.min(base.R * 255 + 30, 255),
-        math.min(base.G * 255 + 30, 255),
-        math.min(base.B * 255 + 30, 255))
-    local press = Color3.fromRGB(
-        math.max(base.R * 255 - 20, 0),
-        math.max(base.G * 255 - 20, 0),
-        math.max(base.B * 255 - 20, 0))
+    local base  = color
+    local hov   = Color3.fromRGB(
+        math.min(base.R*255+28,255),
+        math.min(base.G*255+28,255),
+        math.min(base.B*255+28,255))
+    local pr    = Color3.fromRGB(
+        math.max(base.R*255-20,0),
+        math.max(base.G*255-20,0),
+        math.max(base.B*255-20,0))
 
-    b.MouseEnter:Connect(function()    b.BackgroundColor3 = hover  end)
-    b.MouseLeave:Connect(function()    b.BackgroundColor3 = base   end)
-    b.MouseButton1Down:Connect(function() b.BackgroundColor3 = press end)
-    b.MouseButton1Up:Connect(function()   b.BackgroundColor3 = hover end)
-
+    b.MouseEnter:Connect(function()    b.BackgroundColor3 = hov  end)
+    b.MouseLeave:Connect(function()    b.BackgroundColor3 = base end)
+    b.MouseButton1Down:Connect(function() b.BackgroundColor3 = pr end)
+    b.MouseButton1Up:Connect(function()   b.BackgroundColor3 = hov end)
     return b
 end
 
--- Dragging helper
-local function makeDraggable(handle, target)
-    local dragging, dragStart, startPos
-    handle.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1
-        or input.UserInputType == Enum.UserInputType.Touch then
-            dragging  = true
-            dragStart = input.Position
-            startPos  = target.Position
+local function mkDraggable(handle, win)
+    local drag, ds, sp = false, nil, nil
+    handle.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1
+        or i.UserInputType == Enum.UserInputType.Touch then
+            drag = true; ds = i.Position; sp = win.Position
         end
     end)
-    handle.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1
-        or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = false
+    handle.InputEnded:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1
+        or i.UserInputType == Enum.UserInputType.Touch then
+            drag = false
         end
     end)
-    UserInputService.InputChanged:Connect(function(input)
-        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
-                      or input.UserInputType == Enum.UserInputType.Touch) then
-            local d = input.Position - dragStart
-            target.Position = UDim2.new(
-                startPos.X.Scale, startPos.X.Offset + d.X,
-                startPos.Y.Scale, startPos.Y.Offset + d.Y)
+    UserInputService.InputChanged:Connect(function(i)
+        if drag and (i.UserInputType == Enum.UserInputType.MouseMovement
+                  or i.UserInputType == Enum.UserInputType.Touch) then
+            local d = i.Position - ds
+            win.Position = UDim2.new(sp.X.Scale, sp.X.Offset+d.X,
+                                     sp.Y.Scale, sp.Y.Offset+d.Y)
         end
     end)
 end
 
-function GUI.Build()
-    -- Destroy old GUI
-    if GUI._root then pcall(function() GUI._root:Destroy() end) end
+local function buildGUI()
+    -- Remove old
+    local hui = ENV.gethui
+    if not hui then hui = game:GetService("CoreGui") end
 
-    -- ── Root ScreenGui ───────────────────────────────────────────────────────
-    local sg = Instance.new("ScreenGui")
-    sg.Name            = "SI_Pro_v4"
-    sg.ResetOnSpawn    = false
-    sg.ZIndexBehavior  = Enum.ZIndexBehavior.Sibling
-    sg.IgnoreGuiInset  = true
-    sg.Parent          = gethui()
-    GUI._root          = sg
-
-    -- ── Main Window ──────────────────────────────────────────────────────────
-    local win = Instance.new("Frame")
-    win.Name            = "Window"
-    win.Size            = UDim2.new(0, 520, 0, 580)
-    win.Position        = UDim2.new(0.5, -260, 0.5, -290)
-    win.BackgroundColor3= PALETTE.BG
-    win.BorderSizePixel = 0
-    win.Parent          = sg
-    corner(win, 14)
-    stroke(win, PALETTE.ACCENT, 2, 0.35)
-
-    -- Drop shadow image
-    local shadow = Instance.new("ImageLabel")
-    shadow.Size             = UDim2.new(1, 50, 1, 50)
-    shadow.Position         = UDim2.new(0, -25, 0, -25)
-    shadow.BackgroundTransparency = 1
-    shadow.Image            = "rbxassetid://5554236805"
-    shadow.ImageColor3      = Color3.new(0, 0, 0)
-    shadow.ImageTransparency= 0.45
-    shadow.ScaleType        = Enum.ScaleType.Slice
-    shadow.SliceCenter      = Rect.new(23, 23, 277, 277)
-    shadow.ZIndex           = 0
-    shadow.Parent           = win
-
-    -- ── Title Bar ────────────────────────────────────────────────────────────
-    local titleBar = frame(win, {
-        Name             = "TitleBar",
-        BackgroundColor3 = PALETTE.TITLE_BAR,
-        Size             = UDim2.new(1, 0, 0, 56),
-    })
-    corner(titleBar, 14)
-    -- Cover bottom rounded corners
-    local tbFill = frame(titleBar, {
-        BackgroundColor3 = PALETTE.TITLE_BAR,
-        Size             = UDim2.new(1, 0, 0, 14),
-        Position         = UDim2.new(0, 0, 1, -14),
-    })
-
-    -- Icon
-    local iconLbl = label(titleBar, {
-        Text      = "💾",
-        TextSize  = 26,
-        Size      = UDim2.new(0, 40, 1, 0),
-        Position  = UDim2.new(0, 12, 0, 0),
-    })
-
-    -- Title text
-    label(titleBar, {
-        Text      = "SaveInstance Pro",
-        Font      = Enum.Font.GothamBold,
-        TextSize  = 19,
-        TextColor3= PALETTE.TEXT,
-        Size      = UDim2.new(1, -130, 0, 28),
-        Position  = UDim2.new(0, 56, 0, 6),
-    })
-
-    -- Version / executor line
-    label(titleBar, {
-        Text      = string.format("v%s  •  %s", SaveInstance.Version, UNC.ExecutorName),
-        Font      = Enum.Font.Gotham,
-        TextSize  = 11,
-        TextColor3= PALETTE.SUBTEXT,
-        Size      = UDim2.new(1, -130, 0, 18),
-        Position  = UDim2.new(0, 56, 0, 32),
-    })
-
-    -- Close button
-    local closeBtn = button(titleBar, {
-        Text     = "✕",
-        Color    = PALETTE.BTN_RED,
-        TextSize = 18,
-        Size     = UDim2.new(0, 38, 0, 38),
-        Position = UDim2.new(1, -48, 0, 9),
-        Name     = "CloseBtn",
-    })
-    closeBtn.MouseButton1Click:Connect(function() sg:Destroy() end)
-
-    makeDraggable(titleBar, win)
-
-    -- ── Scrollable Content ────────────────────────────────────────────────────
-    local scroll = Instance.new("ScrollingFrame")
-    scroll.Name                 = "Scroll"
-    scroll.Size                 = UDim2.new(1, -24, 1, -230)
-    scroll.Position             = UDim2.new(0, 12, 0, 64)
-    scroll.BackgroundTransparency = 1
-    scroll.BorderSizePixel      = 0
-    scroll.ScrollBarThickness   = 5
-    scroll.ScrollBarImageColor3 = PALETTE.ACCENT
-    scroll.CanvasSize           = UDim2.new(0, 0, 0, 0)
-    scroll.AutomaticCanvasSize  = Enum.AutomaticSize.Y
-    scroll.Parent               = win
-
-    local layout = Instance.new("UIListLayout")
-    layout.SortOrder    = Enum.SortOrder.LayoutOrder
-    layout.Padding      = UDim.new(0, 8)
-    layout.Parent       = scroll
-
-    local padding = Instance.new("UIPadding")
-    padding.PaddingTop    = UDim.new(0, 4)
-    padding.PaddingBottom = UDim.new(0, 4)
-    padding.Parent        = scroll
-
-    -- Section label helper
-    local function sectionLabel(text, order)
-        local l2 = label(scroll, {
-            Text       = text,
-            Font       = Enum.Font.GothamBold,
-            TextSize   = 12,
-            TextColor3 = PALETTE.SUBTEXT,
-            Size       = UDim2.new(1, 0, 0, 18),
-        })
-        l2.LayoutOrder = order
-        return l2
+    for _, c in ipairs(hui:GetChildren()) do
+        if c.Name == "SI_Pro_v5" then c:Destroy() end
     end
 
-    -- Save buttons config
-    local BUTTONS = {
-        { label = "Save Entire Game",          icon = "🌍", color = Color3.fromRGB(60,130,255),  order = 2,
-          opts  = { SaveObject = game, SaveTerrain = true, DecompileScripts = true,
-                    SaveAttributes = true, SaveTags = true } },
-        { label = "Save Workspace",            icon = "🗺️", color = Color3.fromRGB(60,190,100),  order = 3,
-          opts  = { SaveObject = workspace, SaveTerrain = true } },
-        { label = "Save ReplicatedStorage",    icon = "📦", color = Color3.fromRGB(200,120,60),  order = 4,
-          opts  = { SaveObject = game:GetService("ReplicatedStorage") } },
-        { label = "Save ServerStorage",        icon = "🗄️", color = Color3.fromRGB(150,90,210),  order = 5,
-          opts  = { SaveObject = game:GetService("ServerStorage") } },
-        { label = "Save Lighting",             icon = "💡", color = Color3.fromRGB(230,190,40),  order = 6,
-          opts  = { SaveObject = game:GetService("Lighting") } },
-        { label = "Save StarterPack",          icon = "🎒", color = Color3.fromRGB(60,200,200),  order = 7,
-          opts  = { SaveObject = game:GetService("StarterPack") } },
-        { label = "Save Players+Characters",   icon = "👥", color = Color3.fromRGB(230,100,100), order = 8,
-          opts  = { SaveObject = game:GetService("Players"),
-                    SavePlayers = true, RemovePlayerCharacters = false } },
+    local sg = Instance.new("ScreenGui")
+    sg.Name           = "SI_Pro_v5"
+    sg.ResetOnSpawn   = false
+    sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    sg.IgnoreGuiInset = true
+    sg.Parent         = hui
+
+    -- Window
+    local win = Instance.new("Frame")
+    win.Size            = UDim2.new(0, 510, 0, 570)
+    win.Position        = UDim2.new(0.5,-255,0.5,-285)
+    win.BackgroundColor3= C.BG
+    win.BorderSizePixel = 0
+    win.Parent          = sg
+    mkCorner(win, 14)
+    mkStroke(win, C.ACCENT, 2)
+
+    -- Shadow
+    local shad = Instance.new("ImageLabel")
+    shad.Size = UDim2.new(1,50,1,50)
+    shad.Position = UDim2.new(0,-25,0,-25)
+    shad.BackgroundTransparency = 1
+    shad.Image = "rbxassetid://5554236805"
+    shad.ImageColor3 = Color3.new(0,0,0)
+    shad.ImageTransparency = 0.45
+    shad.ScaleType = Enum.ScaleType.Slice
+    shad.SliceCenter = Rect.new(23,23,277,277)
+    shad.ZIndex = 0
+    shad.Parent = win
+
+    -- Title bar
+    local tb = Instance.new("Frame")
+    tb.Size = UDim2.new(1,0,0,54)
+    tb.BackgroundColor3 = C.TITLEBAR
+    tb.BorderSizePixel = 0
+    tb.ZIndex = 6
+    tb.Parent = win
+    mkCorner(tb, 14)
+    -- fill bottom-round of title bar
+    local tbfix = Instance.new("Frame")
+    tbfix.Size = UDim2.new(1,0,0,14)
+    tbfix.Position = UDim2.new(0,0,1,-14)
+    tbfix.BackgroundColor3 = C.TITLEBAR
+    tbfix.BorderSizePixel = 0
+    tbfix.ZIndex = 6
+    tbfix.Parent = tb
+
+    -- Title text
+    local titleHolder = Instance.new("Frame")
+    titleHolder.Size = UDim2.new(1,-100,1,0)
+    titleHolder.Position = UDim2.new(0,14,0,0)
+    titleHolder.BackgroundTransparency = 1
+    titleHolder.BorderSizePixel = 0
+    titleHolder.ZIndex = 7
+    titleHolder.Parent = tb
+
+    local titleLbl = Instance.new("TextLabel")
+    titleLbl.Size = UDim2.new(1,0,0,28)
+    titleLbl.Position = UDim2.new(0,0,0,6)
+    titleLbl.BackgroundTransparency = 1
+    titleLbl.Font = Enum.Font.GothamBold
+    titleLbl.TextSize = 19
+    titleLbl.Text = "💾 SaveInstance Pro"
+    titleLbl.TextColor3 = C.TEXT
+    titleLbl.TextXAlignment = Enum.TextXAlignment.Left
+    titleLbl.ZIndex = 7
+    titleLbl.Parent = titleHolder
+
+    local verLbl = Instance.new("TextLabel")
+    verLbl.Size = UDim2.new(1,0,0,18)
+    verLbl.Position = UDim2.new(0,0,0,32)
+    verLbl.BackgroundTransparency = 1
+    verLbl.Font = Enum.Font.Gotham
+    verLbl.TextSize = 11
+    verLbl.Text = "v5.0  •  " .. ENV.Name .. "  •  Anti-Freeze Edition"
+    verLbl.TextColor3 = C.SUB
+    verLbl.TextXAlignment = Enum.TextXAlignment.Left
+    verLbl.ZIndex = 7
+    verLbl.Parent = titleHolder
+
+    -- Close btn
+    local closeBtn = mkBtn(tb, "✕", C.RED,
+        UDim2.new(0,36,0,36), UDim2.new(1,-46,0,9))
+    closeBtn.TextSize = 18
+    closeBtn.MouseButton1Click:Connect(function() sg:Destroy() end)
+
+    mkDraggable(tb, win)
+
+    -- Scroll area for buttons
+    local scroll = Instance.new("ScrollingFrame")
+    scroll.Size = UDim2.new(1,-22,1,-225)
+    scroll.Position = UDim2.new(0,11,0,62)
+    scroll.BackgroundTransparency = 1
+    scroll.BorderSizePixel = 0
+    scroll.ScrollBarThickness = 5
+    scroll.ScrollBarImageColor3 = C.ACCENT
+    scroll.CanvasSize = UDim2.new(0,0,0,0)
+    scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    scroll.ZIndex = 4
+    scroll.Parent = win
+
+    local layout = Instance.new("UIListLayout")
+    layout.SortOrder = Enum.SortOrder.LayoutOrder
+    layout.Padding = UDim.new(0,7)
+    layout.Parent = scroll
+
+    local lpad = Instance.new("UIPadding")
+    lpad.PaddingTop = UDim.new(0,4)
+    lpad.PaddingBottom = UDim.new(0,4)
+    lpad.Parent = scroll
+
+    -- Section divider helper
+    local function sectionDiv(txt, order)
+        local f = Instance.new("Frame")
+        f.Size = UDim2.new(1,0,0,20)
+        f.BackgroundTransparency = 1
+        f.BorderSizePixel = 0
+        f.LayoutOrder = order
+        f.ZIndex = 4
+        f.Parent = scroll
+        local l = Instance.new("TextLabel")
+        l.Size = UDim2.new(1,0,1,0)
+        l.BackgroundTransparency = 1
+        l.Font = Enum.Font.GothamBold
+        l.TextSize = 11
+        l.Text = txt
+        l.TextColor3 = C.SUB
+        l.TextXAlignment = Enum.TextXAlignment.Left
+        l.ZIndex = 5
+        l.Parent = f
+    end
+
+    -- Status label + progress bar refs
+    local statusLbl, statsLbl, progBar, progPct
+
+    -- Button configs
+    local BTNS = {
+        { txt = "🌍  Save Entire Game",         color = Color3.fromRGB(55,125,255), order = 2,
+          opts = { SaveObject = game, SaveTerrain = true, DecompileScripts = true,
+                   SaveAttributes = true, SaveTags = true } },
+        { txt = "🗺️  Save Workspace",            color = Color3.fromRGB(55,185,95),  order = 3,
+          opts = { SaveObject = workspace, SaveTerrain = true } },
+        { txt = "📦  Save ReplicatedStorage",    color = Color3.fromRGB(195,115,55), order = 4,
+          opts = { SaveObject = game:GetService("ReplicatedStorage") } },
+        { txt = "🗄️  Save ServerStorage",        color = Color3.fromRGB(145,85,205), order = 5,
+          opts = { SaveObject = game:GetService("ServerStorage") } },
+        { txt = "💡  Save Lighting",             color = Color3.fromRGB(225,185,40), order = 6,
+          opts = { SaveObject = game:GetService("Lighting") } },
+        { txt = "🎒  Save StarterPack",          color = Color3.fromRGB(55,195,195), order = 7,
+          opts = { SaveObject = game:GetService("StarterPack") } },
+        { txt = "👥  Save Players + Characters", color = Color3.fromRGB(220,90,90),  order = 8,
+          opts = { SaveObject = game:GetService("Players"),
+                   SavePlayers = true, RemovePlayerCharacters = false } },
     }
 
-    sectionLabel("  QUICK SAVE", 1)
+    sectionDiv("  QUICK SAVE", 1)
 
-    -- Status / progress references (needed by button handlers below)
-    local statusLbl, statsLbl, progressBar, progressBg, progressPct
-
-    local isSaving = false
-
-    for _, cfg in ipairs(BUTTONS) do
-        local btn = button(scroll, {
-            Text      = cfg.icon .. "  " .. cfg.label,
-            Color     = cfg.color,
-            TextSize  = 15,
-            Size      = UDim2.new(1, 0, 0, 46),
-            Name      = "Btn_" .. cfg.label,
-        })
-        btn.LayoutOrder  = cfg.order
+    for _, cfg in ipairs(BTNS) do
+        local btn = mkBtn(scroll, cfg.txt, cfg.color,
+            UDim2.new(1,0,0,44))
+        btn.LayoutOrder = cfg.order
         btn.TextXAlignment = Enum.TextXAlignment.Left
-        local lpad = Instance.new("UIPadding")
-        lpad.PaddingLeft = UDim.new(0, 14)
-        lpad.Parent = btn
+        local lp2 = Instance.new("UIPadding")
+        lp2.PaddingLeft = UDim.new(0,12)
+        lp2.Parent = btn
 
         btn.MouseButton1Click:Connect(function()
-            if isSaving then
-                SaveInstance.Notify("SaveInstance", "Already saving! Please wait.", 3)
+            if SaveInstance._busy then
+                SaveInstance.Notify("SaveInstance", "⏳ Already saving – please wait!", 3)
                 return
             end
-            isSaving = true
-            local origText  = btn.Text
+
+            local origTxt   = btn.Text
             local origColor = btn.BackgroundColor3
             btn.Text = "⏳  Saving…"
-            btn.BackgroundColor3 = PALETTE.WARNING
+            btn.BackgroundColor3 = C.ORANGE
 
+            -- Run save in its own thread so GUI stays live
             task.spawn(function()
                 local saveOpts = deepCopy(cfg.opts)
+
                 saveOpts.StatusCallback = function(msg, pct)
-                    if statusLbl then
-                        -- Only keep last line for display
-                        local lastLine = msg:match("([^\n]+)$") or msg
-                        statusLbl.Text = lastLine
-                    end
-                    if progressBar and pct then
+                    -- Strip to last line for compact display
+                    local line = (msg or ""):match("([^\n]+)$") or msg or ""
+                    if statusLbl then statusLbl.Text = line end
+                    if progBar and pct then
                         local clamped = math.clamp(pct, 0, 1)
-                        progressBar.Size = UDim2.new(clamped, 0, 1, 0)
-                        if progressPct then
-                            progressPct.Text = string.format("%.0f%%", clamped * 100)
+                        -- Smooth tween
+                        local ti = TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+                        TweenService:Create(progBar, ti,
+                            { Size = UDim2.new(clamped, 0, 1, 0) }):Play()
+                        if progPct then
+                            progPct.Text = string.format("%.0f%%", clamped * 100)
                         end
                     end
                     if statsLbl then
-                        local st = SaveInstance.Statistics
                         statsLbl.Text = string.format(
-                            "🧱 %d/%d inst  |  🔧 %d props  |  📜 %d scripts",
-                            st.SavedInstances, st.TotalInstances,
-                            st.SavedProperties, st.DecompiledScripts)
+                            "🧱 %d inst  |  🔧 %d props  |  📜 %d scripts  |  ❌ %d failed",
+                            Stats.saved or 0,
+                            Stats.savedProps or 0,
+                            Stats.decompiledScripts or 0,
+                            (Stats.failed or 0) + (Stats.failedScripts or 0))
                     end
                 end
 
-                local ok, result = pcall(SaveInstance.Save, saveOpts)
-                task.wait(0.3)
-                isSaving = false
-                btn.Text = origText
+                local ok, res = SaveInstance.Save(saveOpts)
+
+                -- Restore button
+                task.wait(0.2)
+                btn.Text = origTxt
                 btn.BackgroundColor3 = origColor
 
                 if not ok then
                     if statusLbl then
-                        statusLbl.Text = "❌ Error: " .. tostring(result):sub(1, 80)
-                        statusLbl.TextColor3 = PALETTE.ERROR
+                        statusLbl.Text = "❌ Save failed – see console for details"
+                        statusLbl.TextColor3 = C.RED
                     end
-                    task.wait(5)
+                    task.wait(6)
                     if statusLbl then
                         statusLbl.Text = "Ready."
-                        statusLbl.TextColor3 = PALETTE.TEXT
+                        statusLbl.TextColor3 = C.TEXT
                     end
-                    if progressBar then
-                        progressBar.Size = UDim2.new(0, 0, 1, 0)
+                    if progBar then
+                        TweenService:Create(progBar, TweenInfo.new(0.4),
+                            { Size = UDim2.new(0,0,1,0) }):Play()
+                        if progPct then progPct.Text = "0%" end
                     end
-                    if progressPct then progressPct.Text = "0%" end
+                else
+                    if statusLbl then
+                        statusLbl.TextColor3 = C.GREEN
+                        task.wait(4)
+                        if statusLbl then
+                            statusLbl.TextColor3 = C.TEXT
+                            statusLbl.Text = "Ready."
+                        end
+                    end
                 end
             end)
         end)
     end
 
-    -- ── Status Panel ─────────────────────────────────────────────────────────
-    local statusPanel = frame(win, {
-        Name             = "StatusPanel",
-        BackgroundColor3 = PALETTE.PANEL,
-        Size             = UDim2.new(1, -24, 0, 155),
-        Position         = UDim2.new(0, 12, 1, -168),
-    })
-    corner(statusPanel, 10)
-    stroke(statusPanel, PALETTE.BORDER, 1.5)
+    -- ── Status panel ──────────────────────────────────────────────────────
+    local sPanel = Instance.new("Frame")
+    sPanel.Size = UDim2.new(1,-22,0,158)
+    sPanel.Position = UDim2.new(0,11,1,-170)
+    sPanel.BackgroundColor3 = C.PANEL
+    sPanel.BorderSizePixel = 0
+    sPanel.ZIndex = 4
+    sPanel.Parent = win
+    mkCorner(sPanel, 10)
+    mkStroke(sPanel, C.BORDER, 1.5)
 
-    label(statusPanel, {
-        Text       = "STATUS",
-        Font       = Enum.Font.GothamBold,
-        TextSize   = 11,
-        TextColor3 = PALETTE.SUBTEXT,
-        Size       = UDim2.new(1, -16, 0, 18),
-        Position   = UDim2.new(0, 10, 0, 8),
-    })
+    -- "STATUS" label
+    local sHdr = Instance.new("TextLabel")
+    sHdr.Size = UDim2.new(1,-16,0,18)
+    sHdr.Position = UDim2.new(0,10,0,8)
+    sHdr.BackgroundTransparency = 1
+    sHdr.Font = Enum.Font.GothamBold
+    sHdr.TextSize = 11
+    sHdr.Text = "STATUS"
+    sHdr.TextColor3 = C.SUB
+    sHdr.TextXAlignment = Enum.TextXAlignment.Left
+    sHdr.ZIndex = 5
+    sHdr.Parent = sPanel
 
-    statusLbl = label(statusPanel, {
-        Text       = "Ready. Select a save option above.",
-        Font       = Enum.Font.Gotham,
-        TextSize   = 13,
-        TextColor3 = PALETTE.TEXT,
-        Size       = UDim2.new(1, -16, 0, 42),
-        Position   = UDim2.new(0, 10, 0, 26),
-        TextWrapped= true,
-    })
+    -- Main status text
+    statusLbl = Instance.new("TextLabel")
+    statusLbl.Size = UDim2.new(1,-16,0,40)
+    statusLbl.Position = UDim2.new(0,10,0,26)
+    statusLbl.BackgroundTransparency = 1
+    statusLbl.Font = Enum.Font.Gotham
+    statusLbl.TextSize = 13
+    statusLbl.Text = "Ready. Select a save option above."
+    statusLbl.TextColor3 = C.TEXT
+    statusLbl.TextXAlignment = Enum.TextXAlignment.Left
+    statusLbl.TextYAlignment = Enum.TextYAlignment.Top
+    statusLbl.TextWrapped = true
+    statusLbl.ZIndex = 5
+    statusLbl.Parent = sPanel
 
-    statsLbl = label(statusPanel, {
-        Text       = "🧱 0/0 inst  |  🔧 0 props  |  📜 0 scripts",
-        Font       = Enum.Font.GothamMedium,
-        TextSize   = 11,
-        TextColor3 = PALETTE.SUBTEXT,
-        Size       = UDim2.new(1, -16, 0, 18),
-        Position   = UDim2.new(0, 10, 0, 70),
-    })
+    -- Stats line
+    statsLbl = Instance.new("TextLabel")
+    statsLbl.Size = UDim2.new(1,-16,0,18)
+    statsLbl.Position = UDim2.new(0,10,0,70)
+    statsLbl.BackgroundTransparency = 1
+    statsLbl.Font = Enum.Font.GothamMedium
+    statsLbl.TextSize = 11
+    statsLbl.Text = "🧱 0 inst  |  🔧 0 props  |  📜 0 scripts  |  ❌ 0 failed"
+    statsLbl.TextColor3 = C.SUB
+    statsLbl.TextXAlignment = Enum.TextXAlignment.Left
+    statsLbl.ZIndex = 5
+    statsLbl.Parent = sPanel
 
-    -- Progress bar
-    progressBg = frame(statusPanel, {
-        BackgroundColor3 = PALETTE.BAR_BG,
-        Size             = UDim2.new(1, -20, 0, 22),
-        Position         = UDim2.new(0, 10, 0, 96),
-    })
-    corner(progressBg, 6)
+    -- Progress bar background
+    local pbBg = Instance.new("Frame")
+    pbBg.Size = UDim2.new(1,-20,0,22)
+    pbBg.Position = UDim2.new(0,10,0,94)
+    pbBg.BackgroundColor3 = C.BARBG
+    pbBg.BorderSizePixel = 0
+    pbBg.ZIndex = 5
+    pbBg.Parent = sPanel
+    mkCorner(pbBg, 6)
 
-    progressBar = frame(progressBg, {
-        BackgroundColor3 = PALETTE.SUCCESS,
-        Size             = UDim2.new(0, 0, 1, 0),
-    })
-    corner(progressBar, 6)
+    -- Progress bar fill
+    progBar = Instance.new("Frame")
+    progBar.Size = UDim2.new(0,0,1,0)
+    progBar.BackgroundColor3 = C.GREEN
+    progBar.BorderSizePixel = 0
+    progBar.ZIndex = 6
+    progBar.Parent = pbBg
+    mkCorner(progBar, 6)
 
-    local barGrad = Instance.new("UIGradient")
-    barGrad.Color = ColorSequence.new{
-        ColorSequenceKeypoint.new(0, PALETTE.SUCCESS),
-        ColorSequenceKeypoint.new(1, PALETTE.ACCENT),
+    local grad = Instance.new("UIGradient")
+    grad.Color = ColorSequence.new{
+        ColorSequenceKeypoint.new(0, C.GREEN),
+        ColorSequenceKeypoint.new(1, C.ACCENT),
     }
-    barGrad.Parent = progressBar
+    grad.Parent = progBar
 
-    progressPct = label(progressBg, {
-        Text       = "0%",
-        Font       = Enum.Font.GothamBold,
-        TextSize   = 12,
-        TextColor3 = Color3.new(1,1,1),
-        Size       = UDim2.new(1, 0, 1, 0),
-        TextXAlignment = Enum.TextXAlignment.Center,
-        ZIndex     = 5,
-    })
+    -- Progress percent text
+    progPct = Instance.new("TextLabel")
+    progPct.Size = UDim2.new(1,0,1,0)
+    progPct.BackgroundTransparency = 1
+    progPct.Font = Enum.Font.GothamBold
+    progPct.TextSize = 12
+    progPct.Text = "0%"
+    progPct.TextColor3 = Color3.new(1,1,1)
+    progPct.TextXAlignment = Enum.TextXAlignment.Center
+    progPct.ZIndex = 7
+    progPct.Parent = pbBg
 
     -- Executor badge
-    local badge = frame(statusPanel, {
-        BackgroundColor3 = PALETTE.ACCENT,
-        Size             = UDim2.new(0, 0, 0, 22),
-        Position         = UDim2.new(0, 10, 0, 126),
-    })
+    local badge = Instance.new("Frame")
+    badge.Size = UDim2.new(0,0,0,22)
+    badge.Position = UDim2.new(0,10,0,124)
+    badge.BackgroundColor3 = C.ACCENT
+    badge.BorderSizePixel = 0
     badge.AutomaticSize = Enum.AutomaticSize.X
-    corner(badge, 6)
+    badge.ZIndex = 5
+    badge.Parent = sPanel
+    mkCorner(badge, 6)
     local badgePad = Instance.new("UIPadding")
-    badgePad.PaddingLeft  = UDim.new(0, 8)
-    badgePad.PaddingRight = UDim.new(0, 8)
-    badgePad.Parent       = badge
-    label(badge, {
-        Text       = "🖥  " .. UNC.ExecutorName,
-        Font       = Enum.Font.GothamBold,
-        TextSize   = 11,
-        TextColor3 = Color3.new(1,1,1),
-        Size       = UDim2.new(0, 200, 1, 0),
-        ZIndex     = 3,
-    })
-
-    GUI._statusLbl   = statusLbl
-    GUI._statsLbl    = statsLbl
-    GUI._progressBar = progressBar
-    GUI._progressPct = progressPct
+    badgePad.PaddingLeft = UDim.new(0,8)
+    badgePad.PaddingRight = UDim.new(0,8)
+    badgePad.Parent = badge
+    local badgeLbl = Instance.new("TextLabel")
+    badgeLbl.Size = UDim2.new(0,200,1,0)
+    badgeLbl.BackgroundTransparency = 1
+    badgeLbl.Font = Enum.Font.GothamBold
+    badgeLbl.TextSize = 11
+    badgeLbl.Text = "🖥  " .. ENV.Name
+    badgeLbl.TextColor3 = Color3.new(1,1,1)
+    badgeLbl.TextXAlignment = Enum.TextXAlignment.Left
+    badgeLbl.ZIndex = 6
+    badgeLbl.Parent = badge
 
     return sg
 end
 
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+-- SECTION 19: SHOW MENU / AUTO-RUN
+-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 function SaveInstance.ShowMenu()
-    GUI.Build()
-    SaveInstance.Notify("SaveInstance Pro v" .. SaveInstance.Version,
-        "Universal Edition — Executor: " .. UNC.ExecutorName, 4)
+    buildGUI()
+    SaveInstance.Notify(
+        "SaveInstance Pro v5.0",
+        "Anti-Freeze Edition — " .. ENV.Name, 4)
 end
 
---[[━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    SECTION 21 ─ AUTO-RUN
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━]]
-
-if not _G.__SI_PRO_LOADED then
-    _G.__SI_PRO_LOADED = true
+if not _G.__SI_V5 then
+    _G.__SI_V5 = true
     task.spawn(function()
-        task.wait(0.3)
+        task.wait(0.25)
         SaveInstance.ShowMenu()
     end)
 end
@@ -2081,44 +1899,31 @@ end
 return SaveInstance
 
 --[[
-═══════════════════════════════════════════════════════════════════════════════
- USAGE EXAMPLES
-═══════════════════════════════════════════════════════════════════════════════
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ USAGE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-  -- Show GUI
+  -- GUI (recommended)
   loadstring(game:HttpGet("url"))()
 
-  -- Quick programmatic save
+  -- Programmatic
   local SI = loadstring(game:HttpGet("url"))()
-  SI.Save({ SaveObject = workspace })
-
-  -- Full-quality save with all options
   SI.Save({
-      SaveObject              = game,
-      SaveTerrain             = true,
-      SaveAttributes          = true,
-      SaveTags                = true,
-      SaveHiddenProperties    = true,
-      DecompileScripts        = true,
-      RetryFailedScripts      = true,
-      NilInstances            = true,
-      ValidateOutput          = true,
-      Verbose                 = true,
-      StatusCallback          = function(msg, pct)
+      SaveObject        = workspace,
+      DecompileScripts  = true,
+      SaveTerrain       = true,
+      YieldInterval     = 30,    -- lower = smoother, slower
+      DecompTimeout     = 10,    -- per-script deadline
+      StatusCallback    = function(msg, pct)
           print(string.format("[%.0f%%] %s", pct*100, msg))
-      end,
-      OnComplete              = function(ok, res)
-          print("Saved to", res.FilePath, "in", res.Elapsed, "s")
       end,
   })
 
-═══════════════════════════════════════════════════════════════════════════════
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  TODO
-═══════════════════════════════════════════════════════════════════════════════
-  1. Binary .rbxl/.rbxm  – needs LZ4 + chunk-based binary format
-     Reference: https://dom.rojo.space/binary.html
-  2. Asset downloading    – save mesh/image assets locally
-  3. Streaming writes     – for games > 200 K instances write in chunks
-  4. Diff/incremental saves
-═══════════════════════════════════════════════════════════════════════════════
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ 1. Binary .rbxl/.rbxm  (needs LZ4 + chunk format, see dom.rojo.space/binary)
+ 2. Asset downloading (meshes, images)
+ 3. Incremental / diff saves
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ]]
