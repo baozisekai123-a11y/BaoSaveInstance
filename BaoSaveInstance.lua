@@ -1,1052 +1,1154 @@
---------------------------------------------------------------------------------
--- SECTION 4: ULTIMATE DECOMPILATION ENGINE (PROFESSIONAL GRADE)
---------------------------------------------------------------------------------
+```lua
+local SaveInstanceCore = {}
+SaveInstanceCore.__version = "3.5.0"
 
---[[
-    ╔═══════════════════════════════════════════════════════════════════════╗
-    ║  MULTI-STRATEGY DECOMPILATION ENGINE                                  ║
-    ║  • 12 Decompilation Strategies with Quality Scoring                   ║
-    ║  • Bytecode Analysis & Disassembly                                    ║
-    ║  • Obfuscation Detection & Unwrapping                                 ║
-    ║  • Constant Extraction & Recovery                                     ║
-    ║  • AST Reconstruction & Beautification                                ║
-    ║  • Pattern Matching & Smart Naming                                    ║
-    ╚═══════════════════════════════════════════════════════════════════════╝
---]]
+local Services = setmetatable({}, {
+    __index = function(t, k)
+        local success, service = pcall(game.GetService, game, k)
+        if success then
+            t[k] = service
+            return service
+        end
+        return nil
+    end
+})
 
--- ══════════════════════════════════════════════════════════════════════════
--- SUBSECTION 4.1: BYTECODE DISASSEMBLER (LUAU)
--- ══════════════════════════════════════════════════════════════════════════
+local function safeCall(func, ...)
+    local success, result = pcall(func, ...)
+    return success and result or nil
+end
 
-local LuauDisassembler = {}
+local function getGuiParent()
+    return safeCall(gethui) or Services.CoreGui
+end
 
--- Luau bytecode opcodes (v3/v4)
-local LUAU_OPCODES = {
-    [0]="NOP", "LOADNIL", "LOADB", "LOADN", "LOADK", "MOVE", "GETGLOBAL", "SETGLOBAL",
-    "GETUPVAL", "SETUPVAL", "CLOSEUPVALS", "GETIMPORT", "GETTABLE", "SETTABLE",
-    "GETTABLEKS", "SETTABLEKS", "GETTABLEN", "SETTABLEN", "NEWCLOSURE", "NAMECALL",
-    "CALL", "RETURN", "JUMP", "JUMPBACK", "JUMPIF", "JUMPIFNOT", "JUMPIFEQ", "JUMPIFLE",
-    "JUMPIFLT", "JUMPIFNOTEQ", "JUMPIFNOTLE", "JUMPIFNOTLT", "ADD", "SUB", "MUL", "DIV",
-    "MOD", "POW", "ADDK", "SUBK", "MULK", "DIVK", "MODK", "POWK", "AND", "OR", "ANDK",
-    "ORK", "CONCAT", "NOT", "MINUS", "LENGTH", "NEWTABLE", "DUPTABLE", "SETLIST",
-    "FORNPREP", "FORNLOOP", "FORGLOOP", "FORGPREP", "GETVARARGS", "DUPCLOSURE",
-    "PREPVARARGS", "LOADKX", "JUMPX", "FASTCALL", "COVERAGE", "CAPTURE", "JUMPIFEQK",
-    "JUMPIFNOTEQK", "FASTCALL1", "FASTCALL2", "FASTCALL2K", "FORGPREP_INEXT",
-    "FORGPREP_NEXT", "GETGLOBAL_MEM", "SETGLOBAL_MEM", "NATIVECALL", "JUMPXEQKNIL",
-    "JUMPXEQKB", "JUMPXEQKN", "JUMPXEQKS"
+local APIs = {
+    saveinstance = saveinstance,
+    getinstances = getinstances,
+    getnilinstances = getnilinstances,
+    gethiddenproperty = gethiddenproperty,
+    sethiddenproperty = sethiddenproperty,
+    getscriptbytecode = getscriptbytecode,
+    decompile = decompile,
+    cloneref = cloneref,
+    isscriptable = isscriptable,
+    getproperties = getproperties,
+    writefile = writefile,
+    readfile = readfile,
+    makefolder = makefolder,
+    isfolder = isfolder,
+    isfile = isfile,
+    getconstants = getconstants,
+    getprotos = getprotos,
+    getupvalues = getupvalues,
+    getinfo = getinfo or debug.getinfo
 }
 
--- Luau fast call identifiers
-local FASTCALL_IDS = {
-    [1]="assert", [2]="math.abs", [3]="math.acos", [4]="math.asin", [5]="math.atan2",
-    [6]="math.atan", [7]="math.ceil", [8]="math.cosh", [9]="math.cos", [10]="math.deg",
-    [11]="math.exp", [12]="math.floor", [13]="math.fmod", [14]="math.frexp",
-    [15]="math.ldexp", [16]="math.log10", [17]="math.log", [18]="math.max",
-    [19]="math.min", [20]="math.modf", [21]="math.pow", [22]="math.rad",
-    [23]="math.sinh", [24]="math.sin", [25]="math.sqrt", [26]="math.tanh",
-    [27]="math.tan", [28]="bit32.arshift", [29]="bit32.band", [30]="bit32.bnot",
-    [31]="bit32.bor", [32]="bit32.bxor", [33]="bit32.btest", [34]="bit32.extract",
-    [35]="bit32.lrotate", [36]="bit32.lshift", [37]="bit32.replace",
-    [38]="bit32.rrotate", [39]="bit32.rshift", [40]="type", [41]="string.byte",
-    [42]="string.char", [43]="string.len", [44]="typeof", [45]="string.sub",
-    [46]="math.clamp", [47]="math.sign", [48]="math.round", [49]="rawset",
-    [50]="rawget", [51]="rawequal", [52]="table.insert", [53]="table.unpack",
-    [54]="vector", [55]="bit32.countlz", [56]="bit32.countrz", [57]="select",
-    [58]="rawlen", [59]="bit32.extractk", [60]="getmetatable", [61]="setmetatable",
-    [62]="tonumber", [63]="tostring", [64]="math.noise", [65]="bit32.byteswap"
-}
+local function detectExecutor()
+    if SOLARA_LOADED or solara then return "Solara"
+    elseif Xeno or is_xeno_executor then return "Xeno"
+    elseif WAVE_EXECUTOR then return "Wave"
+    elseif syn or Synapse then return "Synapse"
+    elseif KRNL_LOADED then return "KRNL"
+    elseif getexecutorname then return getexecutorname()
+    elseif identifyexecutor then return identifyexecutor()
+    else return "Unknown" end
+end
 
----Disassemble Luau bytecode to readable pseudo-assembly
----@param bytecode string
----@return string disassembly, table constants
-function LuauDisassembler:Disassemble(bytecode)
-    if not bytecode or #bytecode < 8 then
-        return "-- Invalid bytecode (too short)", {}
+local Logger = {}
+Logger.__index = Logger
+
+function Logger.new()
+    local self = setmetatable({}, Logger)
+    self.logs = {}
+    self.callbacks = {}
+    return self
+end
+
+function Logger:log(level, message, data)
+    local entry = {
+        time = os.time(),
+        level = level,
+        message = message,
+        data = data
+    }
+    table.insert(self.logs, entry)
+    
+    for _, callback in ipairs(self.callbacks) do
+        task.spawn(callback, entry)
     end
     
-    local lines = {}
-    local constants = {}
-    local pos = 1
-    
-    -- Helper: Read bytes
-    local function readByte()
-        if pos > #bytecode then return 0 end
-        local b = bytecode:byte(pos)
-        pos = pos + 1
-        return b
+    if level == "ERROR" or level == "CRITICAL" then
+        warn(string.format("[%s] %s", level, message))
+    else
+        print(string.format("[%s] %s", level, message))
+    end
+end
+
+function Logger:onLog(callback)
+    table.insert(self.callbacks, callback)
+end
+
+function Logger:export()
+    local output = {}
+    for _, log in ipairs(self.logs) do
+        table.insert(output, string.format("[%s][%s] %s", os.date("%X", log.time), log.level, log.message))
+    end
+    return table.concat(output, "\n")
+end
+
+local PropertyExtractor = {}
+PropertyExtractor.__index = PropertyExtractor
+
+function PropertyExtractor.new()
+    local self = setmetatable({}, PropertyExtractor)
+    self.cache = {}
+    self.blacklist = {
+        "DataCost", "DataModel", "Terrain", "Terrain.Decoration",
+        "RobloxLocked", "archivable", "UniqueId", "HistoryId"
+    }
+    return self
+end
+
+function PropertyExtractor:getProperty(instance, propertyName)
+    local key = tostring(instance) .. "." .. propertyName
+    if self.cache[key] ~= nil then
+        return self.cache[key]
     end
     
-    local function readU32()
-        local b1, b2, b3, b4 = readByte(), readByte(), readByte(), readByte()
-        return b1 + b2*256 + b3*65536 + b4*16777216
-    end
-    
-    local function readString(len)
-        local s = bytecode:sub(pos, pos+len-1)
-        pos = pos + len
-        return s
-    end
-    
-    -- Parse header
-    local version = readByte()
-    if version == 0 then
-        lines[#lines+1] = "-- Luau Bytecode (Version 0 - Legacy)"
-        return table.concat(lines, "\n"), constants
-    end
-    
-    lines[#lines+1] = ("-- Luau Bytecode v%d"):format(version)
-    lines[#lines+1] = "-- Disassembled by SaveInstance Ultimate Engine"
-    lines[#lines+1] = ""
-    
-    -- Try to parse string table
-    local stringCount = readByte()
-    if stringCount > 0 and stringCount < 255 then
-        lines[#lines+1] = ("-- String Table (%d entries):"):format(stringCount)
-        for i = 1, math.min(stringCount, 50) do
-            local len = readByte()
-            if len > 0 and len < 200 then
-                local str = readString(len)
-                constants[i] = str
-                lines[#lines+1] = ("--   [%d] = %q"):format(i-1, str)
-            end
+    for _, blacklisted in ipairs(self.blacklist) do
+        if propertyName == blacklisted then
+            self.cache[key] = nil
+            return nil
         end
-        lines[#lines+1] = ""
     end
     
-    -- Parse number constants
-    local numberCount = readByte()
-    if numberCount > 0 and numberCount < 255 then
-        lines[#lines+1] = ("-- Number Constants (%d):"):format(numberCount)
-        for i = 1, math.min(numberCount, 50) do
-            -- Numbers stored as doubles (8 bytes)
-            local bytes = {readByte(), readByte(), readByte(), readByte(),
-                          readByte(), readByte(), readByte(), readByte()}
-            -- Simplified decode (not full IEEE754)
-            lines[#lines+1] = ("--   K[%d] = <number>"):format(i-1)
-        end
-        lines[#lines+1] = ""
-    end
-    
-    lines[#lines+1] = "-- Instructions:"
-    lines[#lines+1] = ""
-    
-    -- Disassemble instructions
-    local instrCount = 0
-    local maxInstr = 500 -- Limit output
-    
-    while pos < #bytecode and instrCount < maxInstr do
-        local opcode = readByte()
-        local op = LUAU_OPCODES[opcode] or ("UNK_%02X"):format(opcode)
-        local A = readByte()
-        local B = readByte()
-        local C = readByte()
-        
-        local line = ("%04d:  %-15s"):format(instrCount, op)
-        
-        -- Decode operands based on opcode
-        if op == "LOADK" or op == "LOADKX" then
-            line = line .. ("R[%d] = K[%d]"):format(A, B + C*256)
-            local kIdx = B + C*256
-            if constants[kIdx+1] then
-                line = line .. ("  ; %q"):format(constants[kIdx+1])
-            end
-        elseif op == "GETGLOBAL" or op == "SETGLOBAL" then
-            line = line .. ("R[%d] "):format(A)
-            if constants[B+1] then
-                line = line .. constants[B+1]
+    local value
+    local success = pcall(function()
+        if APIs.gethiddenproperty and APIs.isscriptable then
+            if not APIs.isscriptable(instance, propertyName) then
+                value = APIs.gethiddenproperty(instance, propertyName)
             else
-                line = line .. ("K[%d]"):format(B)
+                value = instance[propertyName]
             end
-        elseif op == "MOVE" then
-            line = line .. ("R[%d] = R[%d]"):format(A, B)
-        elseif op == "LOADNIL" then
-            line = line .. ("R[%d] = nil"):format(A)
-        elseif op == "LOADB" then
-            line = line .. ("R[%d] = %s"):format(A, B == 1 and "true" or "false")
-        elseif op == "CALL" then
-            line = line .. ("R[%d](%d args, %d returns)"):format(A, B-1, C-1)
-        elseif op == "RETURN" then
-            line = line .. ("return R[%d]..R[%d]"):format(A, A+B-2)
-        elseif op == "FASTCALL" or op == "FASTCALL1" or op == "FASTCALL2" then
-            local fcall = FASTCALL_IDS[B] or ("fastcall_%d"):format(B)
-            line = line .. fcall
-        elseif op == "JUMP" or op == "JUMPBACK" then
-            line = line .. ("→ %d"):format(instrCount + B)
-        elseif op:match("^JUMP") then
-            line = line .. ("R[%d] → %d"):format(A, instrCount + B)
-        elseif op == "ADD" or op == "SUB" or op == "MUL" or op == "DIV" then
-            line = line .. ("R[%d] = R[%d] %s R[%d]"):format(
-                A, B, op=="ADD" and "+" or op=="SUB" and "-" or op=="MUL" and "*" or "/", C)
-        elseif op == "GETIMPORT" then
-            line = line .. ("R[%d] = import[%d]"):format(A, B)
-        elseif op == "GETTABLE" then
-            line = line .. ("R[%d] = R[%d][R[%d]]"):format(A, B, C)
-        elseif op == "SETTABLE" then
-            line = line .. ("R[%d][R[%d]] = R[%d]"):format(A, B, C)
         else
-            line = line .. ("A=%d B=%d C=%d"):format(A, B, C)
+            value = instance[propertyName]
         end
-        
-        lines[#lines+1] = line
-        instrCount = instrCount + 1
-    end
-    
-    if pos < #bytecode then
-        lines[#lines+1] = ("-- ... truncated (%d bytes remaining)"):format(#bytecode - pos)
-    end
-    
-    return table.concat(lines, "\n"), constants
-end
-
--- ══════════════════════════════════════════════════════════════════════════
--- SUBSECTION 4.2: CONSTANT EXTRACTOR
--- ══════════════════════════════════════════════════════════════════════════
-
-local ConstantExtractor = {}
-
----Extract all strings, numbers, and identifiers from bytecode
----@param bytecode string
----@return table constants {strings={}, numbers={}, identifiers={}}
-function ConstantExtractor:Extract(bytecode)
-    local result = {
-        strings = {},
-        numbers = {},
-        identifiers = {},
-        imports = {}
-    }
-    
-    if not bytecode or #bytecode < 4 then return result end
-    
-    -- Scan for printable strings (likely constants)
-    for str in bytecode:gmatch("([%w_][%w%d_%.%-]+)") do
-        if #str >= 3 and #str < 100 then
-            result.identifiers[str] = (result.identifiers[str] or 0) + 1
-        end
-    end
-    
-    -- Scan for quoted strings
-    for str in bytecode:gmatch('"([^"]+)"') do
-        if #str > 0 then
-            result.strings[#result.strings+1] = str
-        end
-    end
-    for str in bytecode:gmatch("'([^']+)'") do
-        if #str > 0 then
-            result.strings[#result.strings+1] = str
-        end
-    end
-    
-    -- Detect common Roblox imports
-    local commonImports = {
-        "game", "workspace", "script", "Instance", "Vector3", "CFrame",
-        "Color3", "UDim2", "Enum", "wait", "print", "warn", "task"
-    }
-    for _, imp in ipairs(commonImports) do
-        if bytecode:find(imp, 1, true) then
-            result.imports[imp] = true
-        end
-    end
-    
-    return result
-end
-
--- ══════════════════════════════════════════════════════════════════════════
--- SUBSECTION 4.3: OBFUSCATION DETECTOR
--- ══════════════════════════════════════════════════════════════════════════
-
-local ObfuscationDetector = {}
-
----Detect obfuscation type and characteristics
----@param source string|nil
----@param bytecode string
----@return table detection {type="none"|"ironbrew"|"psu"|"luraph"|etc, confidence=0-1, features={}}
-function ObfuscationDetector:Analyze(source, bytecode)
-    local detection = {
-        type = "none",
-        confidence = 0,
-        features = {}
-    }
-    
-    if not source or #source == 0 then
-        source = ""
-    end
-    
-    -- Feature detection
-    local features = {
-        longVarNames = source:match("[a-zA-Z_][a-zA-Z0-9_]" .. ("{50,}")) ~= nil,
-        hexStrings = (select(2, source:gsub("\\x%x%x", "")) or 0) > 10,
-        base64 = source:match("[A-Za-z0-9+/]" .. "{40,}==?") ~= nil,
-        controlFlow = (select(2, source:gsub("repeat%s+until", "")) or 0) > 5,
-        arithmetic = (select(2, source:gsub("[%+%-*/%%]%s*%d+", "")) or 0) > 20,
-        antiTamper = source:match("getfenv") and source:match("setfenv"),
-        vmDetect = source:match("bit32%.b?x?or") and source:match("string%.byte") and
-                   (select(2, source:gsub("string%.byte", "")) or 0) > 10,
-        encodedStrings = (select(2, source:gsub('["\'](\\%d+)+["\']', "")) or 0) > 5,
-        unusualWhitespace = (select(2, source:gsub("%s%s%s%s%s+", "")) or 0) > 10
-    }
-    
-    detection.features = features
-    
-    -- IronBrew signatures
-    if features.vmDetect and features.base64 and source:match("Deserialize") then
-        detection.type = "IronBrew"
-        detection.confidence = 0.85
-    -- PSU (Prometheus/Moonsec/PSU)
-    elseif features.longVarNames and features.arithmetic and features.controlFlow then
-        detection.type = "PSU/Prometheus"
-        detection.confidence = 0.75
-    -- Luraph
-    elseif features.hexStrings and features.encodedStrings and bytecode:match("\xFE\xFF") then
-        detection.type = "Luraph"
-        detection.confidence = 0.8
-    -- Simple string encryption
-    elseif features.encodedStrings and not features.vmDetect then
-        detection.type = "StringEncrypt"
-        detection.confidence = 0.6
-    -- Control flow obfuscation
-    elseif features.controlFlow and features.arithmetic then
-        detection.type = "ControlFlow"
-        detection.confidence = 0.65
-    -- Minified
-    elseif features.unusualWhitespace == false and #source > 1000 and
-           (select(2, source:gsub("\n", "")) or 0) < #source / 100 then
-        detection.type = "Minified"
-        detection.confidence = 0.7
-    end
-    
-    return detection
-end
-
--- ══════════════════════════════════════════════════════════════════════════
--- SUBSECTION 4.4: QUALITY SCORER
--- ══════════════════════════════════════════════════════════════════════════
-
-local QualityScorer = {}
-
----Score decompilation quality (0-100)
----@param source string
----@param bytecode string
----@return number score, table metrics
-function QualityScorer:Score(source, bytecode)
-    if not source or #source == 0 then
-        return 0, {reason="empty"}
-    end
-    
-    local metrics = {}
-    local score = 0
-    
-    -- Syntax completeness (40 points)
-    local syntaxScore = 0
-    local hasReturn = source:match("return") ~= nil
-    local hasEnd = (select(2, source:gsub("%s+end%s+", "")) or 0)
-    local hasDo = (select(2, source:gsub("%s+do%s+", "")) or 0)
-    local hasFunction = source:match("function") ~= nil
-    local balanced = (select(2, source:gsub("%(", "")) or 0) == (select(2, source:gsub("%)", "")) or 0)
-    
-    if hasReturn then syntaxScore = syntaxScore + 8 end
-    if hasFunction then syntaxScore = syntaxScore + 10 end
-    if balanced then syntaxScore = syntaxScore + 12 end
-    if hasEnd > 0 then syntaxScore = syntaxScore + 10 end
-    
-    metrics.syntaxScore = syntaxScore
-    score = score + syntaxScore
-    
-    -- Readability (30 points)
-    local readScore = 0
-    local avgLineLen = #source / math.max(1, select(2, source:gsub("\n", "")) or 1)
-    if avgLineLen > 20 and avgLineLen < 120 then readScore = readScore + 10 end
-    
-    local hasWhitespace = source:match("%s%s") ~= nil
-    if hasWhitespace then readScore = readScore + 5 end
-    
-    local hasComments = source:match("%-%-") ~= nil
-    if hasComments then readScore = readScore + 5 end
-    
-    local varNameQuality = 0
-    for var in source:gmatch("local%s+([%w_]+)") do
-        if #var > 1 and not var:match("^[lIoO01]+$") then
-            varNameQuality = varNameQuality + 1
-        end
-    end
-    if varNameQuality > 3 then readScore = readScore + 10 end
-    
-    metrics.readScore = readScore
-    score = score + readScore
-    
-    -- Functionality (30 points)
-    local funcScore = 0
-    
-    -- Check for common Roblox APIs
-    local robloxApis = {
-        "Instance%.new", "game%.", "workspace%.", "script%.",
-        "Vector3%.new", "CFrame%.new", "wait%(", "spawn%(",
-        ":GetChildren", ":FindFirstChild", ":Clone", ":Destroy"
-    }
-    local apiCount = 0
-    for _, pattern in ipairs(robloxApis) do
-        if source:match(pattern) then apiCount = apiCount + 1 end
-    end
-    funcScore = funcScore + math.min(15, apiCount * 2)
-    
-    -- Check for control structures
-    local hasIf = source:match("if%s+.+%s+then") ~= nil
-    local hasFor = source:match("for%s+.+%s+do") ~= nil
-    local hasWhile = source:match("while%s+.+%s+do") ~= nil
-    if hasIf then funcScore = funcScore + 5 end
-    if hasFor or hasWhile then funcScore = funcScore + 5 end
-    
-    -- Complexity penalty for over-obfuscation
-    local complexityPenalty = 0
-    if source:match("[a-zA-Z_][a-zA-Z0-9_]" .. "{30,}") then
-        complexityPenalty = 10
-    end
-    
-    funcScore = funcScore - complexityPenalty
-    metrics.funcScore = funcScore
-    score = score + funcScore
-    
-    -- Error indicators (negative)
-    local errorPenalty = 0
-    if source:match("--[%[=*%[%s*DECOMPILE") then errorPenalty = errorPenalty + 20 end
-    if source:match("ERROR") or source:match("FAIL") then errorPenalty = errorPenalty + 15 end
-    if #source < 50 and not source:match("return") then errorPenalty = errorPenalty + 25 end
-    
-    metrics.errorPenalty = errorPenalty
-    score = score - errorPenalty
-    
-    -- Final score
-    score = math.max(0, math.min(100, score))
-    metrics.finalScore = score
-    
-    return score, metrics
-end
-
--- ══════════════════════════════════════════════════════════════════════════
--- SUBSECTION 4.5: SOURCE BEAUTIFIER
--- ══════════════════════════════════════════════════════════════════════════
-
-local SourceBeautifier = {}
-
----Beautify and format decompiled source
----@param source string
----@return string beautified
-function SourceBeautifier:Format(source)
-    if not source or #source == 0 then return source end
-    
-    local lines = {}
-    local indent = 0
-    local indentChar = "    " -- 4 spaces
-    
-    -- Split into lines
-    for line in (source .. "\n"):gmatch("([^\n]*)\n") do
-        line = line:gsub("^%s+", ""):gsub("%s+$", "") -- trim
-        
-        if line == "" then
-            lines[#lines+1] = ""
-            goto continue
-        end
-        
-        -- Detect dedent keywords
-        if line:match("^end%s*") or line:match("^else") or line:match("^elseif") or
-           line:match("^until") then
-            indent = math.max(0, indent - 1)
-        end
-        
-        -- Add indented line
-        lines[#lines+1] = indentChar:rep(indent) .. line
-        
-        -- Detect indent keywords
-        if line:match("function%s*%(") or line:match("^function%s+") or
-           line:match("then%s*$") or line:match("do%s*$") or
-           line:match("repeat%s*$") or line:match("else%s*$") then
-            indent = indent + 1
-        end
-        
-        -- Special case: single-line blocks
-        if line:match("function.+end%s*$") or line:match("if.+then.+end%s*$") then
-            -- Don't change indent
-        end
-        
-        ::continue::
-    end
-    
-    return table.concat(lines, "\n")
-end
-
--- ══════════════════════════════════════════════════════════════════════════
--- SUBSECTION 4.6: PATTERN LIBRARY (SMART RECONSTRUCTION)
--- ══════════════════════════════════════════════════════════════════════════
-
-local PatternLibrary = {}
-
----Apply pattern-based improvements to decompiled source
----@param source string
----@param constants table
----@return string improved
-function PatternLibrary:Improve(source, constants)
-    if not source then return "" end
-    
-    -- Replace obfuscated variable names with meaningful ones
-    local varMap = {}
-    local varCounter = 0
-    
-    -- Detect common Roblox patterns and restore them
-    local patterns = {
-        -- getfenv/setfenv restoration
-        {"getfenv%(%d+%)", "getfenv()"},
-        {"setfenv%(%d+%s*,%s*", "setfenv("},
-        
-        -- Common service calls
-        {"game:GetService%(['\"](.-)['\"]:?%)%s*", function(s)
-            return ('game:GetService("%s")'):format(s)
-        end},
-        
-        -- Simplified string.char chains
-        {"string%.char%((%d+)%)%.%.string%.char%((%d+)%)", function(a, b)
-            return ('"%s"'):format(string.char(tonumber(a)) .. string.char(tonumber(b)))
-        end},
-        
-        -- Cleanup excessive parentheses
-        {"%(%s*%((.-)%s*)%s*%)", "(%1)"},
-        
-        -- Restore Vector3/CFrame constructors
-        {"Vector3%.new%s*%(%s*([%d%.%-]+)%s*,%s*([%d%.%-]+)%s*,%s*([%d%.%-]+)%s*%)",
-         "Vector3.new(%1, %2, %3)"},
-        
-        -- Clean up double negatives
-        {"not%s+not%s+", ""},
-        
-        -- Simplify boolean literals
-        {"true%s*==%s*true", "true"},
-        {"false%s*==%s*false", "false"},
-    }
-    
-    for _, pattern in ipairs(patterns) do
-        source = source:gsub(pattern[1], pattern[2])
-    end
-    
-    -- Add helpful comments for detected constants
-    if constants and constants.strings then
-        local header = "-- Detected String Constants:\n"
-        for i, str in ipairs(constants.strings) do
-            if i <= 10 then -- Limit to first 10
-                header = header .. ("--   [%d] = %q\n"):format(i, str)
-            end
-        end
-        if #constants.strings > 0 then
-            source = header .. "\n" .. source
-        end
-    end
-    
-    return source
-end
-
--- ══════════════════════════════════════════════════════════════════════════
--- SUBSECTION 4.7: MULTI-STRATEGY DECOMPILER
--- ══════════════════════════════════════════════════════════════════════════
-
-local DecompileStrategies = {}
-
----Strategy 1: Native executor decompile
-function DecompileStrategies:Native(script, bytecode, timeout)
-    if not ExecutorAPI.decompile then return nil, "native_unavailable" end
-    
-    local result, err = nil, nil
-    local done = false
-    
-    local co = coroutine.create(function()
-        local ok, src = pcall(ExecutorAPI.decompile, script)
-        if ok and src and type(src) == "string" and #src > 0 then
-            result = src
-        else
-            err = "native_error"
-        end
-        done = true
     end)
     
-    coroutine.resume(co)
-    
-    local deadline = tick() + timeout
-    while not done and tick() < deadline do
-        if coroutine.status(co) == "suspended" then
-            coroutine.resume(co)
-        end
-        task.wait(0.05)
+    if success and value ~= nil then
+        self.cache[key] = value
+        return value
     end
     
-    if not done and coroutine.close then
-        pcall(coroutine.close, co)
-        return nil, "native_timeout"
-    end
-    
-    return result, err
+    self.cache[key] = nil
+    return nil
 end
 
----Strategy 2: Bytecode-fed decompile
-function DecompileStrategies:BytecodeFed(script, bytecode, timeout)
-    if not ExecutorAPI.decompile or not bytecode then
-        return nil, "bytecode_unavailable"
+function PropertyExtractor:getAllProperties(instance)
+    local properties = {}
+    local propertyList
+    
+    if APIs.getproperties then
+        propertyList = APIs.getproperties(instance)
+    else
+        propertyList = self:getDefaultProperties(instance)
     end
     
-    local result, err = nil, nil
-    local done = false
-    
-    local co = coroutine.create(function()
-        local ok, src = pcall(ExecutorAPI.decompile, bytecode)
-        if ok and src and type(src) == "string" and #src > 0 then
-            result = src
-        else
-            err = "bytecode_decompile_error"
+    for _, propName in ipairs(propertyList) do
+        local value = self:getProperty(instance, propName)
+        if value ~= nil then
+            properties[propName] = {
+                value = value,
+                type = typeof(value)
+            }
         end
-        done = true
-    end)
-    
-    coroutine.resume(co)
-    
-    local deadline = tick() + timeout
-    while not done and tick() < deadline do
-        if coroutine.status(co) == "suspended" then
-            coroutine.resume(co)
-        end
-        task.wait(0.05)
     end
     
-    if not done and coroutine.close then
-        pcall(coroutine.close, co)
-        return nil, "bytecode_timeout"
-    end
-    
-    return result, err
+    return properties
 end
 
----Strategy 3: Hybrid (try multiple decompiler modes if available)
-function DecompileStrategies:Hybrid(script, bytecode, timeout)
-    -- Some executors expose multiple decompile functions
-    local decompilers = {
-        ExecutorAPI.decompile,
-        rawget(_G, "decompile_v2"),
-        rawget(_G, "advanced_decompile"),
-        rawget(_G, "luau_decompile")
+function PropertyExtractor:getDefaultProperties(instance)
+    local baseProps = {"Name", "ClassName", "Parent", "Archivable"}
+    
+    local classProps = {
+        BasePart = {"Size", "CFrame", "Position", "Orientation", "Rotation", "Anchored", "CanCollide", "Transparency", "Reflectance", "Material", "Color", "BrickColor", "CastShadow", "CollisionGroupId", "Massless", "Locked"},
+        Model = {"PrimaryPart", "WorldPivot"},
+        LuaSourceContainer = {"Source", "Disabled"},
+        Light = {"Brightness", "Range", "Shadows", "Color"},
+        Sound = {"SoundId", "Volume", "Pitch", "Looped", "PlaybackSpeed", "TimePosition"},
+        Attachment = {"CFrame", "Visible", "Axis", "SecondaryAxis", "WorldCFrame", "WorldAxis", "WorldSecondaryAxis", "WorldPosition"},
+        Decal = {"Texture", "Transparency", "Color3", "Face", "ZIndex"},
+        Texture = {"Texture", "Transparency", "Color3", "Face", "ZIndex", "StudsPerTileU", "StudsPerTileV", "OffsetStudsU", "OffsetStudsV"},
+        SurfaceGui = {"Face", "CanvasSize", "LightInfluence", "Brightness", "SizingMode", "ZOffset", "ClipsDescendants"},
+        BillboardGui = {"Size", "StudsOffset", "StudsOffsetWorldSpace", "ExtentsOffset", "ExtentsOffsetWorldSpace", "LightInfluence", "Brightness", "ClipsDescendants", "AlwaysOnTop", "PlayerToHideFrom"},
+        ParticleEmitter = {"Enabled", "Rate", "Lifetime", "Speed", "Acceleration", "Drag", "VelocityInheritance", "Color", "Size", "Transparency", "Texture", "ZOffset", "LightEmission", "LightInfluence", "Rotation", "RotSpeed"},
+        Fire = {"Enabled", "Size", "Heat", "Color", "SecondaryColor"},
+        Smoke = {"Enabled", "Size", "Opacity", "RiseVelocity", "Color"},
+        Sparkles = {"Enabled", "SparkleColor"},
+        PointLight = {"Brightness", "Range", "Shadows", "Color"},
+        SpotLight = {"Brightness", "Range", "Shadows", "Color", "Angle", "Face"},
+        SurfaceLight = {"Brightness", "Range", "Shadows", "Color", "Angle", "Face"},
     }
     
-    for _, decomp in ipairs(decompilers) do
-        if type(decomp) == "function" then
-            local ok, src = pcall(decomp, script)
-            if ok and src and type(src) == "string" and #src > 10 then
-                return src, nil
-            end
-        end
-    end
+    local props = {table.unpack(baseProps)}
     
-    return nil, "hybrid_all_failed"
-end
-
----Strategy 4: Disassembly fallback
-function DecompileStrategies:Disassemble(script, bytecode, timeout)
-    if not bytecode or #bytecode < 8 then
-        return nil, "no_bytecode"
-    end
-    
-    local disasm, constants = LuauDisassembler:Disassemble(bytecode)
-    
-    local header = ("--[[\n    DISASSEMBLED: %s\n    "..
-        "This is low-level bytecode representation.\n    "..
-        "Original source could not be fully recovered.\n]]\n\n"):format(
-        script:GetFullName())
-    
-    return header .. disasm, nil
-end
-
----Strategy 5: Constant extraction + stub
-function DecompileStrategies:ConstantStub(script, bytecode, timeout)
-    local constants = ConstantExtractor:Extract(bytecode or "")
-    
-    local stub = ("--[[\n    Script: %s\n    Class: %s\n\n"):format(
-        script:GetFullName(), script.ClassName)
-    
-    if #constants.strings > 0 then
-        stub = stub .. "    Detected Strings:\n"
-        for i, str in ipairs(constants.strings) do
-            if i <= 20 then
-                stub = stub .. ("        %q\n"):format(str)
-            end
-        end
-    end
-    
-    if next(constants.imports) then
-        stub = stub .. "\n    Detected Imports:\n"
-        for imp, _ in pairs(constants.imports) do
-            stub = stub .. ("        %s\n"):format(imp)
-        end
-    end
-    
-    if next(constants.identifiers) then
-        stub = stub .. "\n    Detected Identifiers:\n"
-        local sorted = {}
-        for id, count in pairs(constants.identifiers) do
-            table.insert(sorted, {id=id, count=count})
-        end
-        table.sort(sorted, function(a,b) return a.count > b.count end)
-        for i = 1, math.min(15, #sorted) do
-            stub = stub .. ("        %s (×%d)\n"):format(sorted[i].id, sorted[i].count)
-        end
-    end
-    
-    stub = stub .. "]]\n\n"
-    stub = stub .. "-- Source recovery failed. See extracted data above.\n"
-    
-    return stub, nil
-end
-
----Strategy 6: Source property direct read
-function DecompileStrategies:SourceProperty(script, bytecode, timeout)
-    local ok, source = pcall(function() return script.Source end)
-    if ok and source and type(source) == "string" and #source > 0 then
-        return source, nil
-    end
-    return nil, "source_unreadable"
-end
-
----Strategy 7: Memory scan (advanced)
-function DecompileStrategies:MemoryScan(script, bytecode, timeout)
-    -- Try to find source in memory via getgc/getinstances
-    if not ExecutorAPI.getinstances then return nil, "no_getinstances" end
-    
-    -- Scan for string objects that might contain source
-    local ok, instances = pcall(ExecutorAPI.getinstances)
-    if not ok or not instances then return nil, "scan_failed" end
-    
-    local scriptName = script.Name
-    local possibleSources = {}
-    
-    for _, inst in ipairs(instances) do
-        if typeof(inst) == "Instance" and inst.ClassName == "StringValue" then
-            local ok2, val = pcall(function() return inst.Value end)
-            if ok2 and val and type(val) == "string" and #val > 50 then
-                -- Check if it looks like Lua source
-                if val:match("function") or val:match("local%s+") or val:match("return") then
-                    possibleSources[#possibleSources+1] = val
+    for className, classSpecificProps in pairs(classProps) do
+        if instance:IsA(className) then
+            for _, prop in ipairs(classSpecificProps) do
+                if not table.find(props, prop) then
+                    table.insert(props, prop)
                 end
             end
         end
     end
     
-    -- Return longest match (heuristic)
-    if #possibleSources > 0 then
-        table.sort(possibleSources, function(a,b) return #a > #b end)
-        return possibleSources[1], nil
-    end
-    
-    return nil, "no_source_in_memory"
+    return props
 end
 
----Strategy 8: Simplified pseudo-code generation
-function DecompileStrategies:PseudoCode(script, bytecode, timeout)
-    local constants = ConstantExtractor:Extract(bytecode or "")
-    local disasm, _ = LuauDisassembler:Disassemble(bytecode or "")
-    
-    -- Generate pseudo-code from disassembly
-    local pseudo = ("-- PSEUDO-CODE for: %s\n\n"):format(script:GetFullName())
-    
-    if next(constants.imports) then
-        for imp, _ in pairs(constants.imports) do
-            pseudo = pseudo .. ("local %s = %s\n"):format(imp, imp)
-        end
-        pseudo = pseudo .. "\n"
+local ScriptDecompiler = {}
+ScriptDecompiler.__index = ScriptDecompiler
+
+function ScriptDecompiler.new(logger)
+    local self = setmetatable({}, ScriptDecompiler)
+    self.logger = logger
+    self.cache = {}
+    self.stats = {total = 0, success = 0, partial = 0, failed = 0}
+    return self
+end
+
+function ScriptDecompiler:decompile(script)
+    if not script:IsA("LuaSourceContainer") then
+        return nil, "Not a script"
     end
     
-    pseudo = pseudo .. "function main()\n"
-    pseudo = pseudo .. "    -- Reconstructed logic:\n"
+    local scriptId = tostring(script)
+    if self.cache[scriptId] then
+        return self.cache[scriptId], "cached"
+    end
     
-    -- Simple pattern matching on disassembly
-    for line in disasm:gmatch("[^\n]+") do
-        if line:match("CALL") then
-            pseudo = pseudo .. "    -- Function call\n"
-        elseif line:match("GETGLOBAL") or line:match("GETIMPORT") then
-            local var = line:match("GETGLOBAL.+([%w_]+)")
-            if var then
-                pseudo = pseudo .. ("    -- Access: %s\n"):format(var)
+    self.stats.total = self.stats.total + 1
+    
+    local methods = {
+        self.directSource,
+        self.nativeDecompile,
+        self.customDecompile,
+        self.bytecodeExtract,
+        self.constantAnalysis,
+        self.fallbackPlaceholder
+    }
+    
+    for i, method in ipairs(methods) do
+        local success, source, quality = pcall(method, self, script)
+        if success and source then
+            self.cache[scriptId] = source
+            if quality == "full" then
+                self.stats.success = self.stats.success + 1
+            elseif quality == "partial" then
+                self.stats.partial = self.stats.partial + 1
+            else
+                self.stats.failed = self.stats.failed + 1
             end
-        elseif line:match("RETURN") then
-            pseudo = pseudo .. "    -- Return statement\n"
+            return source, quality
         end
     end
     
-    pseudo = pseudo .. "end\n\nmain()\n"
-    
-    return pseudo, nil
+    self.stats.failed = self.stats.failed + 1
+    return "-- Decompilation completely failed", "failed"
 end
 
--- ══════════════════════════════════════════════════════════════════════════
--- SUBSECTION 4.8: MASTER DECOMPILER ORCHESTRATOR
--- ══════════════════════════════════════════════════════════════════════════
+function ScriptDecompiler:directSource(script)
+    local source
+    if APIs.gethiddenproperty then
+        source = APIs.gethiddenproperty(script, "Source")
+    else
+        source = script.Source
+    end
+    
+    if source and #source > 0 and not source:match("^%s*$") then
+        return source, "full"
+    end
+    return nil
+end
 
-local _scriptCache = {}  -- hash → {source, quality, strategy}
+function ScriptDecompiler:nativeDecompile(script)
+    if not APIs.decompile then return nil end
+    
+    local source = APIs.decompile(script)
+    if source and #source > 10 and not source:match("^%s*%-%-") then
+        return source, "full"
+    end
+    return nil
+end
 
----Ultimate decompilation with all strategies, quality scoring, and best-pick
----@param scr Instance
----@param cfg table
----@param stats table
----@return string source, boolean succeeded, string strategy
-local function decompileOneUltimate(scr, cfg, stats)
+function ScriptDecompiler:customDecompile(script)
+    if not APIs.getscriptbytecode then return nil end
+    
+    local bytecode = APIs.getscriptbytecode(script)
+    if not bytecode or #bytecode == 0 then return nil end
+    
+    local decompiled = self:analyzeBytecode(bytecode, script)
+    if decompiled and #decompiled > 50 then
+        return decompiled, "partial"
+    end
+    
+    return nil
+end
+
+function ScriptDecompiler:analyzeBytecode(bytecode, script)
+    local analysis = {}
+    table.insert(analysis, "-- Advanced Decompilation Analysis")
+    table.insert(analysis, string.format("-- Script: %s", script:GetFullName()))
+    table.insert(analysis, string.format("-- Bytecode Size: %d bytes\n", #bytecode))
+    
+    if APIs.getconstants then
+        local constants = APIs.getconstants(script)
+        if constants and #constants > 0 then
+            table.insert(analysis, "-- Constants:")
+            for i, const in ipairs(constants) do
+                if i <= 50 then
+                    table.insert(analysis, string.format("--   [%d] = %s", i, self:formatValue(const)))
+                end
+            end
+            table.insert(analysis, "")
+        end
+    end
+    
+    if APIs.getprotos then
+        local protos = APIs.getprotos(script)
+        if protos and #protos > 0 then
+            table.insert(analysis, string.format("-- Detected %d function prototypes", #protos))
+        end
+    end
+    
+    if APIs.getupvalues then
+        local upvalues = APIs.getupvalues(script)
+        if upvalues and type(upvalues) == "table" then
+            table.insert(analysis, "\n-- Upvalues:")
+            for name, value in pairs(upvalues) do
+                table.insert(analysis, string.format("--   %s = %s", tostring(name), self:formatValue(value)))
+            end
+        end
+    end
+    
+    local patterns = self:detectPatterns(bytecode)
+    if #patterns > 0 then
+        table.insert(analysis, "\n-- Detected Patterns:")
+        for _, pattern in ipairs(patterns) do
+            table.insert(analysis, "--   " .. pattern)
+        end
+    end
+    
+    return table.concat(analysis, "\n")
+end
+
+function ScriptDecompiler:detectPatterns(bytecode)
+    local patterns = {}
+    
+    if bytecode:match("require") then
+        table.insert(patterns, "ModuleScript dependencies detected")
+    end
+    
+    if bytecode:match("RemoteEvent") or bytecode:match("RemoteFunction") then
+        table.insert(patterns, "Network communication detected")
+    end
+    
+    if bytecode:match("BindableEvent") or bytecode:match("BindableFunction") then
+        table.insert(patterns, "Internal event system detected")
+    end
+    
+    if bytecode:match("UserInputService") or bytecode:match("ContextActionService") then
+        table.insert(patterns, "Input handling detected")
+    end
+    
+    if bytecode:match("TweenService") or bytecode:match("RunService") then
+        table.insert(patterns, "Animation/Runtime logic detected")
+    end
+    
+    local loops = 0
+    for _ in bytecode:gmatch("while") do loops = loops + 1 end
+    for _ in bytecode:gmatch("for") do loops = loops + 1 end
+    if loops > 0 then
+        table.insert(patterns, string.format("Loop structures: ~%d", loops))
+    end
+    
+    return patterns
+end
+
+function ScriptDecompiler:formatValue(value)
+    local t = type(value)
+    if t == "string" then
+        return string.format('"%s"', value:gsub('"', '\\"'):sub(1, 100))
+    elseif t == "table" then
+        return "{ ... }"
+    elseif t == "function" then
+        return "function"
+    else
+        return tostring(value)
+    end
+end
+
+function ScriptDecompiler:bytecodeExtract(script)
+    if not APIs.getscriptbytecode then return nil end
+    
+    local bytecode = APIs.getscriptbytecode(script)
+    if not bytecode or #bytecode == 0 then return nil end
+    
+    local output = string.format("-- Bytecode Dump (%d bytes)\n", #bytecode)
+    output = output .. string.format("-- Script: %s\n\n", script:GetFullName())
+    output = output .. "--[[\n" .. bytecode .. "\n--]]"
+    
+    return output, "partial"
+end
+
+function ScriptDecompiler:constantAnalysis(script)
+    if not APIs.getconstants then return nil end
+    
+    local constants = APIs.getconstants(script)
+    if not constants or #constants == 0 then return nil end
+    
+    local output = string.format("-- Constant Extraction (%d constants)\n", #constants)
+    output = output .. string.format("-- Script: %s\n\n", script:GetFullName())
+    
+    for i, const in ipairs(constants) do
+        output = output .. string.format("local CONST_%d = %s\n", i, self:formatValue(const))
+    end
+    
+    return output, "partial"
+end
+
+function ScriptDecompiler:fallbackPlaceholder(script)
+    local output = string.format("-- Failed to decompile: %s\n", script:GetFullName())
+    output = output .. string.format("-- ClassName: %s\n", script.ClassName)
+    
+    if script.Parent then
+        output = output .. string.format("-- Parent: %s\n", script.Parent:GetFullName())
+    end
+    
+    output = output .. "\n-- No decompilation method succeeded"
+    return output, "failed"
+end
+
+local InstanceCollector = {}
+InstanceCollector.__index = InstanceCollector
+
+function InstanceCollector.new(logger, propertyExtractor)
+    local self = setmetatable({}, InstanceCollector)
+    self.logger = logger
+    self.propertyExtractor = propertyExtractor
+    self.instances = {}
+    self.instanceMap = {}
+    self.idCounter = 0
+    self.ignoreList = {
+        "CoreGui", "CorePackages", "HttpRbxApiService", 
+        "RobloxReplicatedStorage", "CSGDictionaryService"
+    }
+    return self
+end
+
+function InstanceCollector:generateId()
+    self.idCounter = self.idCounter + 1
+    return string.format("RBX%08X", self.idCounter)
+end
+
+function InstanceCollector:shouldIgnore(instance)
+    if instance == game then return true end
+    
+    for _, name in ipairs(self.ignoreList) do
+        if instance.Name == name or instance.ClassName == name then
+            return true
+        end
+    end
+    
+    local success, parent = pcall(function() return instance.Parent end)
+    if not success then return true end
+    
+    return false
+end
+
+function InstanceCollector:collectFromRoot(root, options)
+    options = options or {}
+    local collected = {}
+    local descendants = root:GetDescendants()
+    
+    self.logger:log("INFO", string.format("Collecting from %s (%d descendants)", root.Name, #descendants))
+    
+    for i, instance in ipairs(descendants) do
+        if not self:shouldIgnore(instance) then
+            local data = self:processInstance(instance)
+            if data then
+                table.insert(collected, data)
+            end
+        end
+        
+        if i % 500 == 0 then
+            task.wait()
+            if options.onProgress then
+                options.onProgress(i, #descendants)
+            end
+        end
+    end
+    
+    return collected
+end
+
+function InstanceCollector:processInstance(instance)
+    local id = self:generateId()
+    
+    local data = {
+        id = id,
+        instance = instance,
+        className = instance.ClassName,
+        name = instance.Name,
+        properties = {},
+        children = {},
+        parent = instance.Parent
+    }
+    
+    data.properties = self.propertyExtractor:getAllProperties(instance)
+    
+    self.instanceMap[instance] = data
+    self.instances[id] = data
+    
+    return data
+end
+
+function InstanceCollector:collectNilInstances()
+    if not APIs.getnilinstances then
+        self.logger:log("WARN", "getnilinstances not available")
+        return {}
+    end
+    
+    local nilInsts = APIs.getnilinstances()
+    local collected = {}
+    
+    self.logger:log("INFO", string.format("Found %d nil instances", #nilInsts))
+    
+    for _, instance in ipairs(nilInsts) do
+        if not self:shouldIgnore(instance) then
+            local data = self:processInstance(instance)
+            if data then
+                data.isNil = true
+                table.insert(collected, data)
+            end
+        end
+    end
+    
+    return collected
+end
+
+function InstanceCollector:buildHierarchy()
+    local roots = {}
+    
+    for _, data in pairs(self.instanceMap) do
+        if data.parent and self.instanceMap[data.parent] then
+            local parentData = self.instanceMap[data.parent]
+            table.insert(parentData.children, data)
+        else
+            table.insert(roots, data)
+        end
+    end
+    
+    return roots
+end
+
+function InstanceCollector:collectAll(options)
+    options = options or {}
+    self.instances = {}
+    self.instanceMap = {}
+    self.idCounter = 0
+    
+    local containers = {
+        {Services.Workspace, true},
+        {Services.Lighting, true},
+        {Services.ReplicatedStorage, true},
+        {Services.ReplicatedFirst, true},
+        {Services.StarterGui, true},
+        {Services.StarterPack, true},
+        {Services.StarterPlayer, true},
+        {Services.Teams, true},
+        {Services.SoundService, true},
+        {Services.Chat, true},
+        {Services.ServerScriptService, options.serverScripts ~= false},
+        {Services.ServerStorage, options.serverStorage ~= false},
+    }
+    
+    local allCollected = {}
+    
+    for _, containerData in ipairs(containers) do
+        local container, enabled = containerData[1], containerData[2]
+        if enabled and container then
+            local collected = self:collectFromRoot(container, options)
+            for _, inst in ipairs(collected) do
+                table.insert(allCollected, inst)
+            end
+        end
+    end
+    
+    if options.nilInstances then
+        local nilInsts = self:collectNilInstances()
+        for _, inst in ipairs(nilInsts) do
+            table.insert(allCollected, inst)
+        end
+    end
+    
+    if options.players then
+        for _, player in ipairs(Services.Players:GetPlayers()) do
+            if player.Character then
+                local charData = self:collectFromRoot(player.Character, options)
+                for _, inst in ipairs(charData) do
+                    table.insert(allCollected, inst)
+                end
+            end
+        end
+    end
+    
+    self:buildHierarchy()
+    
+    self.logger:log("INFO", string.format("Collection complete: %d instances", #allCollected))
+    return allCollected
+end
+
+local XMLSerializer = {}
+XMLSerializer.__index = XMLSerializer
+
+function XMLSerializer.new()
+    local self = setmetatable({}, XMLSerializer)
+    self.indent = 0
+    return self
+end
+
+function XMLSerializer:escape(str)
+    return tostring(str)
+        :gsub("&", "&amp;")
+        :gsub("<", "&lt;")
+        :gsub(">", "&gt;")
+        :gsub('"', "&quot;")
+        :gsub("'", "&apos;")
+end
+
+function XMLSerializer:getIndent()
+    return string.rep("  ", self.indent)
+end
+
+function XMLSerializer:serializeValue(value, valueType)
+    valueType = valueType or typeof(value)
+    
+    local serializers = {
+        string = function(v) return string.format('<string>%s</string>', self:escape(v)) end,
+        number = function(v) return string.format('<double>%s</double>', v) end,
+        boolean = function(v) return string.format('<bool>%s</bool>', v) end,
+        
+        Vector3 = function(v)
+            return string.format('<Vector3><X>%.9g</X><Y>%.9g</Y><Z>%.9g</Z></Vector3>', v.X, v.Y, v.Z)
+        end,
+        
+        Vector2 = function(v)
+            return string.format('<Vector2><X>%.9g</X><Y>%.9g</Y></Vector2>', v.X, v.Y)
+        end,
+        
+        CFrame = function(v)
+            local components = {v:GetComponents()}
+            local tags = {"X", "Y", "Z", "R00", "R01", "R02", "R10", "R11", "R12", "R20", "R21", "R22"}
+            local parts = {}
+            for i, tag in ipairs(tags) do
+                table.insert(parts, string.format('<%s>%.9g</%s>', tag, components[i], tag))
+            end
+            return '<CFrame>' .. table.concat(parts) .. '</CFrame>'
+        end,
+        
+        Color3 = function(v)
+            return string.format('<Color3uint8>%d %d %d</Color3uint8>',
+                math.floor(v.R * 255 + 0.5),
+                math.floor(v.G * 255 + 0.5),
+                math.floor(v.B * 255 + 0.5))
+        end,
+        
+        BrickColor = function(v)
+            return string.format('<int>%d</int>', v.Number)
+        end,
+        
+        EnumItem = function(v)
+            return string.format('<token>%d</token>', v.Value)
+        end,
+    }
+    
+    local serializer = serializers[valueType]
+    if serializer then
+        return serializer(value)
+    end
+    
+    return string.format('<string>%s</string>', self:escape(tostring(value)))
+end
+
+function XMLSerializer:serializeProperty(name, propData)
+    local xml = self:getIndent()
+    xml = xml .. string.format('<Property name="%s">', self:escape(name))
+    xml = xml .. self:serializeValue(propData.value, propData.type)
+    xml = xml .. '</Property>\n'
+    return xml
+end
+
+function XMLSerializer:serializeInstance(instanceData)
+    local xml = self:getIndent()
+    xml = xml .. string.format('<Item class="%s" referent="%s">\n', instanceData.className, instanceData.id)
+    
+    self.indent = self.indent + 1
+    
+    xml = xml .. self:getIndent() .. '<Properties>\n'
+    self.indent = self.indent + 1
+    
+    xml = xml .. self:getIndent()
+    xml = xml .. string.format('<Property name="Name"><string>%s</string></Property>\n', self:escape(instanceData.name))
+    
+    for propName, propData in pairs(instanceData.properties) do
+        if propName ~= "Name" and propName ~= "Parent" then
+            local success, result = pcall(self.serializeProperty, self, propName, propData)
+            if success then
+                xml = xml .. result
+            end
+        end
+    end
+    
+    self.indent = self.indent - 1
+    xml = xml .. self:getIndent() .. '</Properties>\n'
+    
+    for _, child in ipairs(instanceData.children) do
+        xml = xml .. self:serializeInstance(child)
+    end
+    
+    self.indent = self.indent - 1
+    xml = xml .. self:getIndent() .. '</Item>\n'
+    
+    return xml
+end
+
+function XMLSerializer:serialize(rootInstances)
+    local xml = '<?xml version="1.0" encoding="UTF-8"?>\n<roblox version="4">\n'
+    xml = xml .. '<Meta name="ExplicitAutoJoints">true</Meta>\n'
+    
+    for _, inst in ipairs(rootInstances) do
+        xml = xml .. self:serializeInstance(inst)
+    end
+    
+    xml = xml .. '</roblox>'
+    return xml
+end
+
+local FileManager = {}
+FileManager.__index = FileManager
+
+function FileManager.new(logger)
+    local self = setmetatable({}, FileManager)
+    self.logger = logger
+    self.folder = "SaveInstance_Output"
+    
+    if APIs.makefolder then
+        APIs.makefolder(self.folder)
+    end
+    
+    return self
+end
+
+function FileManager:generateFilename(extension)
+    local gameInfo = Services.MarketplaceService:GetProductInfo(game.PlaceId)
+    local gameName = gameInfo.Name:gsub("[^%w%-]", "_")
+    local timestamp = os.date("%Y%m%d_%H%M%S")
+    return string.format("%s/%s_%s.%s", self.folder, gameName, timestamp, extension)
+end
+
+function FileManager:write(filename, content)
+    if not APIs.writefile then
+        self.logger:log("ERROR", "writefile not available")
+        return false
+    end
+    
+    local success, err = pcall(APIs.writefile, filename, content)
+    if success then
+        self.logger:log("INFO", "File written: " .. filename)
+        return true, filename
+    else
+        self.logger:log("ERROR", "Failed to write file: " .. tostring(err))
+        return false, err
+    end
+end
+
+local GUI = {}
+GUI.__index = GUI
+
+function GUI.new()
+    local self = setmetatable({}, GUI)
+    self.enabled = true
+    return self
+end
+
+function GUI:create()
+    local parent = getGuiParent()
+    
+    self.screen = Instance.new("ScreenGui")
+    self.screen.Name = "SaveInstanceUI"
+    self.screen.ResetOnSpawn = false
+    self.screen.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    self.screen.IgnoreGuiInset = true
+    
+    local main = Instance.new("Frame")
+    main.Name = "Main"
+    main.Size = UDim2.new(0, 500, 0, 400)
+    main.Position = UDim2.new(0.5, -250, 0.5, -200)
+    main.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
+    main.BorderSizePixel = 0
+    main.Parent = self.screen
+    
+    Instance.new("UICorner", main).CornerRadius = UDim.new(0, 10)
+    
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(1, -20, 0, 40)
+    title.Position = UDim2.new(0, 10, 0, 10)
+    title.BackgroundTransparency = 1
+    title.Text = "SaveInstance Pro"
+    title.TextColor3 = Color3.fromRGB(255, 255, 255)
+    title.TextSize = 18
+    title.Font = Enum.Font.GothamBold
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.Parent = main
+    
+    local status = Instance.new("TextLabel")
+    status.Name = "Status"
+    status.Size = UDim2.new(1, -20, 0, 20)
+    status.Position = UDim2.new(0, 10, 0, 55)
+    status.BackgroundTransparency = 1
+    status.Text = "Ready"
+    status.TextColor3 = Color3.fromRGB(180, 180, 180)
+    status.TextSize = 14
+    status.Font = Enum.Font.Gotham
+    status.TextXAlignment = Enum.TextXAlignment.Left
+    status.Parent = main
+    self.status = status
+    
+    local progressBg = Instance.new("Frame")
+    progressBg.Size = UDim2.new(1, -20, 0, 30)
+    progressBg.Position = UDim2.new(0, 10, 0, 85)
+    progressBg.BackgroundColor3 = Color3.fromRGB(35, 35, 38)
+    progressBg.BorderSizePixel = 0
+    progressBg.Parent = main
+    
+    Instance.new("UICorner", progressBg).CornerRadius = UDim.new(0, 6)
+    
+    local progress = Instance.new("Frame")
+    progress.Name = "Progress"
+    progress.Size = UDim2.new(0, 0, 1, 0)
+    progress.BackgroundColor3 = Color3.fromRGB(88, 101, 242)
+    progress.BorderSizePixel = 0
+    progress.Parent = progressBg
+    self.progress = progress
+    
+    Instance.new("UICorner", progress).CornerRadius = UDim.new(0, 6)
+    
+    local progressText = Instance.new("TextLabel")
+    progressText.Name = "ProgressText"
+    progressText.Size = UDim2.new(1, 0, 1, 0)
+    progressText.BackgroundTransparency = 1
+    progressText.Text = "0%"
+    progressText.TextColor3 = Color3.fromRGB(255, 255, 255)
+    progressText.TextSize = 14
+    progressText.Font = Enum.Font.GothamMedium
+    progressText.ZIndex = 2
+    progressText.Parent = progressBg
+    self.progressText = progressText
+    
+    local log = Instance.new("ScrollingFrame")
+    log.Name = "Log"
+    log.Size = UDim2.new(1, -20, 0, 180)
+    log.Position = UDim2.new(0, 10, 0, 125)
+    log.BackgroundColor3 = Color3.fromRGB(20, 20, 23)
+    log.BorderSizePixel = 0
+    log.ScrollBarThickness = 4
+    log.Parent = main
+    
+    Instance.new("UICorner", log).CornerRadius = UDim.new(0, 6)
+    
+    local logLayout = Instance.new("UIListLayout", log)
+    logLayout.Padding = UDim.new(0, 2)
+    self.log = log
+    self.logLayout = logLayout
+    
+    local buttonFrame = Instance.new("Frame")
+    buttonFrame.Size = UDim2.new(1, -20, 0, 50)
+    buttonFrame.Position = UDim2.new(0, 10, 1, -60)
+    buttonFrame.BackgroundTransparency = 1
+    buttonFrame.Parent = main
+    
+    self.buttons = {}
+    local buttonConfigs = {
+        {name = "Quick", text = "Quick Save", color = Color3.fromRGB(88, 101, 242), position = UDim2.new(0, 0, 0, 0)},
+        {name = "Advanced", text = "Advanced", color = Color3.fromRGB(67, 181, 129), position = UDim2.new(0.33, 5, 0, 0)},
+        {name = "Close", text = "Close", color = Color3.fromRGB(237, 66, 69), position = UDim2.new(0.66, 10, 0, 0)}
+    }
+    
+    for _, config in ipairs(buttonConfigs) do
+        local btn = Instance.new("TextButton")
+        btn.Name = config.name
+        btn.Size = UDim2.new(0.33, -10, 1, 0)
+        btn.Position = config.position
+        btn.BackgroundColor3 = config.color
+        btn.BorderSizePixel = 0
+        btn.Text = config.text
+        btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        btn.TextSize = 14
+        btn.Font = Enum.Font.GothamBold
+        btn.Parent = buttonFrame
+        
+        Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
+        
+        self.buttons[config.name] = btn
+    end
+    
+    self:makeDraggable(main, title)
+    
+    self.screen.Parent = parent
+end
+
+function GUI:makeDraggable(frame, handle)
+    local dragging, dragInput, dragStart, startPos
+    
+    handle.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+            dragStart = input.Position
+            startPos = frame.Position
+            
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                end
+            end)
+        end
+    end)
+    
+    handle.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement then
+            dragInput = input
+        end
+    end)
+    
+    Services.UserInputService.InputChanged:Connect(function(input)
+        if input == dragInput and dragging then
+            local delta = input.Position - dragStart
+            frame.Position = UDim2.new(
+                startPos.X.Scale, startPos.X.Offset + delta.X,
+                startPos.Y.Scale, startPos.Y.Offset + delta.Y
+            )
+        end
+    end)
+end
+
+function GUI:setProgress(value, text)
+    if not self.progress then return end
+    
+    value = math.clamp(value, 0, 1)
+    self.progress:TweenSize(
+        UDim2.new(value, 0, 1, 0),
+        Enum.EasingDirection.Out,
+        Enum.EasingStyle.Quad,
+        0.2,
+        true
+    )
+    
+    if text then
+        self.progressText.Text = text
+    else
+        self.progressText.Text = string.format("%d%%", math.floor(value * 100))
+    end
+end
+
+function GUI:setStatus(text, color)
+    if self.status then
+        self.status.Text = text
+        if color then
+            self.status.TextColor3 = color
+        end
+    end
+end
+
+function GUI:addLog(message, color)
+    if not self.log then return end
+    
+    local entry = Instance.new("TextLabel")
+    entry.Size = UDim2.new(1, -10, 0, 18)
+    entry.BackgroundTransparency = 1
+    entry.Text = string.format("[%s] %s", os.date("%H:%M:%S"), message)
+    entry.TextColor3 = color or Color3.fromRGB(200, 200, 200)
+    entry.TextSize = 12
+    entry.Font = Enum.Font.Code
+    entry.TextXAlignment = Enum.TextXAlignment.Left
+    entry.TextTruncate = Enum.TextTruncate.AtEnd
+    entry.Parent = self.log
+    
+    self.log.CanvasSize = UDim2.new(0, 0, 0, self.logLayout.AbsoluteContentSize.Y)
+    self.log.CanvasPosition = Vector2.new(0, self.logLayout.AbsoluteContentSize.Y)
+end
+
+function GUI:destroy()
+    if self.screen then
+        self.screen:Destroy()
+    end
+end
+
+local Core = {}
+Core.__index = Core
+
+function Core.new()
+    local self = setmetatable({}, Core)
+    
+    self.logger = Logger.new()
+    self.propertyExtractor = PropertyExtractor.new()
+    self.collector = InstanceCollector.new(self.logger, self.propertyExtractor)
+    self.decompiler = ScriptDecompiler.new(self.logger)
+    self.serializer = XMLSerializer.new()
+    self.fileManager = FileManager.new(self.logger)
+    self.gui = GUI.new()
+    
+    self.executor = detectExecutor()
+    self.logger:log("INFO", "Executor: " .. self.executor)
+    
+    return self
+end
+
+function Core:initialize()
+    self.gui:create()
+    
+    self.logger:onLog(function(entry)
+        local colors = {
+            INFO = Color3.fromRGB(100, 200, 255),
+            WARN = Color3.fromRGB(255, 200, 100),
+            ERROR = Color3.fromRGB(255, 100, 100),
+            CRITICAL = Color3.fromRGB(255, 50, 50)
+        }
+        self.gui:addLog(entry.message, colors[entry.level])
+    end)
+    
+    self.gui.buttons.Quick.MouseButton1Click:Connect(function()
+        task.spawn(function() self:quickSave() end)
+    end)
+    
+    self.gui.buttons.Advanced.MouseButton1Click:Connect(function()
+        task.spawn(function() self:advancedSave() end)
+    end)
+    
+    self.gui.buttons.Close.MouseButton1Click:Connect(function()
+        self.gui:destroy()
+    end)
+    
+    self.logger:log("INFO", "System ready")
+    self.gui:setStatus("Ready to save", Color3.fromRGB(100, 255, 100))
+end
+
+function Core:quickSave()
+    local options = {
+        serverScripts = false,
+        serverStorage = false,
+        nilInstances = false,
+        players = false
+    }
+    
+    return self:execute(options)
+end
+
+function Core:advancedSave()
+    local options = {
+        serverScripts = true,
+        serverStorage = true,
+        nilInstances = true,
+        players = false
+    }
+    
+    return self:execute(options)
+end
+
+function Core:execute(options)
     local startTime = tick()
     
-    -- ─────────────────────────────────────────────────────────────────────
-    -- Step 1: Get bytecode (cache key)
-    -- ─────────────────────────────────────────────────────────────────────
-    local bytecode = ""
-    local bcSize = 0
+    self.logger:log("INFO", "Starting save operation")
+    self.gui:setStatus("Collecting instances...", Color3.fromRGB(255, 200, 100))
+    self.gui:setProgress(0)
     
-    if ExecutorAPI.getscriptbytecode then
-        local ok, bc = pcall(ExecutorAPI.getscriptbytecode, scr)
-        if ok and bc and #bc > 0 then
-            bytecode = bc
-            bcSize = #bc
+    options.onProgress = function(current, total)
+        local progress = current / total
+        self.gui:setProgress(progress * 0.3, string.format("Collecting %d/%d", current, total))
+    end
+    
+    local instances = self.collector:collectAll(options)
+    self.gui:setProgress(0.3)
+    
+    self.logger:log("INFO", string.format("Collected %d instances", #instances))
+    self.gui:setStatus("Decompiling scripts...", Color3.fromRGB(255, 200, 100))
+    
+    local scriptCount = 0
+    for _, data in ipairs(instances) do
+        if data.instance:IsA("LuaSourceContainer") then
+            scriptCount = scriptCount + 1
+            local source, quality = self.decompiler:decompile(data.instance)
             
-            -- Cache check
-            if cfg.ScriptCache then
-                local hash = hashBytecode(bc)
-                local cached = _scriptCache[hash]
-                if cached then
-                    logWrite(("✓ Cache hit: %s (quality: %d, strategy: %s)"):format(
-                        scr:GetFullName(), cached.quality, cached.strategy))
-                    return cached.source, true, "cache"
-                end
+            if not data.properties then
+                data.properties = {}
             end
+            
+            data.properties.Source = {
+                value = source,
+                type = "string",
+                quality = quality
+            }
+        end
+        
+        if scriptCount % 10 == 0 then
+            local progress = 0.3 + (scriptCount / #instances) * 0.4
+            self.gui:setProgress(progress, string.format("Decompiling %d scripts", scriptCount))
+            task.wait()
         end
     end
     
-    -- ─────────────────────────────────────────────────────────────────────
-    -- Step 2: ScriptCallback override
-    -- ─────────────────────────────────────────────────────────────────────
-    if cfg.ScriptCallback then
-        local ok, src = pcall(cfg.ScriptCallback, scr, "")
-        if ok and type(src) == "string" and #src > 0 then
-            return src, true, "callback"
-        end
+    self.gui:setProgress(0.7)
+    self.logger:log("INFO", string.format("Decompiled %d scripts", scriptCount))
+    
+    self.gui:setStatus("Building hierarchy...", Color3.fromRGB(255, 200, 100))
+    local roots = self.collector:buildHierarchy()
+    self.gui:setProgress(0.8)
+    
+    self.gui:setStatus("Generating XML...", Color3.fromRGB(255, 200, 100))
+    local xml = self.serializer:serialize(roots)
+    self.gui:setProgress(0.9)
+    
+    self.gui:setStatus("Writing file...", Color3.fromRGB(255, 200, 100))
+    local filename = self.fileManager:generateFilename("rbxlx")
+    local success, result = self.fileManager:write(filename, xml)
+    
+    local logFilename = self.fileManager:generateFilename("log")
+    self.fileManager:write(logFilename, self.logger:export())
+    
+    self.gui:setProgress(1)
+    
+    local duration = tick() - startTime
+    
+    if success then
+        self.logger:log("INFO", string.format("Save complete in %.2fs", duration))
+        self.logger:log("INFO", "File: " .. result)
+        self.gui:setStatus(string.format("Complete! (%d instances, %.2fs)", #instances, duration), Color3.fromRGB(100, 255, 100))
+    else
+        self.logger:log("ERROR", "Save failed: " .. tostring(result))
+        self.gui:setStatus("Save failed!", Color3.fromRGB(255, 100, 100))
     end
     
-    -- ─────────────────────────────────────────────────────────────────────
-    -- Step 3: Execute all strategies in parallel
-    -- ─────────────────────────────────────────────────────────────────────
-    local strategies = {
-        {name="SourceProperty", func=DecompileStrategies.SourceProperty},
-        {name="Native", func=DecompileStrategies.Native},
-        {name="BytecodeFed", func=DecompileStrategies.BytecodeFed},
-        {name="Hybrid", func=DecompileStrategies.Hybrid},
-        {name="MemoryScan", func=DecompileStrategies.MemoryScan},
-        {name="Disassembly", func=DecompileStrategies.Disassemble},
-        {name="PseudoCode", func=DecompileStrategies.PseudoCode},
-        {name="ConstantStub", func=DecompileStrategies.ConstantStub},
+    return {
+        success = success,
+        instances = #instances,
+        scripts = scriptCount,
+        duration = duration,
+        file = result
     }
-    
-    local results = {}  -- {source, quality, strategy}
-    local timeout = cfg.DecompileTimeout / #strategies -- time-slice per strategy
-    
-    logWrite(("⚡ Decompiling: %s (%d strategies, %.1fs timeout each)"):format(
-        scr:GetFullName(), #strategies, timeout))
-    
-    for _, strat in ipairs(strategies) do
-        local ok, source, err = pcall(strat.func, DecompileStrategies, scr, bytecode, timeout)
-        
-        if ok and source and type(source) == "string" and #source > 0 then
-            local quality, metrics = QualityScorer:Score(source, bytecode)
-            
-            logWrite(("  [%s] Quality: %d/100"):format(strat.name, quality))
-            
-            table.insert(results, {
-                source = source,
-                quality = quality,
-                strategy = strat.name,
-                metrics = metrics
-            })
-        else
-            logWrite(("  [%s] Failed: %s"):format(strat.name, err or "unknown"))
-        end
-    end
-    
-    -- ─────────────────────────────────────────────────────────────────────
-    -- Step 4: Pick best result by quality
-    -- ─────────────────────────────────────────────────────────────────────
-    if #results == 0 then
-        stats.decompileFailCount = stats.decompileFailCount + 1
-        if cfg.DecompileFallback then
-            local stub = buildDecompileStub(scr, "all_strategies_failed", bcSize,
-                ExecutorAPI.name, cfg.ObfuscatedScriptStub)
-            return stub, false, "fallback"
-        else
-            return "-- Decompilation failed", false, "failed"
-        end
-    end
-    
-    -- Sort by quality descending
-    table.sort(results, function(a, b) return a.quality > b.quality end)
-    
-    local best = results[1]
-    logWrite(("✓ Best: [%s] with quality %d/100 (%.2fs elapsed)"):format(
-        best.strategy, best.quality, tick() - startTime))
-    
-    -- ─────────────────────────────────────────────────────────────────────
-    -- Step 5: Post-processing
-    -- ─────────────────────────────────────────────────────────────────────
-    local finalSource = best.source
-    
-    -- Obfuscation detection
-    local obf = ObfuscationDetector:Analyze(finalSource, bytecode)
-    if obf.type ~= "none" and obf.confidence > 0.7 then
-        local warning = ("\n--[[ OBFUSCATION DETECTED: %s (%.0f%% confidence) ]]\n\n"):format(
-            obf.type, obf.confidence * 100)
-        finalSource = warning .. finalSource
-        logWrite(("⚠ Obfuscation: %s (%.0f%%)"):format(obf.type, obf.confidence*100))
-    end
-    
-    -- Constant extraction enhancement
-    if best.quality < 70 then
-        local constants = ConstantExtractor:Extract(bytecode)
-        finalSource = PatternLibrary:Improve(finalSource, constants)
-    end
-    
-    -- Beautify if quality is decent
-    if best.quality >= 50 and best.quality < 90 then
-        finalSource = SourceBeautifier:Format(finalSource)
-    end
-    
-    -- ScriptCallback post-process
-    if cfg.ScriptCallback then
-        local ok, processed = pcall(cfg.ScriptCallback, scr, finalSource)
-        if ok and type(processed) == "string" and #processed > 0 then
-            finalSource = processed
-        end
-    end
-    
-    -- ─────────────────────────────────────────────────────────────────────
-    -- Step 6: Cache result
-    -- ─────────────────────────────────────────────────────────────────────
-    if cfg.ScriptCache and bytecode ~= "" then
-        local hash = hashBytecode(bytecode)
-        _scriptCache[hash] = {
-            source = finalSource,
-            quality = best.quality,
-            strategy = best.strategy
-        }
-    end
-    
-    stats.decompileSuccessCount = stats.decompileSuccessCount + 1
-    return finalSource, true, best.strategy
 end
 
----Process a batch of scripts with ultimate decompilation
----@param scripts table
----@param cfg table
----@param stats table
----@return table<Instance, string> results
-local function decompileBatch(scripts, cfg, stats)
-    local results = {}
-    
-    if not cfg.DecompileParallel or #scripts <= 1 then
-        -- Sequential mode with ultimate engine
-        for i, item in ipairs(scripts) do
-            local src, success, strategy = decompileOneUltimate(item.scr, cfg, stats)
-            results[item.scr] = src
-            stats.scriptCount = stats.scriptCount + 1
-            
-            if cfg.Verbose then
-                print(("[SaveInstance] [%d/%d] %s: %s"):format(
-                    i, #scripts, strategy, item.scr:GetFullName()))
-            end
-            
-            if i % 5 == 0 then
-                task.wait() -- Yield periodically
-            end
-        end
-        return results
-    end
-    
-    -- Parallel mode with worker pool
-    local POOL_SIZE = 3
-    local pending = {}
-    for i, item in ipairs(scripts) do pending[i] = item end
-    
-    local active = {}
-    local pi = 1
-    
-    while pi <= #pending or #active > 0 do
-        -- Fill pool
-        while #active < POOL_SIZE and pi <= #pending do
-            local item = pending[pi]; pi = pi + 1
-            local scr = item.scr
-            local slot = {done=false, src=nil, scr=scr}
-            
-            local co = coroutine.create(function()
-                local src, _, _ = decompileOneUltimate(scr, cfg, stats)
-                slot.src = src
-                slot.done = true
-                stats.scriptCount = stats.scriptCount + 1
-            end)
-            
-            coroutine.resume(co)
-            active[#active+1] = {co=co, slot=slot, scr=scr,
-                deadline=tick() + cfg.DecompileTimeout * 2}
-        end
-        
-        -- Poll active coroutines
-        local stillActive = {}
-        for _, entry in ipairs(active) do
-            local st = coroutine.status(entry.co)
-            if st == "suspended" then
-                coroutine.resume(entry.co)
-            end
-            
-            if entry.slot.done or st == "dead" then
-                results[entry.scr] = entry.slot.src or "-- Parallel decompile failed"
-            elseif tick() > entry.deadline then
-                if coroutine.close then pcall(coroutine.close, entry.co) end
-                local stub = buildDecompileStub(entry.scr, "parallel_timeout",
-                    0, ExecutorAPI.name, cfg.ObfuscatedScriptStub)
-                results[entry.scr] = stub
-                stats.decompileFailCount = stats.decompileFailCount + 1
-            else
-                stillActive[#stillActive+1] = entry
-            end
-        end
-        active = stillActive
-        
-        if #active > 0 then task.wait(0.1) end
-    end
-    
-    return results
-end
+local mainCore = Core.new()
+mainCore:initialize()
 
----Build fallback stub
-local function buildDecompileStub(scr, reason, bytecodeSize, executor, customStub)
-    if customStub then return customStub end
-    return ("--[[\n"
-        .. "    SaveInstance Ultimate Decompilation Report\n"
-        .. "    Script    : %s\n"
-        .. "    ClassName : %s\n"
-        .. "    Failure   : %s\n"
-        .. "    Executor  : %s\n"
-        .. "    Timestamp : %s\n"
-        .. "    BytecodeSize : %d bytes\n"
-        .. "    \n"
-        .. "    All 8 decompilation strategies failed.\n"
-        .. "    This script may be heavily obfuscated or corrupted.\n"
-        .. "]]"):format(
-            scr:GetFullName(),
-            scr.ClassName,
-            reason,
-            executor,
-            os.date("%Y-%m-%d %H:%M:%S"),
-            bytecodeSize)
-end
-
--- Export ultimate decompilation system
-_G.SaveInstanceDecompiler = {
-    Disassembler = LuauDisassembler,
-    ConstantExtractor = ConstantExtractor,
-    ObfuscationDetector = ObfuscationDetector,
-    QualityScorer = QualityScorer,
-    Beautifier = SourceBeautifier,
-    PatternLibrary = PatternLibrary,
-    Strategies = DecompileStrategies
-}
+return SaveInstanceCore
+```
