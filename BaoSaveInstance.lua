@@ -1,4 +1,4 @@
-```lua
+
 local SaveInstanceCore = {}
 SaveInstanceCore.__version = "3.5.0"
 
@@ -1151,4 +1151,3 @@ local mainCore = Core.new()
 mainCore:initialize()
 
 return SaveInstanceCore
-```
