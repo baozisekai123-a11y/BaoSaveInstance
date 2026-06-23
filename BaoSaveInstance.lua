@@ -1,5 +1,5 @@
 local SaveInstanceCore = {}
-SaveInstanceCore.__version = "3.8.0"
+SaveInstanceCore.__version = "3.9.0"
 
 local Services = setmetatable({}, {
     __index = function(t, k)
@@ -100,7 +100,6 @@ function SafeMode:enable(statusText)
         mainLabel.BackgroundTransparency = 1
         mainLabel.Text = statusText or "Safe Mode Active"
         mainLabel.TextColor3 = Color3.fromRGB(40, 40, 40)
-        mainLabel.TextScaled = false
         mainLabel.TextSize = 24
         mainLabel.Font = Enum.Font.GothamBold
         mainLabel.Parent = bg
@@ -230,7 +229,9 @@ function PropertyExtractor.new()
 end
 function PropertyExtractor:get(instance, prop)
     local key = tostring(instance) .. prop
-    if self.cache[key] ~= nil then return self.cache[key] end
+    if self.cache[key] ~= nil then
+        return self.cache[key] == false and nil or self.cache[key]
+    end
     for _, b in ipairs(self.blacklist) do if prop == b then self.cache[key] = false return nil end end
     local val
     local ok = pcall(function()
@@ -240,8 +241,12 @@ function PropertyExtractor:get(instance, prop)
             val = instance[prop]
         end
     end)
-    self.cache[key] = ok and val ~= nil and val or false
-    return ok and val or nil
+    if ok and val ~= nil then
+        self.cache[key] = val
+        return val
+    end
+    self.cache[key] = false
+    return nil
 end
 function PropertyExtractor:getAll(instance)
     local props = {}
@@ -264,6 +269,9 @@ function PropertyExtractor:getAll(instance)
             SpecialMesh       = {"MeshType","MeshId","TextureId","Offset","Scale"},
             Humanoid          = {"MaxHealth","Health","WalkSpeed","JumpPower","AutoRotate"},
             SpawnLocation     = {"Duration","TeamColor","Neutral","AllowTeamChangeOnTouch"},
+            Attachment        = {"CFrame","Visible"},
+            Weld              = {"Part0","Part1","C0","C1"},
+            Motor6D           = {"Part0","Part1","C0","C1","DesiredAngle","MaxVelocity"},
         }
         for cls, fields in pairs(extras) do
             if instance:IsA(cls) then
@@ -348,7 +356,6 @@ function Decompiler:attemptDecompile(script)
 end
 
 function Decompiler:pipeline(script)
-    -- Step 1: Direct source read (highest priority, always accurate)
     do
         local src
         if env.gethiddenproperty then
@@ -364,7 +371,6 @@ function Decompiler:pipeline(script)
         end
     end
 
-    -- Step 2: Native decompile() from executor
     if env.decompile then
         local ok, result = pcall(env.decompile, script)
         if ok and type(result) == "string" and #result > 10 then
@@ -378,20 +384,16 @@ function Decompiler:pipeline(script)
         end
     end
 
-    -- Step 3: Bytecode extraction + analysis
     if env.getscriptbytecode then
         local ok, bytecode = pcall(env.getscriptbytecode, script)
         if ok and bytecode and #bytecode > 0 then
-            local analyzed = self:analyzeBytecode(script, bytecode)
-            return analyzed, "partial"
+            return self:analyzeBytecode(script, bytecode), "partial"
         end
     end
 
-    -- Step 4: Constant + upvalue + proto analysis (no bytecode API)
     local constantSrc = self:constantFallback(script)
     if constantSrc then return constantSrc, "partial" end
 
-    -- Step 5: Absolute fallback
     return ("-- Decompile failed\n-- Script: %s\n-- Class:  %s"):format(
         script:GetFullName(), script.ClassName
     ), "failed"
@@ -404,7 +406,6 @@ function Decompiler:analyzeBytecode(script, bytecode)
     table.insert(lines, ("-- ClassName: %s"):format(script.ClassName))
     table.insert(lines, "")
 
-    -- Constants
     if env.getconstants then
         local ok, consts = pcall(env.getconstants, script)
         if ok and consts and #consts > 0 then
@@ -424,7 +425,6 @@ function Decompiler:analyzeBytecode(script, bytecode)
         end
     end
 
-    -- Upvalues
     if env.getupvalues then
         local ok, upvals = pcall(env.getupvalues, script)
         if ok and upvals and next(upvals) then
@@ -436,7 +436,6 @@ function Decompiler:analyzeBytecode(script, bytecode)
         end
     end
 
-    -- Protos (inner functions)
     if env.getprotos then
         local ok, protos = pcall(env.getprotos, script)
         if ok and protos and #protos > 0 then
@@ -457,26 +456,15 @@ function Decompiler:analyzeBytecode(script, bytecode)
         end
     end
 
-    -- String pattern detection from raw bytecode
     local detected = {}
     local patterns = {
-        RemoteEvent      = "RemoteEvent",
-        RemoteFunction   = "RemoteFunction",
-        BindableEvent    = "BindableEvent",
-        UserInputService = "UserInputService",
-        TweenService     = "TweenService",
-        RunService       = "RunService",
-        HttpService      = "HttpService",
-        DataStore        = "DataStoreService",
-        require_         = "require",
-        loadstring_      = "loadstring",
-        getfenv_         = "getfenv",
-        setfenv_         = "setfenv",
+        "RemoteEvent", "RemoteFunction", "BindableEvent", "BindableFunction",
+        "UserInputService", "TweenService", "RunService", "HttpService",
+        "DataStoreService", "MarketplaceService", "TeleportService",
+        "require", "loadstring", "getfenv", "setfenv", "newproxy"
     }
-    for label, pat in pairs(patterns) do
-        if bytecode:find(pat, 1, true) then
-            table.insert(detected, pat)
-        end
+    for _, pat in ipairs(patterns) do
+        if bytecode:find(pat, 1, true) then table.insert(detected, pat) end
     end
     if #detected > 0 then
         table.insert(lines, "-- === Detected References ===")
@@ -509,27 +497,60 @@ end
 
 local Collector = {}
 Collector.__index = Collector
+
 function Collector.new(logger, extractor)
     local self = setmetatable({}, Collector)
     self.logger, self.extractor = logger, extractor
     self.instanceMap = {}
     self.idSeq = 0
-    self.ignoreNames = {CoreGui=true, CorePackages=true, HttpRbxApiService=true, RobloxReplicatedStorage=true}
+
+    self.ignoreNames = {
+        CoreGui                 = true,
+        CorePackages            = true,
+        HttpRbxApiService       = true,
+        RobloxReplicatedStorage = true,
+    }
+
+    self.ignoreClasses = {
+        Terrain      = true,
+        StarterGear  = true,
+        PackageLink  = true,
+    }
+
     return self
 end
+
 function Collector:nextId() self.idSeq = self.idSeq + 1 return ("RBX%08X"):format(self.idSeq) end
+
 function Collector:skip(inst)
     if inst == game then return true end
-    if self.ignoreNames[inst.Name] or self.ignoreNames[inst.ClassName] then return true end
-    local ok = pcall(function() return inst.Parent end)
-    return not ok
+    if self.ignoreNames[inst.Name] then return true end
+    if self.ignoreClasses[inst.ClassName] then return true end
+
+    local okClass, isTerrain = pcall(inst.IsA, inst, "Terrain")
+    if okClass and isTerrain then return true end
+
+    local okParent = pcall(function() return inst.Parent end)
+    if not okParent then return true end
+
+    return false
 end
+
 function Collector:processOne(inst)
     local id = self:nextId()
-    local d = {id=id, instance=inst, className=inst.ClassName, name=inst.Name, properties=self.extractor:getAll(inst), children={}, parent=inst.Parent}
+    local d = {
+        id         = id,
+        instance   = inst,
+        className  = inst.ClassName,
+        name       = inst.Name,
+        properties = self.extractor:getAll(inst),
+        children   = {},
+        parent     = inst.Parent
+    }
     self.instanceMap[inst] = d
     return d
 end
+
 function Collector:fromRoot(root, onProgress)
     local out, desc = {}, root:GetDescendants()
     for i, inst in ipairs(desc) do
@@ -538,6 +559,7 @@ function Collector:fromRoot(root, onProgress)
     end
     return out
 end
+
 function Collector:buildHierarchy()
     local roots = {}
     for _, d in pairs(self.instanceMap) do
@@ -549,16 +571,22 @@ function Collector:buildHierarchy()
     end
     return roots
 end
+
 function Collector:collectAll(options, onProgress)
     self.instanceMap = {}
     self.idSeq = 0
     local all = {}
     local containers = {
-        {Services.Workspace, true}, {Services.Lighting, true},
-        {Services.ReplicatedStorage, true}, {Services.ReplicatedFirst, true},
-        {Services.StarterGui, true}, {Services.StarterPack, true},
-        {Services.StarterPlayer, true}, {Services.Teams, true},
-        {Services.SoundService, true}, {Services.Chat, true},
+        {Services.Workspace, true},
+        {Services.Lighting, true},
+        {Services.ReplicatedStorage, true},
+        {Services.ReplicatedFirst, true},
+        {Services.StarterGui, true},
+        {Services.StarterPack, true},
+        {Services.StarterPlayer, true},
+        {Services.Teams, true},
+        {Services.SoundService, true},
+        {Services.Chat, true},
         {Services.ServerScriptService, options.serverScripts},
         {Services.ServerStorage, options.serverScripts},
     }
@@ -587,25 +615,34 @@ end
 
 local Serializer = {}
 Serializer.__index = Serializer
-function Serializer.new() return setmetatable({depth=0, n=0}, Serializer) end
+
+function Serializer.new()
+    return setmetatable({depth = 0, n = 0}, Serializer)
+end
+
 function Serializer:esc(s)
     return tostring(s):gsub("&","&amp;"):gsub("<","&lt;"):gsub(">","&gt;"):gsub('"',"&quot;"):gsub("'","&apos;")
 end
+
 function Serializer:val(v, t)
     t = t or typeof(v)
-    if t == "string"  then return ("<string>%s</string>"):format(self:esc(v))
-    elseif t == "number"  then return ("<double>%s</double>"):format(v)
-    elseif t == "boolean" then return ("<bool>%s</bool>"):format(v)
-    elseif t == "Vector3" then return ("<Vector3><X>%.9g</X><Y>%.9g</Y><Z>%.9g</Z></Vector3>"):format(v.X,v.Y,v.Z)
-    elseif t == "Vector2" then return ("<Vector2><X>%.9g</X><Y>%.9g</Y></Vector2>"):format(v.X,v.Y)
-    elseif t == "CFrame"  then
-        local c={v:GetComponents()}
+    if t == "string"   then return ("<string>%s</string>"):format(self:esc(v))
+    elseif t == "number"   then return ("<double>%s</double>"):format(v)
+    elseif t == "boolean"  then return ("<bool>%s</bool>"):format(v)
+    elseif t == "Vector3"  then return ("<Vector3><X>%.9g</X><Y>%.9g</Y><Z>%.9g</Z></Vector3>"):format(v.X, v.Y, v.Z)
+    elseif t == "Vector2"  then return ("<Vector2><X>%.9g</X><Y>%.9g</Y></Vector2>"):format(v.X, v.Y)
+    elseif t == "CFrame"   then
+        local c = {v:GetComponents()}
         return ("<CFrame><X>%.9g</X><Y>%.9g</Y><Z>%.9g</Z><R00>%.9g</R00><R01>%.9g</R01><R02>%.9g</R02><R10>%.9g</R10><R11>%.9g</R11><R12>%.9g</R12><R20>%.9g</R20><R21>%.9g</R21><R22>%.9g</R22></CFrame>"):format(table.unpack(c))
-    elseif t == "Color3"   then return ("<Color3uint8>%d %d %d</Color3uint8>"):format(math.floor(v.R*255+.5),math.floor(v.G*255+.5),math.floor(v.B*255+.5))
+    elseif t == "Color3"    then return ("<Color3uint8>%d %d %d</Color3uint8>"):format(math.floor(v.R*255+0.5), math.floor(v.G*255+0.5), math.floor(v.B*255+0.5))
     elseif t == "BrickColor" then return ("<int>%d</int>"):format(v.Number)
-    elseif t == "EnumItem" then return ("<token>%d</token>"):format(v.Value)
+    elseif t == "EnumItem"   then return ("<token>%d</token>"):format(v.Value)
+    elseif t == "UDim"       then return ("<UDim><S>%.9g</S><O>%d</O></UDim>"):format(v.Scale, v.Offset)
+    elseif t == "UDim2"      then return ("<UDim2><XS>%.9g</XS><XO>%d</XO><YS>%.9g</YS><YO>%d</YO></UDim2>"):format(v.X.Scale, v.X.Offset, v.Y.Scale, v.Y.Offset)
+    elseif t == "Rect"       then return ("<Rect><min><X>%.9g</X><Y>%.9g</Y></min><max><X>%.9g</X><Y>%.9g</Y></max></Rect>"):format(v.Min.X, v.Min.Y, v.Max.X, v.Max.Y)
     else return ("<string>%s</string>"):format(self:esc(tostring(v))) end
 end
+
 function Serializer:item(d)
     self.n = self.n + 1
     if self.n % 150 == 0 then task.wait() end
@@ -613,7 +650,7 @@ function Serializer:item(d)
     local xml = ('%s<Item class="%s" referent="%s">\n%s  <Properties>\n'):format(pad, d.className, d.id, pad)
     xml = xml .. ('%s    <Property name="Name"><string>%s</string></Property>\n'):format(pad, self:esc(d.name))
     for pn, pd in pairs(d.properties) do
-        if pn ~= "Name" and pn ~= "Parent" then
+        if pn ~= "Name" and pn ~= "Parent" and pn ~= "ClassName" then
             pcall(function()
                 xml = xml .. ('%s    <Property name="%s">%s</Property>\n'):format(pad, self:esc(pn), self:val(pd.value, pd.type))
             end)
@@ -625,6 +662,7 @@ function Serializer:item(d)
     self.depth = self.depth - 1
     return xml .. pad .. "</Item>\n"
 end
+
 function Serializer:build(roots)
     self.depth, self.n = 0, 0
     local xml = '<?xml version="1.0" encoding="UTF-8"?>\n<roblox version="4">\n<Meta name="ExplicitAutoJoints">true</Meta>\n'
@@ -634,21 +672,24 @@ end
 
 local FileIO = {}
 FileIO.__index = FileIO
+
 function FileIO.new(logger)
-    local self = setmetatable({logger=logger, folder="SaveInstance_Output"}, FileIO)
+    local self = setmetatable({logger = logger, folder = "SaveInstance_Output"}, FileIO)
     if env.makefolder then pcall(env.makefolder, self.folder) end
     return self
 end
+
 function FileIO:name(ext)
     local ok, info = pcall(function() return Services.MarketplaceService:GetProductInfo(game.PlaceId) end)
     local n = (ok and info and info.Name) and info.Name:gsub("[^%w%-]","_") or "Unknown"
     return ("%s/%s_%s.%s"):format(self.folder, n, os.date("%Y%m%d_%H%M%S"), ext)
 end
+
 function FileIO:save(filename, content)
     if not env.writefile then return false end
     local ok, err = pcall(env.writefile, filename, content)
-    if ok then self.logger:write("INFO","Saved: "..filename) return true, filename end
-    self.logger:write("ERROR","Write failed: "..tostring(err)) return false, err
+    if ok then self.logger:write("INFO", "Saved: " .. filename) return true, filename end
+    self.logger:write("ERROR", "Write failed: " .. tostring(err)) return false, err
 end
 
 local GUI = {}
@@ -700,16 +741,22 @@ end
 
 function GUI:showSetup(onStart)
     local parent = getGuiParent()
+
+    local existing = parent:FindFirstChild("SIS_Setup")
+    if existing then existing:Destroy() end
+
     local screen = Instance.new("ScreenGui")
     screen.Name = "SIS_Setup"
     screen.DisplayOrder = 999999
     screen.IgnoreGuiInset = true
+    screen.ResetOnSpawn = false
     screen.Parent = parent
 
     local main = Instance.new("Frame")
     main.Size = UDim2.new(0, 460, 0, 435)
     main.Position = UDim2.new(0.5, -230, 0.5, -217)
     main.BackgroundColor3 = Color3.fromRGB(22, 22, 26)
+    main.Active = true
     main.Parent = screen
     Instance.new("UICorner", main).CornerRadius = UDim.new(0, 12)
 
@@ -757,18 +804,18 @@ function GUI:showSetup(onStart)
     divider.Parent = main
 
     local toggles = {
-        safeMode    = self:toggle(main, "🛡️  Safe Mode  (white screen — anti-crash/ban)",  true,  95),
-        decompile   = self:toggle(main, "📜  Decompile Scripts  (slower, more accurate)",   false, 143),
-        nilInstances= self:toggle(main, "👻  Include Nil Instances",                         false, 191),
-        players     = self:toggle(main, "👥  Include Player Characters",                     false, 239),
-        serverScripts=self:toggle(main, "🗄️  Save Server Services",                         true,  287),
+        safeMode     = self:toggle(main, "🛡️  Safe Mode  (white screen — anti-crash/ban)", true,  95),
+        decompile    = self:toggle(main, "📜  Decompile Scripts  (slower, accurate)",      false, 143),
+        nilInstances = self:toggle(main, "👻  Include Nil Instances",                       false, 191),
+        players      = self:toggle(main, "👥  Include Player Characters",                   false, 239),
+        serverScripts= self:toggle(main, "🗄️  Save Server Services",                       true,  287),
     }
 
     local note = Instance.new("TextLabel")
     note.Size = UDim2.new(1, -30, 0, 28)
     note.Position = UDim2.new(0, 15, 0, 337)
     note.BackgroundTransparency = 1
-    note.Text = "ℹ️  Safe Mode auto-activates during decompile if enabled above."
+    note.Text = "ℹ️  Safe Mode auto-activates during decompile if enabled."
     note.TextColor3 = Color3.fromRGB(100, 150, 220)
     note.TextSize = 12
     note.Font = Enum.Font.GothamMedium
@@ -808,13 +855,13 @@ end
 function GUI:makeDraggable(frame, handle)
     local dragging, ds, dp = false, nil, nil
     handle.InputBegan:Connect(function(i)
-        if i.UserInputType == Enum.UserInputType.MouseButton1 then
+        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
             dragging, ds, dp = true, i.Position, frame.Position
             i.Changed:Connect(function() if i.UserInputState == Enum.UserInputState.End then dragging = false end end)
         end
     end)
     Services.UserInputService.InputChanged:Connect(function(i)
-        if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement) then
+        if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
             local d = i.Position - ds
             frame.Position = UDim2.new(dp.X.Scale, dp.X.Offset+d.X, dp.Y.Scale, dp.Y.Offset+d.Y)
         end
@@ -823,6 +870,7 @@ end
 
 local Core = {}
 Core.__index = Core
+
 function Core.new()
     local self = setmetatable({}, Core)
     self.logger     = Logger.new()
@@ -842,17 +890,29 @@ function Core:start()
             local ok, err = xpcall(function() self:run(options) end, debug.traceback)
             if self.safeMode.active then self.safeMode:disable() end
             if ok then
-                Services.StarterGui:SetCore("SendNotification", {Title="✅ SaveInstance Complete", Text="File saved to SaveInstance_Output/", Duration=6})
+                pcall(function()
+                    Services.StarterGui:SetCore("SendNotification", {
+                        Title = "✅ SaveInstance Complete",
+                        Text = "File saved to SaveInstance_Output/",
+                        Duration = 6
+                    })
+                end)
             else
                 self.logger:write("ERROR", tostring(err))
-                Services.StarterGui:SetCore("SendNotification", {Title="❌ SaveInstance Failed", Text="Check F9 console for details.", Duration=6})
+                pcall(function()
+                    Services.StarterGui:SetCore("SendNotification", {
+                        Title = "❌ SaveInstance Failed",
+                        Text = "Check F9 console for details.",
+                        Duration = 6
+                    })
+                end)
             end
         end)
     end)
 end
 
 function Core:run(options)
-    self.logger:write("INFO", "Starting | safeMode=" .. tostring(options.safeMode) .. " decompile=" .. tostring(options.decompile))
+    self.logger:write("INFO", ("Starting | safeMode=%s decompile=%s"):format(tostring(options.safeMode), tostring(options.decompile)))
 
     local instances = self.collector:collectAll(options, function(c, t)
         if options.safeMode then
