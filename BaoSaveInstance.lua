@@ -1,6 +1,5 @@
-
 local SaveInstanceCore = {}
-SaveInstanceCore.__version = "3.5.0"
+SaveInstanceCore.__version = "3.5.1"
 
 local Services = setmetatable({}, {
     __index = function(t, k)
@@ -19,7 +18,23 @@ local function safeCall(func, ...)
 end
 
 local function getGuiParent()
-    return safeCall(gethui) or Services.CoreGui
+    local attempts = {
+        function() return gethui() end,
+        function() return cloneref(Services.CoreGui) end,
+        function() return Services.CoreGui end,
+        function() return Services.Players.LocalPlayer:WaitForChild("PlayerGui") end,
+    }
+    
+    for _, attempt in ipairs(attempts) do
+        local parent = safeCall(attempt)
+        if parent then
+            print("[SaveInstance] GUI Parent found:", parent:GetFullName())
+            return parent
+        end
+    end
+    
+    warn("[SaveInstance] Could not find GUI parent, using CoreGui")
+    return Services.CoreGui
 end
 
 local APIs = {
@@ -183,12 +198,6 @@ function PropertyExtractor:getDefaultProperties(instance)
         SurfaceGui = {"Face", "CanvasSize", "LightInfluence", "Brightness", "SizingMode", "ZOffset", "ClipsDescendants"},
         BillboardGui = {"Size", "StudsOffset", "StudsOffsetWorldSpace", "ExtentsOffset", "ExtentsOffsetWorldSpace", "LightInfluence", "Brightness", "ClipsDescendants", "AlwaysOnTop", "PlayerToHideFrom"},
         ParticleEmitter = {"Enabled", "Rate", "Lifetime", "Speed", "Acceleration", "Drag", "VelocityInheritance", "Color", "Size", "Transparency", "Texture", "ZOffset", "LightEmission", "LightInfluence", "Rotation", "RotSpeed"},
-        Fire = {"Enabled", "Size", "Heat", "Color", "SecondaryColor"},
-        Smoke = {"Enabled", "Size", "Opacity", "RiseVelocity", "Color"},
-        Sparkles = {"Enabled", "SparkleColor"},
-        PointLight = {"Brightness", "Range", "Shadows", "Color"},
-        SpotLight = {"Brightness", "Range", "Shadows", "Color", "Angle", "Face"},
-        SurfaceLight = {"Brightness", "Range", "Shadows", "Color", "Angle", "Face"},
     }
     
     local props = {table.unpack(baseProps)}
@@ -751,8 +760,15 @@ function FileManager.new(logger)
 end
 
 function FileManager:generateFilename(extension)
-    local gameInfo = Services.MarketplaceService:GetProductInfo(game.PlaceId)
-    local gameName = gameInfo.Name:gsub("[^%w%-]", "_")
+    local success, gameInfo = pcall(function()
+        return Services.MarketplaceService:GetProductInfo(game.PlaceId)
+    end)
+    
+    local gameName = "UnknownGame"
+    if success and gameInfo and gameInfo.Name then
+        gameName = gameInfo.Name:gsub("[^%w%-]", "_")
+    end
+    
     local timestamp = os.date("%Y%m%d_%H%M%S")
     return string.format("%s/%s_%s.%s", self.folder, gameName, timestamp, extension)
 end
@@ -779,140 +795,298 @@ GUI.__index = GUI
 function GUI.new()
     local self = setmetatable({}, GUI)
     self.enabled = true
+    self.visible = false
     return self
 end
 
 function GUI:create()
-    local parent = getGuiParent()
+    print("[SaveInstance] Creating GUI...")
     
-    self.screen = Instance.new("ScreenGui")
-    self.screen.Name = "SaveInstanceUI"
-    self.screen.ResetOnSpawn = false
-    self.screen.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-    self.screen.IgnoreGuiInset = true
-    
-    local main = Instance.new("Frame")
-    main.Name = "Main"
-    main.Size = UDim2.new(0, 500, 0, 400)
-    main.Position = UDim2.new(0.5, -250, 0.5, -200)
-    main.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
-    main.BorderSizePixel = 0
-    main.Parent = self.screen
-    
-    Instance.new("UICorner", main).CornerRadius = UDim.new(0, 10)
-    
-    local title = Instance.new("TextLabel")
-    title.Size = UDim2.new(1, -20, 0, 40)
-    title.Position = UDim2.new(0, 10, 0, 10)
-    title.BackgroundTransparency = 1
-    title.Text = "SaveInstance Pro"
-    title.TextColor3 = Color3.fromRGB(255, 255, 255)
-    title.TextSize = 18
-    title.Font = Enum.Font.GothamBold
-    title.TextXAlignment = Enum.TextXAlignment.Left
-    title.Parent = main
-    
-    local status = Instance.new("TextLabel")
-    status.Name = "Status"
-    status.Size = UDim2.new(1, -20, 0, 20)
-    status.Position = UDim2.new(0, 10, 0, 55)
-    status.BackgroundTransparency = 1
-    status.Text = "Ready"
-    status.TextColor3 = Color3.fromRGB(180, 180, 180)
-    status.TextSize = 14
-    status.Font = Enum.Font.Gotham
-    status.TextXAlignment = Enum.TextXAlignment.Left
-    status.Parent = main
-    self.status = status
-    
-    local progressBg = Instance.new("Frame")
-    progressBg.Size = UDim2.new(1, -20, 0, 30)
-    progressBg.Position = UDim2.new(0, 10, 0, 85)
-    progressBg.BackgroundColor3 = Color3.fromRGB(35, 35, 38)
-    progressBg.BorderSizePixel = 0
-    progressBg.Parent = main
-    
-    Instance.new("UICorner", progressBg).CornerRadius = UDim.new(0, 6)
-    
-    local progress = Instance.new("Frame")
-    progress.Name = "Progress"
-    progress.Size = UDim2.new(0, 0, 1, 0)
-    progress.BackgroundColor3 = Color3.fromRGB(88, 101, 242)
-    progress.BorderSizePixel = 0
-    progress.Parent = progressBg
-    self.progress = progress
-    
-    Instance.new("UICorner", progress).CornerRadius = UDim.new(0, 6)
-    
-    local progressText = Instance.new("TextLabel")
-    progressText.Name = "ProgressText"
-    progressText.Size = UDim2.new(1, 0, 1, 0)
-    progressText.BackgroundTransparency = 1
-    progressText.Text = "0%"
-    progressText.TextColor3 = Color3.fromRGB(255, 255, 255)
-    progressText.TextSize = 14
-    progressText.Font = Enum.Font.GothamMedium
-    progressText.ZIndex = 2
-    progressText.Parent = progressBg
-    self.progressText = progressText
-    
-    local log = Instance.new("ScrollingFrame")
-    log.Name = "Log"
-    log.Size = UDim2.new(1, -20, 0, 180)
-    log.Position = UDim2.new(0, 10, 0, 125)
-    log.BackgroundColor3 = Color3.fromRGB(20, 20, 23)
-    log.BorderSizePixel = 0
-    log.ScrollBarThickness = 4
-    log.Parent = main
-    
-    Instance.new("UICorner", log).CornerRadius = UDim.new(0, 6)
-    
-    local logLayout = Instance.new("UIListLayout", log)
-    logLayout.Padding = UDim.new(0, 2)
-    self.log = log
-    self.logLayout = logLayout
-    
-    local buttonFrame = Instance.new("Frame")
-    buttonFrame.Size = UDim2.new(1, -20, 0, 50)
-    buttonFrame.Position = UDim2.new(0, 10, 1, -60)
-    buttonFrame.BackgroundTransparency = 1
-    buttonFrame.Parent = main
-    
-    self.buttons = {}
-    local buttonConfigs = {
-        {name = "Quick", text = "Quick Save", color = Color3.fromRGB(88, 101, 242), position = UDim2.new(0, 0, 0, 0)},
-        {name = "Advanced", text = "Advanced", color = Color3.fromRGB(67, 181, 129), position = UDim2.new(0.33, 5, 0, 0)},
-        {name = "Close", text = "Close", color = Color3.fromRGB(237, 66, 69), position = UDim2.new(0.66, 10, 0, 0)}
-    }
-    
-    for _, config in ipairs(buttonConfigs) do
-        local btn = Instance.new("TextButton")
-        btn.Name = config.name
-        btn.Size = UDim2.new(0.33, -10, 1, 0)
-        btn.Position = config.position
-        btn.BackgroundColor3 = config.color
-        btn.BorderSizePixel = 0
-        btn.Text = config.text
-        btn.TextColor3 = Color3.fromRGB(255, 255, 255)
-        btn.TextSize = 14
-        btn.Font = Enum.Font.GothamBold
-        btn.Parent = buttonFrame
+    local success, err = pcall(function()
+        local parent = getGuiParent()
         
-        Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
+        if not parent then
+            error("No valid GUI parent found")
+        end
         
-        self.buttons[config.name] = btn
+        local existing = parent:FindFirstChild("SaveInstanceUI")
+        if existing then
+            existing:Destroy()
+            wait(0.1)
+        end
+        
+        self.screen = Instance.new("ScreenGui")
+        self.screen.Name = "SaveInstanceUI"
+        self.screen.ResetOnSpawn = false
+        self.screen.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+        self.screen.DisplayOrder = 999999999
+        self.screen.IgnoreGuiInset = true
+        self.screen.Enabled = true
+        
+        local main = Instance.new("Frame")
+        main.Name = "Main"
+        main.Size = UDim2.new(0, 520, 0, 420)
+        main.Position = UDim2.new(0.5, -260, 0.5, -210)
+        main.BackgroundColor3 = Color3.fromRGB(25, 25, 28)
+        main.BorderSizePixel = 0
+        main.Visible = true
+        main.Active = true
+        main.Parent = self.screen
+        
+        local shadow = Instance.new("ImageLabel")
+        shadow.Name = "Shadow"
+        shadow.BackgroundTransparency = 1
+        shadow.Position = UDim2.new(0, -15, 0, -15)
+        shadow.Size = UDim2.new(1, 30, 1, 30)
+        shadow.ZIndex = 0
+        shadow.Image = "rbxasset://textures/ui/GuiImagePlaceholder.png"
+        shadow.ImageColor3 = Color3.fromRGB(0, 0, 0)
+        shadow.ImageTransparency = 0.5
+        shadow.ScaleType = Enum.ScaleType.Slice
+        shadow.SliceCenter = Rect.new(10, 10, 118, 118)
+        shadow.Parent = main
+        
+        local corner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(0, 12)
+        corner.Parent = main
+        
+        local titleBar = Instance.new("Frame")
+        titleBar.Name = "TitleBar"
+        titleBar.Size = UDim2.new(1, 0, 0, 45)
+        titleBar.BackgroundColor3 = Color3.fromRGB(35, 35, 40)
+        titleBar.BorderSizePixel = 0
+        titleBar.Parent = main
+        
+        local titleCorner = Instance.new("UICorner")
+        titleCorner.CornerRadius = UDim.new(0, 12)
+        titleCorner.Parent = titleBar
+        
+        local titleCover = Instance.new("Frame")
+        titleCover.Size = UDim2.new(1, 0, 0, 12)
+        titleCover.Position = UDim2.new(0, 0, 1, -12)
+        titleCover.BackgroundColor3 = Color3.fromRGB(35, 35, 40)
+        titleCover.BorderSizePixel = 0
+        titleCover.Parent = titleBar
+        
+        local title = Instance.new("TextLabel")
+        title.Name = "Title"
+        title.Size = UDim2.new(1, -60, 1, 0)
+        title.Position = UDim2.new(0, 15, 0, 0)
+        title.BackgroundTransparency = 1
+        title.Text = "💾 SaveInstance Pro"
+        title.TextColor3 = Color3.fromRGB(255, 255, 255)
+        title.TextSize = 18
+        title.Font = Enum.Font.GothamBold
+        title.TextXAlignment = Enum.TextXAlignment.Left
+        title.Parent = titleBar
+        
+        local closeBtn = Instance.new("TextButton")
+        closeBtn.Name = "CloseBtn"
+        closeBtn.Size = UDim2.new(0, 35, 0, 35)
+        closeBtn.Position = UDim2.new(1, -40, 0, 5)
+        closeBtn.BackgroundColor3 = Color3.fromRGB(237, 66, 69)
+        closeBtn.BorderSizePixel = 0
+        closeBtn.Text = "×"
+        closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        closeBtn.TextSize = 24
+        closeBtn.Font = Enum.Font.GothamBold
+        closeBtn.Parent = titleBar
+        
+        local closeBtnCorner = Instance.new("UICorner")
+        closeBtnCorner.CornerRadius = UDim.new(0, 8)
+        closeBtnCorner.Parent = closeBtn
+        
+        local status = Instance.new("TextLabel")
+        status.Name = "Status"
+        status.Size = UDim2.new(1, -30, 0, 25)
+        status.Position = UDim2.new(0, 15, 0, 55)
+        status.BackgroundTransparency = 1
+        status.Text = "✓ Ready to save"
+        status.TextColor3 = Color3.fromRGB(100, 255, 100)
+        status.TextSize = 14
+        status.Font = Enum.Font.GothamMedium
+        status.TextXAlignment = Enum.TextXAlignment.Left
+        status.Parent = main
+        self.status = status
+        
+        local progressBg = Instance.new("Frame")
+        progressBg.Name = "ProgressBg"
+        progressBg.Size = UDim2.new(1, -30, 0, 35)
+        progressBg.Position = UDim2.new(0, 15, 0, 90)
+        progressBg.BackgroundColor3 = Color3.fromRGB(35, 35, 38)
+        progressBg.BorderSizePixel = 0
+        progressBg.Parent = main
+        
+        local progressBgCorner = Instance.new("UICorner")
+        progressBgCorner.CornerRadius = UDim.new(0, 8)
+        progressBgCorner.Parent = progressBg
+        
+        local progress = Instance.new("Frame")
+        progress.Name = "Progress"
+        progress.Size = UDim2.new(0, 0, 1, 0)
+        progress.BackgroundColor3 = Color3.fromRGB(88, 101, 242)
+        progress.BorderSizePixel = 0
+        progress.Parent = progressBg
+        self.progress = progress
+        
+        local progressCorner = Instance.new("UICorner")
+        progressCorner.CornerRadius = UDim.new(0, 8)
+        progressCorner.Parent = progress
+        
+        local progressText = Instance.new("TextLabel")
+        progressText.Name = "ProgressText"
+        progressText.Size = UDim2.new(1, 0, 1, 0)
+        progressText.BackgroundTransparency = 1
+        progressText.Text = "0%"
+        progressText.TextColor3 = Color3.fromRGB(255, 255, 255)
+        progressText.TextSize = 14
+        progressText.Font = Enum.Font.GothamBold
+        progressText.ZIndex = 2
+        progressText.Parent = progressBg
+        self.progressText = progressText
+        
+        local log = Instance.new("ScrollingFrame")
+        log.Name = "Log"
+        log.Size = UDim2.new(1, -30, 0, 185)
+        log.Position = UDim2.new(0, 15, 0, 135)
+        log.BackgroundColor3 = Color3.fromRGB(20, 20, 23)
+        log.BorderSizePixel = 0
+        log.ScrollBarThickness = 6
+        log.ScrollBarImageColor3 = Color3.fromRGB(88, 101, 242)
+        log.CanvasSize = UDim2.new(0, 0, 0, 0)
+        log.Parent = main
+        
+        local logCorner = Instance.new("UICorner")
+        logCorner.CornerRadius = UDim.new(0, 8)
+        logCorner.Parent = log
+        
+        local logPadding = Instance.new("UIPadding")
+        logPadding.PaddingLeft = UDim.new(0, 8)
+        logPadding.PaddingRight = UDim.new(0, 8)
+        logPadding.PaddingTop = UDim.new(0, 8)
+        logPadding.PaddingBottom = UDim.new(0, 8)
+        logPadding.Parent = log
+        
+        local logLayout = Instance.new("UIListLayout")
+        logLayout.Padding = UDim.new(0, 3)
+        logLayout.SortOrder = Enum.SortOrder.LayoutOrder
+        logLayout.Parent = log
+        self.log = log
+        self.logLayout = logLayout
+        
+        local buttonFrame = Instance.new("Frame")
+        buttonFrame.Name = "ButtonFrame"
+        buttonFrame.Size = UDim2.new(1, -30, 0, 55)
+        buttonFrame.Position = UDim2.new(0, 15, 1, -70)
+        buttonFrame.BackgroundTransparency = 1
+        buttonFrame.Parent = main
+        
+        self.buttons = {}
+        local buttonConfigs = {
+            {name = "Quick", text = "⚡ Quick Save", color = Color3.fromRGB(88, 101, 242), pos = 0},
+            {name = "Advanced", text = "⚙️ Advanced", color = Color3.fromRGB(67, 181, 129), pos = 0.33},
+            {name = "Players", text = "👥 + Players", color = Color3.fromRGB(255, 170, 51), pos = 0.66}
+        }
+        
+        for _, config in ipairs(buttonConfigs) do
+            local btn = Instance.new("TextButton")
+            btn.Name = config.name
+            btn.Size = UDim2.new(0.31, 0, 1, 0)
+            btn.Position = UDim2.new(config.pos, config.pos > 0 and 10 or 0, 0, 0)
+            btn.BackgroundColor3 = config.color
+            btn.BorderSizePixel = 0
+            btn.Text = config.text
+            btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+            btn.TextSize = 15
+            btn.Font = Enum.Font.GothamBold
+            btn.AutoButtonColor = true
+            btn.Parent = buttonFrame
+            
+            local btnCorner = Instance.new("UICorner")
+            btnCorner.CornerRadius = UDim.new(0, 8)
+            btnCorner.Parent = btn
+            
+            btn.MouseEnter:Connect(function()
+                btn.BackgroundColor3 = Color3.fromRGB(
+                    math.min(config.color.R * 255 + 20, 255),
+                    math.min(config.color.G * 255 + 20, 255),
+                    math.min(config.color.B * 255 + 20, 255)
+                )
+            end)
+            
+            btn.MouseLeave:Connect(function()
+                btn.BackgroundColor3 = config.color
+            end)
+            
+            self.buttons[config.name] = btn
+        end
+        
+        closeBtn.MouseButton1Click:Connect(function()
+            self:destroy()
+        end)
+        
+        self:makeDraggable(main, titleBar)
+        
+        self.screen.Parent = parent
+        self.visible = true
+        
+        print("[SaveInstance] GUI created successfully!")
+        print("[SaveInstance] Parent:", parent:GetFullName())
+        print("[SaveInstance] Visible:", self.screen.Enabled)
+        
+        self:addLog("GUI initialized", Color3.fromRGB(100, 255, 100))
+        self:addLog("Executor: " .. detectExecutor(), Color3.fromRGB(150, 150, 255))
+        self:addLog("Ready to save!", Color3.fromRGB(100, 255, 100))
+    end)
+    
+    if not success then
+        warn("[SaveInstance] GUI creation failed:", err)
+        warn("[SaveInstance] Falling back to notification system")
+        self:createFallbackNotification()
+        return false
     end
     
-    self:makeDraggable(main, title)
+    return true
+end
+
+function GUI:createFallbackNotification()
+    local function notify(msg)
+        game:GetService("StarterGui"):SetCore("SendNotification", {
+            Title = "SaveInstance Pro",
+            Text = msg,
+            Duration = 5
+        })
+    end
     
-    self.screen.Parent = parent
+    notify("SaveInstance loaded! Check console for commands.")
+    print("\n" .. string.rep("=", 50))
+    print("SAVEINSTANCE PRO - Console Mode")
+    print(string.rep("=", 50))
+    print("GUI failed to load. Use these commands:")
+    print("  _G.SaveInstance.quickSave()")
+    print("  _G.SaveInstance.advancedSave()")
+    print("  _G.SaveInstance.showGUI()")
+    print(string.rep("=", 50) .. "\n")
 end
 
 function GUI:makeDraggable(frame, handle)
-    local dragging, dragInput, dragStart, startPos
+    local dragging = false
+    local dragInput, dragStart, startPos
+    
+    local function update(input)
+        if not dragging then return end
+        local delta = input.Position - dragStart
+        frame.Position = UDim2.new(
+            startPos.X.Scale,
+            startPos.X.Offset + delta.X,
+            startPos.Y.Scale,
+            startPos.Y.Offset + delta.Y
+        )
+    end
     
     handle.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or 
+           input.UserInputType == Enum.UserInputType.Touch then
             dragging = true
             dragStart = input.Position
             startPos = frame.Position
@@ -926,18 +1100,15 @@ function GUI:makeDraggable(frame, handle)
     end)
     
     handle.InputChanged:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseMovement then
+        if input.UserInputType == Enum.UserInputType.MouseMovement or
+           input.UserInputType == Enum.UserInputType.Touch then
             dragInput = input
         end
     end)
     
     Services.UserInputService.InputChanged:Connect(function(input)
         if input == dragInput and dragging then
-            local delta = input.Position - dragStart
-            frame.Position = UDim2.new(
-                startPos.X.Scale, startPos.X.Offset + delta.X,
-                startPos.Y.Scale, startPos.Y.Offset + delta.Y
-            )
+            update(input)
         end
     end)
 end
@@ -946,11 +1117,12 @@ function GUI:setProgress(value, text)
     if not self.progress then return end
     
     value = math.clamp(value, 0, 1)
+    
     self.progress:TweenSize(
         UDim2.new(value, 0, 1, 0),
         Enum.EasingDirection.Out,
         Enum.EasingStyle.Quad,
-        0.2,
+        0.25,
         true
     )
     
@@ -962,16 +1134,19 @@ function GUI:setProgress(value, text)
 end
 
 function GUI:setStatus(text, color)
-    if self.status then
-        self.status.Text = text
-        if color then
-            self.status.TextColor3 = color
-        end
+    if not self.status then return end
+    
+    self.status.Text = text
+    if color then
+        self.status.TextColor3 = color
     end
 end
 
 function GUI:addLog(message, color)
-    if not self.log then return end
+    if not self.log then 
+        print("[SaveInstance Log]", message)
+        return 
+    end
     
     local entry = Instance.new("TextLabel")
     entry.Size = UDim2.new(1, -10, 0, 18)
@@ -982,15 +1157,30 @@ function GUI:addLog(message, color)
     entry.Font = Enum.Font.Code
     entry.TextXAlignment = Enum.TextXAlignment.Left
     entry.TextTruncate = Enum.TextTruncate.AtEnd
+    entry.TextWrapped = false
     entry.Parent = self.log
     
-    self.log.CanvasSize = UDim2.new(0, 0, 0, self.logLayout.AbsoluteContentSize.Y)
+    self.log.CanvasSize = UDim2.new(0, 0, 0, self.logLayout.AbsoluteContentSize.Y + 10)
     self.log.CanvasPosition = Vector2.new(0, self.logLayout.AbsoluteContentSize.Y)
 end
 
 function GUI:destroy()
     if self.screen then
         self.screen:Destroy()
+        self.screen = nil
+        self.visible = false
+        print("[SaveInstance] GUI destroyed")
+    end
+end
+
+function GUI:toggle()
+    if self.screen then
+        self.screen.Enabled = not self.screen.Enabled
+        self.visible = self.screen.Enabled
+        print("[SaveInstance] GUI toggled:", self.visible and "Visible" or "Hidden")
+    else
+        print("[SaveInstance] GUI not created yet")
+        self:create()
     end
 end
 
@@ -1015,32 +1205,61 @@ function Core.new()
 end
 
 function Core:initialize()
-    self.gui:create()
+    print("[SaveInstance] Initializing...")
     
-    self.logger:onLog(function(entry)
-        local colors = {
-            INFO = Color3.fromRGB(100, 200, 255),
-            WARN = Color3.fromRGB(255, 200, 100),
-            ERROR = Color3.fromRGB(255, 100, 100),
-            CRITICAL = Color3.fromRGB(255, 50, 50)
-        }
-        self.gui:addLog(entry.message, colors[entry.level])
-    end)
+    local guiCreated = self.gui:create()
     
-    self.gui.buttons.Quick.MouseButton1Click:Connect(function()
-        task.spawn(function() self:quickSave() end)
-    end)
+    if guiCreated then
+        self.logger:onLog(function(entry)
+            local colors = {
+                INFO = Color3.fromRGB(100, 200, 255),
+                WARN = Color3.fromRGB(255, 200, 100),
+                ERROR = Color3.fromRGB(255, 100, 100),
+                CRITICAL = Color3.fromRGB(255, 50, 50)
+            }
+            self.gui:addLog(entry.message, colors[entry.level])
+        end)
+        
+        if self.gui.buttons.Quick then
+            self.gui.buttons.Quick.MouseButton1Click:Connect(function()
+                task.spawn(function() self:quickSave() end)
+            end)
+        end
+        
+        if self.gui.buttons.Advanced then
+            self.gui.buttons.Advanced.MouseButton1Click:Connect(function()
+                task.spawn(function() self:advancedSave() end)
+            end)
+        end
+        
+        if self.gui.buttons.Players then
+            self.gui.buttons.Players.MouseButton1Click:Connect(function()
+                task.spawn(function() self:saveWithPlayers() end)
+            end)
+        end
+    end
     
-    self.gui.buttons.Advanced.MouseButton1Click:Connect(function()
-        task.spawn(function() self:advancedSave() end)
-    end)
-    
-    self.gui.buttons.Close.MouseButton1Click:Connect(function()
-        self.gui:destroy()
-    end)
+    _G.SaveInstance = {
+        quickSave = function() return self:quickSave() end,
+        advancedSave = function() return self:advancedSave() end,
+        saveWithPlayers = function() return self:saveWithPlayers() end,
+        showGUI = function() self.gui:toggle() end,
+        core = self
+    }
     
     self.logger:log("INFO", "System ready")
-    self.gui:setStatus("Ready to save", Color3.fromRGB(100, 255, 100))
+    
+    print("\n" .. string.rep("=", 60))
+    print("SaveInstance Pro Loaded Successfully!")
+    print(string.rep("=", 60))
+    print("Executor:", self.executor)
+    print("GUI:", guiCreated and "✓ Visible" or "✗ Failed (using console mode)")
+    print("\nConsole Commands:")
+    print("  _G.SaveInstance.quickSave()")
+    print("  _G.SaveInstance.advancedSave()")
+    print("  _G.SaveInstance.saveWithPlayers()")
+    print("  _G.SaveInstance.showGUI()")
+    print(string.rep("=", 60) .. "\n")
 end
 
 function Core:quickSave()
@@ -1065,11 +1284,22 @@ function Core:advancedSave()
     return self:execute(options)
 end
 
+function Core:saveWithPlayers()
+    local options = {
+        serverScripts = true,
+        serverStorage = true,
+        nilInstances = true,
+        players = true
+    }
+    
+    return self:execute(options)
+end
+
 function Core:execute(options)
     local startTime = tick()
     
     self.logger:log("INFO", "Starting save operation")
-    self.gui:setStatus("Collecting instances...", Color3.fromRGB(255, 200, 100))
+    self.gui:setStatus("⏳ Collecting instances...", Color3.fromRGB(255, 200, 100))
     self.gui:setProgress(0)
     
     options.onProgress = function(current, total)
@@ -1081,7 +1311,7 @@ function Core:execute(options)
     self.gui:setProgress(0.3)
     
     self.logger:log("INFO", string.format("Collected %d instances", #instances))
-    self.gui:setStatus("Decompiling scripts...", Color3.fromRGB(255, 200, 100))
+    self.gui:setStatus("🔧 Decompiling scripts...", Color3.fromRGB(255, 200, 100))
     
     local scriptCount = 0
     for _, data in ipairs(instances) do
@@ -1110,32 +1340,44 @@ function Core:execute(options)
     self.gui:setProgress(0.7)
     self.logger:log("INFO", string.format("Decompiled %d scripts", scriptCount))
     
-    self.gui:setStatus("Building hierarchy...", Color3.fromRGB(255, 200, 100))
+    self.gui:setStatus("🔨 Building hierarchy...", Color3.fromRGB(255, 200, 100))
     local roots = self.collector:buildHierarchy()
     self.gui:setProgress(0.8)
     
-    self.gui:setStatus("Generating XML...", Color3.fromRGB(255, 200, 100))
+    self.gui:setStatus("📝 Generating XML...", Color3.fromRGB(255, 200, 100))
     local xml = self.serializer:serialize(roots)
     self.gui:setProgress(0.9)
     
-    self.gui:setStatus("Writing file...", Color3.fromRGB(255, 200, 100))
+    self.gui:setStatus("💾 Writing file...", Color3.fromRGB(255, 200, 100))
     local filename = self.fileManager:generateFilename("rbxlx")
     local success, result = self.fileManager:write(filename, xml)
     
     local logFilename = self.fileManager:generateFilename("log")
     self.fileManager:write(logFilename, self.logger:export())
     
-    self.gui:setProgress(1)
+    self.gui:setProgress(1, "100%")
     
     local duration = tick() - startTime
     
     if success then
         self.logger:log("INFO", string.format("Save complete in %.2fs", duration))
         self.logger:log("INFO", "File: " .. result)
-        self.gui:setStatus(string.format("Complete! (%d instances, %.2fs)", #instances, duration), Color3.fromRGB(100, 255, 100))
+        self.gui:setStatus(string.format("✓ Complete! (%d instances, %.2fs)", #instances, duration), Color3.fromRGB(100, 255, 100))
+        
+        game:GetService("StarterGui"):SetCore("SendNotification", {
+            Title = "SaveInstance Complete!",
+            Text = string.format("%d instances saved in %.2fs", #instances, duration),
+            Duration = 5
+        })
     else
         self.logger:log("ERROR", "Save failed: " .. tostring(result))
-        self.gui:setStatus("Save failed!", Color3.fromRGB(255, 100, 100))
+        self.gui:setStatus("❌ Save failed!", Color3.fromRGB(255, 100, 100))
+        
+        game:GetService("StarterGui"):SetCore("SendNotification", {
+            Title = "SaveInstance Failed",
+            Text = "Check console for details",
+            Duration = 5
+        })
     end
     
     return {
