@@ -1,5 +1,5 @@
 local SaveInstanceCore = {}
-SaveInstanceCore.__version = "3.5.1"
+SaveInstanceCore.__version = "3.6.0"
 
 local Services = setmetatable({}, {
     __index = function(t, k)
@@ -28,12 +28,10 @@ local function getGuiParent()
     for _, attempt in ipairs(attempts) do
         local parent = safeCall(attempt)
         if parent then
-            print("[SaveInstance] GUI Parent found:", parent:GetFullName())
             return parent
         end
     end
     
-    warn("[SaveInstance] Could not find GUI parent, using CoreGui")
     return Services.CoreGui
 end
 
@@ -195,9 +193,6 @@ function PropertyExtractor:getDefaultProperties(instance)
         Attachment = {"CFrame", "Visible", "Axis", "SecondaryAxis", "WorldCFrame", "WorldAxis", "WorldSecondaryAxis", "WorldPosition"},
         Decal = {"Texture", "Transparency", "Color3", "Face", "ZIndex"},
         Texture = {"Texture", "Transparency", "Color3", "Face", "ZIndex", "StudsPerTileU", "StudsPerTileV", "OffsetStudsU", "OffsetStudsV"},
-        SurfaceGui = {"Face", "CanvasSize", "LightInfluence", "Brightness", "SizingMode", "ZOffset", "ClipsDescendants"},
-        BillboardGui = {"Size", "StudsOffset", "StudsOffsetWorldSpace", "ExtentsOffset", "ExtentsOffsetWorldSpace", "LightInfluence", "Brightness", "ClipsDescendants", "AlwaysOnTop", "PlayerToHideFrom"},
-        ParticleEmitter = {"Enabled", "Rate", "Lifetime", "Speed", "Acceleration", "Drag", "VelocityInheritance", "Color", "Size", "Transparency", "Texture", "ZOffset", "LightEmission", "LightInfluence", "Rotation", "RotSpeed"},
     }
     
     local props = {table.unpack(baseProps)}
@@ -222,8 +217,43 @@ function ScriptDecompiler.new(logger)
     local self = setmetatable({}, ScriptDecompiler)
     self.logger = logger
     self.cache = {}
-    self.stats = {total = 0, success = 0, partial = 0, failed = 0}
+    self.stats = {total = 0, success = 0, partial = 0, failed = 0, skipped = 0}
+    self.timeout = 5
+    self.maxConcurrent = 1
+    self.yieldInterval = 3
+    self.skipLargeScripts = true
+    self.maxScriptSize = 100000
     return self
+end
+
+function ScriptDecompiler:decompileWithTimeout(script, timeout)
+    local result = nil
+    local quality = "failed"
+    local completed = false
+    
+    task.spawn(function()
+        local success, source, qual = pcall(function()
+            return self:decompileInternal(script)
+        end)
+        
+        if success and source then
+            result = source
+            quality = qual or "full"
+        end
+        completed = true
+    end)
+    
+    local startTime = tick()
+    while not completed and (tick() - startTime) < timeout do
+        task.wait(0.1)
+    end
+    
+    if not completed then
+        self.logger:log("WARN", string.format("Decompile timeout: %s", script:GetFullName()))
+        return string.format("-- Decompile timeout after %ds\n-- Script: %s", timeout, script:GetFullName()), "failed"
+    end
+    
+    return result, quality
 end
 
 function ScriptDecompiler:decompile(script)
@@ -238,10 +268,42 @@ function ScriptDecompiler:decompile(script)
     
     self.stats.total = self.stats.total + 1
     
+    local scriptSize = 0
+    local success = pcall(function()
+        if APIs.getscriptbytecode then
+            local bytecode = APIs.getscriptbytecode(script)
+            if bytecode then
+                scriptSize = #bytecode
+            end
+        end
+    end)
+    
+    if self.skipLargeScripts and scriptSize > self.maxScriptSize then
+        self.logger:log("WARN", string.format("Skipping large script (%d bytes): %s", scriptSize, script:GetFullName()))
+        self.stats.skipped = self.stats.skipped + 1
+        local placeholder = string.format("-- Large script skipped (%d bytes)\n-- Script: %s\n-- Enable 'decompileLargeScripts' to process", scriptSize, script:GetFullName())
+        self.cache[scriptId] = placeholder
+        return placeholder, "skipped"
+    end
+    
+    local source, quality = self:decompileWithTimeout(script, self.timeout)
+    
+    if quality == "full" then
+        self.stats.success = self.stats.success + 1
+    elseif quality == "partial" then
+        self.stats.partial = self.stats.partial + 1
+    else
+        self.stats.failed = self.stats.failed + 1
+    end
+    
+    self.cache[scriptId] = source
+    return source, quality
+end
+
+function ScriptDecompiler:decompileInternal(script)
     local methods = {
         self.directSource,
         self.nativeDecompile,
-        self.customDecompile,
         self.bytecodeExtract,
         self.constantAnalysis,
         self.fallbackPlaceholder
@@ -250,19 +312,14 @@ function ScriptDecompiler:decompile(script)
     for i, method in ipairs(methods) do
         local success, source, quality = pcall(method, self, script)
         if success and source then
-            self.cache[scriptId] = source
-            if quality == "full" then
-                self.stats.success = self.stats.success + 1
-            elseif quality == "partial" then
-                self.stats.partial = self.stats.partial + 1
-            else
-                self.stats.failed = self.stats.failed + 1
-            end
             return source, quality
+        end
+        
+        if i < #methods then
+            task.wait(0.05)
         end
     end
     
-    self.stats.failed = self.stats.failed + 1
     return "-- Decompilation completely failed", "failed"
 end
 
@@ -290,113 +347,6 @@ function ScriptDecompiler:nativeDecompile(script)
     return nil
 end
 
-function ScriptDecompiler:customDecompile(script)
-    if not APIs.getscriptbytecode then return nil end
-    
-    local bytecode = APIs.getscriptbytecode(script)
-    if not bytecode or #bytecode == 0 then return nil end
-    
-    local decompiled = self:analyzeBytecode(bytecode, script)
-    if decompiled and #decompiled > 50 then
-        return decompiled, "partial"
-    end
-    
-    return nil
-end
-
-function ScriptDecompiler:analyzeBytecode(bytecode, script)
-    local analysis = {}
-    table.insert(analysis, "-- Advanced Decompilation Analysis")
-    table.insert(analysis, string.format("-- Script: %s", script:GetFullName()))
-    table.insert(analysis, string.format("-- Bytecode Size: %d bytes\n", #bytecode))
-    
-    if APIs.getconstants then
-        local constants = APIs.getconstants(script)
-        if constants and #constants > 0 then
-            table.insert(analysis, "-- Constants:")
-            for i, const in ipairs(constants) do
-                if i <= 50 then
-                    table.insert(analysis, string.format("--   [%d] = %s", i, self:formatValue(const)))
-                end
-            end
-            table.insert(analysis, "")
-        end
-    end
-    
-    if APIs.getprotos then
-        local protos = APIs.getprotos(script)
-        if protos and #protos > 0 then
-            table.insert(analysis, string.format("-- Detected %d function prototypes", #protos))
-        end
-    end
-    
-    if APIs.getupvalues then
-        local upvalues = APIs.getupvalues(script)
-        if upvalues and type(upvalues) == "table" then
-            table.insert(analysis, "\n-- Upvalues:")
-            for name, value in pairs(upvalues) do
-                table.insert(analysis, string.format("--   %s = %s", tostring(name), self:formatValue(value)))
-            end
-        end
-    end
-    
-    local patterns = self:detectPatterns(bytecode)
-    if #patterns > 0 then
-        table.insert(analysis, "\n-- Detected Patterns:")
-        for _, pattern in ipairs(patterns) do
-            table.insert(analysis, "--   " .. pattern)
-        end
-    end
-    
-    return table.concat(analysis, "\n")
-end
-
-function ScriptDecompiler:detectPatterns(bytecode)
-    local patterns = {}
-    
-    if bytecode:match("require") then
-        table.insert(patterns, "ModuleScript dependencies detected")
-    end
-    
-    if bytecode:match("RemoteEvent") or bytecode:match("RemoteFunction") then
-        table.insert(patterns, "Network communication detected")
-    end
-    
-    if bytecode:match("BindableEvent") or bytecode:match("BindableFunction") then
-        table.insert(patterns, "Internal event system detected")
-    end
-    
-    if bytecode:match("UserInputService") or bytecode:match("ContextActionService") then
-        table.insert(patterns, "Input handling detected")
-    end
-    
-    if bytecode:match("TweenService") or bytecode:match("RunService") then
-        table.insert(patterns, "Animation/Runtime logic detected")
-    end
-    
-    local loops = 0
-    for _ in bytecode:gmatch("while") do loops = loops + 1 end
-    for _ in bytecode:gmatch("for") do loops = loops + 1 end
-    if loops > 0 then
-        table.insert(patterns, string.format("Loop structures: ~%d", loops))
-    end
-    
-    return patterns
-end
-
-function ScriptDecompiler:formatValue(value)
-    local t = type(value)
-    if t == "string" then
-        return string.format('"%s"', value:gsub('"', '\\"'):sub(1, 100))
-    elseif t == "table" then
-        return "{ ... }"
-    elseif t == "function" then
-        return "function"
-    else
-        return tostring(value)
-    end
-end
-
 function ScriptDecompiler:bytecodeExtract(script)
     if not APIs.getscriptbytecode then return nil end
     
@@ -405,7 +355,7 @@ function ScriptDecompiler:bytecodeExtract(script)
     
     local output = string.format("-- Bytecode Dump (%d bytes)\n", #bytecode)
     output = output .. string.format("-- Script: %s\n\n", script:GetFullName())
-    output = output .. "--[[\n" .. bytecode .. "\n--]]"
+    output = output .. "--[[\n" .. bytecode:sub(1, 1000) .. "\n... (truncated)\n--]]"
     
     return output, "partial"
 end
@@ -420,10 +370,29 @@ function ScriptDecompiler:constantAnalysis(script)
     output = output .. string.format("-- Script: %s\n\n", script:GetFullName())
     
     for i, const in ipairs(constants) do
-        output = output .. string.format("local CONST_%d = %s\n", i, self:formatValue(const))
+        if i <= 30 then
+            output = output .. string.format("-- CONST_%d = %s\n", i, self:formatValue(const))
+        end
+    end
+    
+    if #constants > 30 then
+        output = output .. string.format("\n-- ... and %d more constants", #constants - 30)
     end
     
     return output, "partial"
+end
+
+function ScriptDecompiler:formatValue(value)
+    local t = type(value)
+    if t == "string" then
+        return string.format('"%s"', value:gsub('"', '\\"'):sub(1, 50))
+    elseif t == "table" then
+        return "{ ... }"
+    elseif t == "function" then
+        return "function"
+    else
+        return tostring(value)
+    end
 end
 
 function ScriptDecompiler:fallbackPlaceholder(script)
@@ -448,6 +417,7 @@ function InstanceCollector.new(logger, propertyExtractor)
     self.instances = {}
     self.instanceMap = {}
     self.idCounter = 0
+    self.yieldInterval = 250
     self.ignoreList = {
         "CoreGui", "CorePackages", "HttpRbxApiService", 
         "RobloxReplicatedStorage", "CSGDictionaryService"
@@ -490,7 +460,7 @@ function InstanceCollector:collectFromRoot(root, options)
             end
         end
         
-        if i % 500 == 0 then
+        if i % self.yieldInterval == 0 then
             task.wait()
             if options.onProgress then
                 options.onProgress(i, #descendants)
@@ -624,6 +594,8 @@ XMLSerializer.__index = XMLSerializer
 function XMLSerializer.new()
     local self = setmetatable({}, XMLSerializer)
     self.indent = 0
+    self.yieldInterval = 100
+    self.processedCount = 0
     return self
 end
 
@@ -699,6 +671,12 @@ function XMLSerializer:serializeProperty(name, propData)
 end
 
 function XMLSerializer:serializeInstance(instanceData)
+    self.processedCount = self.processedCount + 1
+    
+    if self.processedCount % self.yieldInterval == 0 then
+        task.wait()
+    end
+    
     local xml = self:getIndent()
     xml = xml .. string.format('<Item class="%s" referent="%s">\n', instanceData.className, instanceData.id)
     
@@ -733,6 +711,7 @@ function XMLSerializer:serializeInstance(instanceData)
 end
 
 function XMLSerializer:serialize(rootInstances)
+    self.processedCount = 0
     local xml = '<?xml version="1.0" encoding="UTF-8"?>\n<roblox version="4">\n'
     xml = xml .. '<Meta name="ExplicitAutoJoints">true</Meta>\n'
     
@@ -800,19 +779,13 @@ function GUI.new()
 end
 
 function GUI:create()
-    print("[SaveInstance] Creating GUI...")
-    
     local success, err = pcall(function()
         local parent = getGuiParent()
-        
-        if not parent then
-            error("No valid GUI parent found")
-        end
         
         local existing = parent:FindFirstChild("SaveInstanceUI")
         if existing then
             existing:Destroy()
-            wait(0.1)
+            task.wait(0.1)
         end
         
         self.screen = Instance.new("ScreenGui")
@@ -832,19 +805,6 @@ function GUI:create()
         main.Visible = true
         main.Active = true
         main.Parent = self.screen
-        
-        local shadow = Instance.new("ImageLabel")
-        shadow.Name = "Shadow"
-        shadow.BackgroundTransparency = 1
-        shadow.Position = UDim2.new(0, -15, 0, -15)
-        shadow.Size = UDim2.new(1, 30, 1, 30)
-        shadow.ZIndex = 0
-        shadow.Image = "rbxasset://textures/ui/GuiImagePlaceholder.png"
-        shadow.ImageColor3 = Color3.fromRGB(0, 0, 0)
-        shadow.ImageTransparency = 0.5
-        shadow.ScaleType = Enum.ScaleType.Slice
-        shadow.SliceCenter = Rect.new(10, 10, 118, 118)
-        shadow.Parent = main
         
         local corner = Instance.new("UICorner")
         corner.CornerRadius = UDim.new(0, 12)
@@ -873,9 +833,9 @@ function GUI:create()
         title.Size = UDim2.new(1, -60, 1, 0)
         title.Position = UDim2.new(0, 15, 0, 0)
         title.BackgroundTransparency = 1
-        title.Text = "💾 SaveInstance Pro"
+        title.Text = "💾 SaveInstance Pro [Anti-Crash]"
         title.TextColor3 = Color3.fromRGB(255, 255, 255)
-        title.TextSize = 18
+        title.TextSize = 16
         title.Font = Enum.Font.GothamBold
         title.TextXAlignment = Enum.TextXAlignment.Left
         title.Parent = titleBar
@@ -901,9 +861,9 @@ function GUI:create()
         status.Size = UDim2.new(1, -30, 0, 25)
         status.Position = UDim2.new(0, 15, 0, 55)
         status.BackgroundTransparency = 1
-        status.Text = "✓ Ready to save"
+        status.Text = "✓ Ready (Crash Protection Enabled)"
         status.TextColor3 = Color3.fromRGB(100, 255, 100)
-        status.TextSize = 14
+        status.TextSize = 13
         status.Font = Enum.Font.GothamMedium
         status.TextXAlignment = Enum.TextXAlignment.Left
         status.Parent = main
@@ -983,9 +943,9 @@ function GUI:create()
         
         self.buttons = {}
         local buttonConfigs = {
-            {name = "Quick", text = "⚡ Quick Save", color = Color3.fromRGB(88, 101, 242), pos = 0},
-            {name = "Advanced", text = "⚙️ Advanced", color = Color3.fromRGB(67, 181, 129), pos = 0.33},
-            {name = "Players", text = "👥 + Players", color = Color3.fromRGB(255, 170, 51), pos = 0.66}
+            {name = "Quick", text = "⚡ Safe Save", color = Color3.fromRGB(88, 101, 242), pos = 0},
+            {name = "Advanced", text = "🛡️ No Decompile", color = Color3.fromRGB(67, 181, 129), pos = 0.33},
+            {name = "Full", text = "⚙️ Full (Risky)", color = Color3.fromRGB(255, 170, 51), pos = 0.66}
         }
         
         for _, config in ipairs(buttonConfigs) do
@@ -997,7 +957,7 @@ function GUI:create()
             btn.BorderSizePixel = 0
             btn.Text = config.text
             btn.TextColor3 = Color3.fromRGB(255, 255, 255)
-            btn.TextSize = 15
+            btn.TextSize = 14
             btn.Font = Enum.Font.GothamBold
             btn.AutoButtonColor = true
             btn.Parent = buttonFrame
@@ -1005,18 +965,6 @@ function GUI:create()
             local btnCorner = Instance.new("UICorner")
             btnCorner.CornerRadius = UDim.new(0, 8)
             btnCorner.Parent = btn
-            
-            btn.MouseEnter:Connect(function()
-                btn.BackgroundColor3 = Color3.fromRGB(
-                    math.min(config.color.R * 255 + 20, 255),
-                    math.min(config.color.G * 255 + 20, 255),
-                    math.min(config.color.B * 255 + 20, 255)
-                )
-            end)
-            
-            btn.MouseLeave:Connect(function()
-                btn.BackgroundColor3 = config.color
-            end)
             
             self.buttons[config.name] = btn
         end
@@ -1030,18 +978,13 @@ function GUI:create()
         self.screen.Parent = parent
         self.visible = true
         
-        print("[SaveInstance] GUI created successfully!")
-        print("[SaveInstance] Parent:", parent:GetFullName())
-        print("[SaveInstance] Visible:", self.screen.Enabled)
-        
-        self:addLog("GUI initialized", Color3.fromRGB(100, 255, 100))
+        self:addLog("✓ Anti-crash protection enabled", Color3.fromRGB(100, 255, 100))
         self:addLog("Executor: " .. detectExecutor(), Color3.fromRGB(150, 150, 255))
-        self:addLog("Ready to save!", Color3.fromRGB(100, 255, 100))
+        self:addLog("Safe Save = Skip scripts, Fast = No decompile, Full = All", Color3.fromRGB(200, 200, 200))
     end)
     
     if not success then
         warn("[SaveInstance] GUI creation failed:", err)
-        warn("[SaveInstance] Falling back to notification system")
         self:createFallbackNotification()
         return false
     end
@@ -1062,10 +1005,10 @@ function GUI:createFallbackNotification()
     print("\n" .. string.rep("=", 50))
     print("SAVEINSTANCE PRO - Console Mode")
     print(string.rep("=", 50))
-    print("GUI failed to load. Use these commands:")
-    print("  _G.SaveInstance.quickSave()")
-    print("  _G.SaveInstance.advancedSave()")
-    print("  _G.SaveInstance.showGUI()")
+    print("Commands:")
+    print("  _G.SaveInstance.safeSave()    -- Fastest, no crash")
+    print("  _G.SaveInstance.noDecompile() -- Save without decompile")
+    print("  _G.SaveInstance.fullSave()    -- Full save (may crash)")
     print(string.rep("=", 50) .. "\n")
 end
 
@@ -1144,7 +1087,7 @@ end
 
 function GUI:addLog(message, color)
     if not self.log then 
-        print("[SaveInstance Log]", message)
+        print("[Log]", message)
         return 
     end
     
@@ -1153,7 +1096,7 @@ function GUI:addLog(message, color)
     entry.BackgroundTransparency = 1
     entry.Text = string.format("[%s] %s", os.date("%H:%M:%S"), message)
     entry.TextColor3 = color or Color3.fromRGB(200, 200, 200)
-    entry.TextSize = 12
+    entry.TextSize = 11
     entry.Font = Enum.Font.Code
     entry.TextXAlignment = Enum.TextXAlignment.Left
     entry.TextTruncate = Enum.TextTruncate.AtEnd
@@ -1169,7 +1112,6 @@ function GUI:destroy()
         self.screen:Destroy()
         self.screen = nil
         self.visible = false
-        print("[SaveInstance] GUI destroyed")
     end
 end
 
@@ -1177,9 +1119,7 @@ function GUI:toggle()
     if self.screen then
         self.screen.Enabled = not self.screen.Enabled
         self.visible = self.screen.Enabled
-        print("[SaveInstance] GUI toggled:", self.visible and "Visible" or "Hidden")
     else
-        print("[SaveInstance] GUI not created yet")
         self:create()
     end
 end
@@ -1205,8 +1145,6 @@ function Core.new()
 end
 
 function Core:initialize()
-    print("[SaveInstance] Initializing...")
-    
     local guiCreated = self.gui:create()
     
     if guiCreated then
@@ -1222,74 +1160,75 @@ function Core:initialize()
         
         if self.gui.buttons.Quick then
             self.gui.buttons.Quick.MouseButton1Click:Connect(function()
-                task.spawn(function() self:quickSave() end)
+                task.spawn(function() self:safeSave() end)
             end)
         end
         
         if self.gui.buttons.Advanced then
             self.gui.buttons.Advanced.MouseButton1Click:Connect(function()
-                task.spawn(function() self:advancedSave() end)
+                task.spawn(function() self:noDecompileSave() end)
             end)
         end
         
-        if self.gui.buttons.Players then
-            self.gui.buttons.Players.MouseButton1Click:Connect(function()
-                task.spawn(function() self:saveWithPlayers() end)
+        if self.gui.buttons.Full then
+            self.gui.buttons.Full.MouseButton1Click:Connect(function()
+                task.spawn(function() self:fullSave() end)
             end)
         end
     end
     
     _G.SaveInstance = {
-        quickSave = function() return self:quickSave() end,
-        advancedSave = function() return self:advancedSave() end,
-        saveWithPlayers = function() return self:saveWithPlayers() end,
+        safeSave = function() return self:safeSave() end,
+        noDecompile = function() return self:noDecompileSave() end,
+        fullSave = function() return self:fullSave() end,
         showGUI = function() self.gui:toggle() end,
         core = self
     }
     
-    self.logger:log("INFO", "System ready")
+    self.logger:log("INFO", "System ready with crash protection")
     
     print("\n" .. string.rep("=", 60))
-    print("SaveInstance Pro Loaded Successfully!")
+    print("SaveInstance Pro [Anti-Crash] Loaded!")
     print(string.rep("=", 60))
     print("Executor:", self.executor)
-    print("GUI:", guiCreated and "✓ Visible" or "✗ Failed (using console mode)")
-    print("\nConsole Commands:")
-    print("  _G.SaveInstance.quickSave()")
-    print("  _G.SaveInstance.advancedSave()")
-    print("  _G.SaveInstance.saveWithPlayers()")
-    print("  _G.SaveInstance.showGUI()")
+    print("Commands:")
+    print("  _G.SaveInstance.safeSave()    -- Safest (no scripts)")
+    print("  _G.SaveInstance.noDecompile() -- Fast (skip decompile)")
+    print("  _G.SaveInstance.fullSave()    -- Full (may crash)")
     print(string.rep("=", 60) .. "\n")
 end
 
-function Core:quickSave()
+function Core:safeSave()
     local options = {
         serverScripts = false,
         serverStorage = false,
         nilInstances = false,
-        players = false
+        players = false,
+        decompile = false
     }
     
     return self:execute(options)
 end
 
-function Core:advancedSave()
+function Core:noDecompileSave()
     local options = {
         serverScripts = true,
         serverStorage = true,
-        nilInstances = true,
-        players = false
+        nilInstances = false,
+        players = false,
+        decompile = false
     }
     
     return self:execute(options)
 end
 
-function Core:saveWithPlayers()
+function Core:fullSave()
     local options = {
         serverScripts = true,
         serverStorage = true,
         nilInstances = true,
-        players = true
+        players = false,
+        decompile = true
     }
     
     return self:execute(options)
@@ -1298,55 +1237,81 @@ end
 function Core:execute(options)
     local startTime = tick()
     
-    self.logger:log("INFO", "Starting save operation")
+    self.logger:log("INFO", "Starting save operation [Crash-Safe Mode]")
     self.gui:setStatus("⏳ Collecting instances...", Color3.fromRGB(255, 200, 100))
     self.gui:setProgress(0)
     
     options.onProgress = function(current, total)
         local progress = current / total
-        self.gui:setProgress(progress * 0.3, string.format("Collecting %d/%d", current, total))
+        self.gui:setProgress(progress * 0.4, string.format("Collecting %d/%d", current, total))
     end
     
     local instances = self.collector:collectAll(options)
-    self.gui:setProgress(0.3)
+    self.gui:setProgress(0.4)
     
-    self.logger:log("INFO", string.format("Collected %d instances", #instances))
-    self.gui:setStatus("🔧 Decompiling scripts...", Color3.fromRGB(255, 200, 100))
+    self.logger:log("INFO", string.format("✓ Collected %d instances", #instances))
     
     local scriptCount = 0
-    for _, data in ipairs(instances) do
-        if data.instance:IsA("LuaSourceContainer") then
+    local decompileEnabled = options.decompile ~= false
+    
+    if decompileEnabled then
+        self.gui:setStatus("🔧 Decompiling scripts (slow & safe)...", Color3.fromRGB(255, 200, 100))
+        
+        local scripts = {}
+        for _, data in ipairs(instances) do
+            if data.instance:IsA("LuaSourceContainer") then
+                table.insert(scripts, data)
+            end
+        end
+        
+        self.logger:log("INFO", string.format("Found %d scripts to decompile", #scripts))
+        
+        for i, scriptData in ipairs(scripts) do
             scriptCount = scriptCount + 1
-            local source, quality = self.decompiler:decompile(data.instance)
             
-            if not data.properties then
-                data.properties = {}
+            local source, quality = self.decompiler:decompile(scriptData.instance)
+            
+            if not scriptData.properties then
+                scriptData.properties = {}
             end
             
-            data.properties.Source = {
+            scriptData.properties.Source = {
                 value = source,
                 type = "string",
                 quality = quality
             }
+            
+            if i % self.decompiler.yieldInterval == 0 then
+                local progress = 0.4 + (i / #scripts) * 0.4
+                self.gui:setProgress(progress, string.format("Decompiling %d/%d", i, #scripts))
+                task.wait(0.5)
+            end
         end
         
-        if scriptCount % 10 == 0 then
-            local progress = 0.3 + (scriptCount / #instances) * 0.4
-            self.gui:setProgress(progress, string.format("Decompiling %d scripts", scriptCount))
-            task.wait()
-        end
+        self.gui:setProgress(0.8)
+        self.logger:log("INFO", string.format("✓ Decompiled %d scripts (Success: %d, Partial: %d, Failed: %d, Skipped: %d)", 
+            scriptCount, 
+            self.decompiler.stats.success,
+            self.decompiler.stats.partial,
+            self.decompiler.stats.failed,
+            self.decompiler.stats.skipped
+        ))
+    else
+        self.gui:setStatus("⏩ Skipping decompile (fast mode)...", Color3.fromRGB(100, 200, 255))
+        self.logger:log("INFO", "Skipping script decompilation")
+        self.gui:setProgress(0.8)
+        task.wait(0.2)
     end
-    
-    self.gui:setProgress(0.7)
-    self.logger:log("INFO", string.format("Decompiled %d scripts", scriptCount))
     
     self.gui:setStatus("🔨 Building hierarchy...", Color3.fromRGB(255, 200, 100))
     local roots = self.collector:buildHierarchy()
-    self.gui:setProgress(0.8)
+    self.gui:setProgress(0.85)
+    task.wait(0.1)
     
     self.gui:setStatus("📝 Generating XML...", Color3.fromRGB(255, 200, 100))
     local xml = self.serializer:serialize(roots)
-    self.gui:setProgress(0.9)
+    self.gui:setProgress(0.95)
+    task.wait(0.1)
     
     self.gui:setStatus("💾 Writing file...", Color3.fromRGB(255, 200, 100))
     local filename = self.fileManager:generateFilename("rbxlx")
@@ -1360,13 +1325,13 @@ function Core:execute(options)
     local duration = tick() - startTime
     
     if success then
-        self.logger:log("INFO", string.format("Save complete in %.2fs", duration))
+        self.logger:log("INFO", string.format("✓ Save complete in %.2fs", duration))
         self.logger:log("INFO", "File: " .. result)
         self.gui:setStatus(string.format("✓ Complete! (%d instances, %.2fs)", #instances, duration), Color3.fromRGB(100, 255, 100))
         
         game:GetService("StarterGui"):SetCore("SendNotification", {
             Title = "SaveInstance Complete!",
-            Text = string.format("%d instances saved in %.2fs", #instances, duration),
+            Text = string.format("%d instances | %.2fs", #instances, duration),
             Duration = 5
         })
     else
