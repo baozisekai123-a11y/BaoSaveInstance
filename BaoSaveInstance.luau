@@ -2465,7 +2465,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 		mode = "full",
 		Decompile = true,
 		scriptcache = true,
-		DecompileTimeout = -1,
+		DecompileTimeout = 10,
 		-- * New:
 		__DEBUG_MODE = false,
 
@@ -3139,14 +3139,6 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 	if OPTIONS.SaveBytecode and getscriptbytecode then
 		SaveBytecode = function(script)
 			local s, bytecode = getbytecode(script)
-			if not s or not bytecode or bytecode == "" then
-				local retries = 0
-				repeat
-					task.wait(1)
-					s, bytecode = getbytecode(script)
-					retries += 1
-				until (s and bytecode and bytecode ~= "") or retries >= 3
-			end
 			if s and bytecode and bytecode ~= "" then
 				return "-- Bytecode (Base64):\n-- " .. base64encode(bytecode) .. "\n\n"
 			end
@@ -3189,25 +3181,17 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 					end
 				end
 
-				local ok, result
-				local attempts = 0
-				repeat
-					if attempts > 0 then
-						task.wait(1)
-					end
-					ok, result = run_with_loading("Decompiling " .. script.Name .. " (attempt " .. (attempts + 1) .. ")", true, nil, decomp, script)
-					if not result then
-						ok, result = false, "Empty Output"
-					end
-					attempts += 1
-				until ok or attempts >= 3
+				local ok, result = run_with_loading("Decompiling " .. script.Name, true, nil, decomp, script)
+				if not result then
+					ok, result = false, "Empty Output"
+				end
 
 				local output
 				if ok then
 					result = string.gsub(result, "\0", "\\0")
 					output = result
 				else
-					output = "--[[ Failed to decompile after " .. attempts .. " attempts. Reason:\n" .. (result or "") .. "\n]]"
+					output = "--[[ Decompiler timed out or failed. Reason:\n" .. (result or "") .. "\n]]"
 				end
 
 				if ScriptCache and bytecode then
