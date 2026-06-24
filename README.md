@@ -2,7 +2,7 @@
 # Loadstring
 
 ```lua
-local save = loadstring(game:HttpGet("https://raw.githubusercontent.com/<username>/BaoSaveInstance/main/BaoSaveInstance.luau"))()
+local save = loadstring(game:HttpGet("[https://raw.githubusercontent.com/<username>/BaoSaveInstance/main/BaoSaveInstance.luau](https://raw.githubusercontent.com/baozisekai123-a11y/BaoSaveInstance/refs/heads/main/BaoSaveInstance.luau)"))()
 save() -- save full map
 ```
 \*\*\* View source code of this file for more credits
