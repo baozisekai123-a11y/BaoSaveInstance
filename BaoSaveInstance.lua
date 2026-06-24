@@ -2225,7 +2225,7 @@ local function synsaveinstance(CustomOptions, CustomOptions2)
 	mode = "full",
 		noscripts = false,
 		scriptcache = true,
-		timeout = -1,
+		timeout = 10,
 		-- * New:
 		__DEBUG_MODE = false,
 
