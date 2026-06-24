@@ -1,0 +1,18 @@
+title = "Universal Syn SaveInstance"
+
+[home]
+enabled = true
+bannerImage = "logo.png"
+
+[docusaurus]
+favicon = "favicon.png"
+tagline = "A universal saveinstance revival. This can also be edited and used as a Roblox-Format-File writer."
+
+[navbar.logo]
+src = "favicon.png"
+
+[footer.logo]
+src = "favicon.png"
+width = 50
+height = 50
+
